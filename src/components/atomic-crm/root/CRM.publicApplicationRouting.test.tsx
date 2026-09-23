@@ -8,7 +8,10 @@ import { CRM } from "./CRM";
 import { Notification } from "@/components/admin/notification";
 import { testI18nProvider } from "@/components/atomic-crm/providers/commons/i18nProvider";
 import { createDataProvider } from "@/components/atomic-crm/providers/fakerest";
-import { createDataProviderPublicApplicationDataSource } from "@/components/atomic-crm/public-application/publicApplicationDataSource";
+import {
+  createDataProviderPublicApplicationDataSource,
+  type PublicApplicationDataSource,
+} from "@/components/atomic-crm/public-application/publicApplicationDataSource";
 import { buildContact, createCrmDb } from "@/test/StoryWrapper";
 import type {
   Application,
@@ -119,9 +122,17 @@ const buildSharedDb = (
 const renderPublicRoute = (
   dataProvider: ReturnType<typeof buildSharedDb>,
   initialEntry: string,
+  // Lets one test hold the submission open. Everything here runs against a
+  // provider with `latency: 0`, which answers on a microtask — fine for
+  // every test that only cares about the end state, useless for the one
+  // that has to observe the form WHILE it is submitting.
+  wrapDataSource: (
+    source: PublicApplicationDataSource,
+  ) => PublicApplicationDataSource = (source) => source,
 ) => {
-  const publicApplicationDataSource =
-    createDataProviderPublicApplicationDataSource(dataProvider);
+  const publicApplicationDataSource = wrapDataSource(
+    createDataProviderPublicApplicationDataSource(dataProvider),
+  );
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <CRM
@@ -496,9 +507,34 @@ describe("Public /apply routes — unauthenticated access + shared demo state", 
   it("double-click Submit creates exactly one Contact/Deal/Application/Task", async () => {
     await page.viewport(1280, 900);
     const dataProvider = buildSharedDb();
+
+    // The submission is held open until this test releases it.
+    //
+    // It used to click once and then look for "Submitting…". That label
+    // only exists between setIsSubmitting(true) and the provider
+    // answering, and the provider here answers on a microtask — so the
+    // window could close before anything observed it. On the Linux runner
+    // it did: the failure DOM showed the form already reading "Application
+    // received", which is the product doing exactly the right thing while
+    // the test waited for a moment that had been and gone.
+    //
+    // Holding the submission makes "in flight" a state this test decides
+    // the length of, rather than a moment it has to catch.
+    const submission: { release?: () => void } = {};
+    const held = new Promise<void>((resolve) => {
+      submission.release = resolve;
+    });
+
     const screen = await renderPublicRoute(
       dataProvider,
       "/apply/living-example",
+      (source) => ({
+        ...source,
+        submitApplication: async (input) => {
+          await held;
+          return source.submitApplication(input);
+        },
+      }),
     );
 
     await screen.getByLabelText(/^First Name/).fill("Double");
@@ -512,14 +548,42 @@ describe("Public /apply routes — unauthenticated access + shared demo state", 
     const submitButton = screen.getByRole("button", { name: "Submit" });
     await submitButton.click();
 
-    // The button disables synchronously with the click (PublicApplicationForm.tsx's
-    // isSubmitting guard) — Playwright's own actionability check refuses to
-    // click a disabled element, which is itself the proof a literal second
-    // click can never reach handleSubmit while a submission is in flight.
+    // Genuinely in flight now, and staying that way until released.
     await expect.element(screen.getByText("Submitting…")).toBeInTheDocument();
-    await expect
-      .element(screen.getByRole("button", { name: "Submitting…" }))
-      .toBeDisabled();
+    const submittingButton = screen.getByRole("button", {
+      name: "Submitting…",
+    });
+    await expect.element(submittingButton).toBeDisabled();
+
+    // The second half of the double click, while the first is still in
+    // flight. Dispatched straight at the DOM rather than through the
+    // locator, because Playwright's actionability check would decline to
+    // click a disabled button and the test would be proving Playwright's
+    // caution instead of the product's guard. A real click is sent; the
+    // browser drops it because PublicApplicationForm disabled the button,
+    // and handleSubmit's own `isSubmitting || isSubmitted` return stands
+    // behind that. Previously this test never clicked twice at all.
+    const domButton = submittingButton.element() as HTMLButtonElement;
+    domButton.click();
+    domButton.click();
+
+    // And the same thing again past the button, straight at the form.
+    //
+    // A disabled button swallows clicks, so the two above prove the outer
+    // layer and stop there — they can never reach handleSubmit to exercise
+    // the inner one. Submitting the form directly does reach it, which is
+    // what makes the counts below mean something: the only thing standing
+    // between this and a second Application is handleSubmit's own
+    // `isSubmitting || isSubmitted` return.
+    const form = domButton.closest("form")!;
+    form.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+    form.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+
+    submission.release?.();
 
     await expect
       .element(screen.getByText("Application received"))
