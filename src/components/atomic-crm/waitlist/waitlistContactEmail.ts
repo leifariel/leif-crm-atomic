@@ -98,6 +98,56 @@ export const checkEmailOwnership = async (
 };
 
 /**
+ * The address shown when a Contact's email is edited: their first one.
+ *
+ * A Contact can carry several. The waitlist dialogs show and edit one,
+ * because the question they answer is "can Leif reach this person", not
+ * "manage every address they have" — that is the Contact page's job.
+ */
+export const primaryEmail = (
+  contact: Pick<Contact, "email_jsonb"> | null | undefined,
+): string =>
+  (contact?.email_jsonb ?? []).find(
+    (entry) => typeof entry?.email === "string" && entry.email.trim() !== "",
+  )?.email ?? "";
+
+/**
+ * Correct the address already on the Contact, rather than adding another.
+ *
+ * This is the edit case, and it is the opposite of attachEmailToContact
+ * below. Leif fixing a typo means the wrong address should STOP being on
+ * the record; appending would leave the CRM holding both and no way to
+ * tell which one is real. Any further addresses the Contact has are kept
+ * untouched — only the one the dialog showed is replaced.
+ */
+export const replacePrimaryEmail = async (
+  dataProvider: DataProvider,
+  contact: Contact,
+  email: string,
+): Promise<void> => {
+  const trimmed = email.trim();
+  if (trimmed === "") return;
+
+  const existing = contact.email_jsonb ?? [];
+  const firstRealIndex = existing.findIndex(
+    (entry) => typeof entry?.email === "string" && entry.email.trim() !== "",
+  );
+
+  const next =
+    firstRealIndex === -1
+      ? [...existing, { email: trimmed, type: "Other" as const }]
+      : existing.map((entry, index) =>
+          index === firstRealIndex ? { ...entry, email: trimmed } : entry,
+        );
+
+  await dataProvider.update("contacts", {
+    id: contact.id,
+    data: { email_jsonb: next },
+    previousData: contact,
+  });
+};
+
+/**
  * Put the address on the Contact, having already established it is free.
  *
  * Appends rather than replaces, so an address Leif adds here never
