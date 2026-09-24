@@ -58,6 +58,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/waitlist/waitlistContactEmail.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/waitlist/waitlistConstants.ts",
           "type": "registry:component"
         },
@@ -91,6 +95,10 @@
         },
         {
           "path": "src/components/atomic-crm/waitlist/WaitlistEntryActions.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/waitlist/WaitlistContactEmailInput.tsx",
           "type": "registry:component"
         },
         {

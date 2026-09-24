@@ -487,6 +487,10 @@ describe("Add to Waitlist — quick-create selects and keeps the form open", () 
       .element(screen.getByText("Search by name or email…"))
       .not.toBeInTheDocument();
 
+    // A brand-new person has no email yet, and an active waitlist entry
+    // needs one, so the field is here and has to be filled. Every
+    // assertion below is the same as before that rule existed.
+    await screen.getByLabelText(/^Email/).fill("brand.new@example.com");
     await screen.getByRole("button", { name: /^save$/i }).click();
 
     await expect
@@ -506,11 +510,197 @@ describe("Add to Waitlist — quick-create selects and keeps the form open", () 
       sort: { field: "id", order: "ASC" },
     });
     // Exactly one Contact created for them — no duplicate.
+    const created = contacts.filter(
+      (c) => c.first_name === "Brand" && c.last_name === "New Person",
+    );
+    expect(created).toHaveLength(1);
+    // And the email is a fact about the PERSON, not about the entry.
     expect(
-      contacts.filter(
-        (c) => c.first_name === "Brand" && c.last_name === "New Person",
-      ),
-    ).toHaveLength(1);
+      created[0]!.email_jsonb?.map((e: { email: string }) => e.email),
+    ).toEqual(["brand.new@example.com"]);
+
+    const { data: entries } = await dataProvider.getList("waitlist_entries", {
+      filter: {},
+      pagination: { page: 1, perPage: 10 },
+      sort: { field: "id", order: "ASC" },
+    });
+    expect(entries[0]).not.toHaveProperty("contact_email");
+    expect(JSON.stringify(entries[0])).not.toContain("brand.new@example.com");
+  });
+
+  it("refuses to save a new person with no email, because an entry nobody can be reached about is not worth holding", async () => {
+    await page.viewport(1280, 900);
+    const { element, dataProvider } = buildTestCrm(["/programs/individual/1"], {
+      contacts: [buildContact({ id: 1 })],
+    });
+    const screen = await render(element);
+
+    await screen.getByRole("button", { name: "Add to Waitlist" }).click();
+    await screen.getByText("Search by name or email…").click();
+    await screen.getByPlaceholder("Search...").fill("No Email Person");
+    await screen.getByText('Add "No Email Person" as a new person').click();
+
+    await screen.getByRole("button", { name: /^save$/i }).click();
+
+    // Said as a reason, not as "required" — the rule is about being able
+    // to reach them, and the message should teach that.
+    await expect
+      .element(screen.getByText(/email is needed so you can reach them/i))
+      .toBeInTheDocument();
+
+    const { total } = await dataProvider.getList("waitlist_entries", {
+      filter: {},
+      pagination: { page: 1, perPage: 10 },
+      sort: { field: "id", order: "ASC" },
+    });
+    expect(total).toBe(0);
+  });
+
+  it("does not ask again when the chosen person already has an email", async () => {
+    await page.viewport(1280, 900);
+    const { element } = buildTestCrm(["/programs/individual/1"], {
+      contacts: [
+        buildContact({
+          id: 1,
+          first_name: "Ada",
+          last_name: "Lovelace",
+          email_jsonb: [{ email: "ada@example.com", type: "Work" }],
+        }),
+      ],
+    });
+    const screen = await render(element);
+
+    await screen.getByRole("button", { name: "Add to Waitlist" }).click();
+    await screen.getByText("Search by name or email…").click();
+    await screen.getByPlaceholder("Search...").fill("Ada");
+    await screen.getByText("Ada Lovelace").click();
+
+    await expect.element(screen.getByText("Desired timing")).toBeVisible();
+    // Retyping something the CRM already knows is how a form teaches
+    // people to stop reading it.
+    await expect
+      .element(screen.getByLabelText(/^Email/))
+      .not.toBeInTheDocument();
+  });
+
+  it("asks an existing person with no email for one, and puts it on their Contact", async () => {
+    await page.viewport(1280, 900);
+    const { element, dataProvider } = buildTestCrm(["/programs/individual/1"], {
+      contacts: [
+        buildContact({
+          id: 1,
+          first_name: "Older",
+          last_name: "Record",
+          email_jsonb: [],
+        }),
+      ],
+    });
+    const screen = await render(element);
+
+    await screen.getByRole("button", { name: "Add to Waitlist" }).click();
+    await screen.getByText("Search by name or email…").click();
+    await screen.getByPlaceholder("Search...").fill("Older");
+    await screen.getByText("Older Record").click();
+
+    await screen.getByLabelText(/^Email/).fill("older.record@example.com");
+    await screen.getByRole("button", { name: /^save$/i }).click();
+
+    await expect
+      .poll(async () => {
+        const { total } = await dataProvider.getList("waitlist_entries", {
+          filter: {},
+          pagination: { page: 1, perPage: 10 },
+          sort: { field: "id", order: "ASC" },
+        });
+        return total;
+      })
+      .toBe(1);
+
+    // Updated, not duplicated: still one Contact, now reachable.
+    const { data: contacts } = await dataProvider.getList("contacts", {
+      filter: {},
+      pagination: { page: 1, perPage: 10 },
+      sort: { field: "id", order: "ASC" },
+    });
+    expect(contacts.filter((c) => c.last_name === "Record")).toHaveLength(1);
+    expect(
+      contacts[0]!.email_jsonb?.map((e: { email: string }) => e.email),
+    ).toEqual(["older.record@example.com"]);
+  });
+
+  it("hands back an email that already belongs to somebody else instead of merging them", async () => {
+    await page.viewport(1280, 900);
+    const { element, dataProvider } = buildTestCrm(["/programs/individual/1"], {
+      contacts: [
+        buildContact({
+          id: 1,
+          first_name: "Sarah",
+          last_name: "Jones",
+          email_jsonb: [{ email: "sarah.jones@example.com", type: "Work" }],
+        }),
+      ],
+    });
+    const screen = await render(element);
+
+    await screen.getByRole("button", { name: "Add to Waitlist" }).click();
+    await screen.getByText("Search by name or email…").click();
+    await screen.getByPlaceholder("Search...").fill("Someone Else");
+    await screen.getByText('Add "Someone Else" as a new person').click();
+
+    // Same address as Sarah's, typed differently — one person twice, a
+    // typo, or a shared inbox. The CRM cannot tell, so it names her and
+    // stops rather than merging or moving the address.
+    await screen.getByLabelText(/^Email/).fill("  Sarah.Jones@Example.com  ");
+    await screen.getByRole("button", { name: /^save$/i }).click();
+
+    await expect
+      .element(screen.getByText(/Sarah Jones already has this email/i))
+      .toBeInTheDocument();
+
+    const { total } = await dataProvider.getList("waitlist_entries", {
+      filter: {},
+      pagination: { page: 1, perPage: 10 },
+      sort: { field: "id", order: "ASC" },
+    });
+    expect(total).toBe(0);
+    // And Sarah's own record is untouched.
+    const { data: sarah } = await dataProvider.getOne("contacts", { id: 1 });
+    expect(sarah.email_jsonb.map((e: { email: string }) => e.email)).toEqual([
+      "sarah.jones@example.com",
+    ]);
+  });
+
+  it("starts clean when reopened, so a batch of people can go in one after another", async () => {
+    await page.viewport(1280, 900);
+    const { element } = buildTestCrm(["/programs/individual/1"], {
+      contacts: [buildContact({ id: 1 })],
+    });
+    const screen = await render(element);
+
+    await screen.getByRole("button", { name: "Add to Waitlist" }).click();
+    await screen.getByText("Search by name or email…").click();
+    await screen.getByPlaceholder("Search...").fill("First Batch Person");
+    await screen.getByText('Add "First Batch Person" as a new person').click();
+    await screen.getByLabelText(/^Email/).fill("first@example.com");
+    await screen.getByRole("textbox", { name: /Notes/i }).fill("keen");
+    await screen.getByRole("button", { name: /^save$/i }).click();
+
+    await expect
+      .element(screen.getByText("Search by name or email…"))
+      .not.toBeInTheDocument();
+
+    await screen.getByRole("button", { name: "Add to Waitlist" }).click();
+
+    // Nothing from the previous person survives into the next one.
+    await expect
+      .element(screen.getByText("Search by name or email…"))
+      .toBeVisible();
+    await expect
+      .element(screen.getByLabelText(/^Email/))
+      .not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("textbox", { name: /Notes/i }))
+      .toHaveValue("");
   });
 });
 
