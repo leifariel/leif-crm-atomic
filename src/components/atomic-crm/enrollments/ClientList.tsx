@@ -83,7 +83,7 @@ export const ClientList = () => {
                 _: "Upcoming",
               })}
               hint={translate("resources.enrollments.upcoming_order_hint", {
-                _: "Starting soonest first",
+                _: "Latest start first",
               })}
               rows={livingExample.upcoming}
             />

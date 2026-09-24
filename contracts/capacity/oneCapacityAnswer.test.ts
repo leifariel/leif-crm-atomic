@@ -254,14 +254,28 @@ describe("a finish is one week, whichever surface names it", () => {
 describe("client lists are ordered by what they are for", () => {
   const read = (path: string) => readFileSync(path, "utf8");
 
-  test("current clients newest first, people still to start soonest first", () => {
+  test("both client lists read newest start first", () => {
     const source = read(
       "src/components/atomic-crm/capacity/individualCapacity.ts",
     );
+    // One rule for both. Starting Later used to read forwards as a queue;
+    // Leif asked for the two lists to agree.
     expect(source).toMatch(/occupied\.sort\(byStartDescThenName\)/);
-    expect(source).toMatch(/committed\.sort\(byStartThenName\)/);
+    expect(source).toMatch(/committed\.sort\(byStartDescThenName\)/);
     // Never by a derived end date: that moves whenever Year Tracking
     // changes, so the list would silently reorder itself after a sync.
     expect(source).not.toMatch(/occupied\.sort\(byEndThenName\)/);
+    expect(source).not.toMatch(/committed\.sort\(byEndThenName\)/);
+  });
+
+  test("a month's own breakdown still reads forwards", () => {
+    // Deliberately NOT the Starting Later ordering. The month panel is a
+    // timeline of who frees up and who starts inside that month, and its
+    // two halves have to run the same way to be readable.
+    const source = read(
+      "src/components/atomic-crm/capacity/individualCapacity.ts",
+    );
+    expect(source).toMatch(/freeing:.*sort\(byEndThenName\)/s);
+    expect(source).toMatch(/committing:.*sort\(byStartThenName\)/s);
   });
 });

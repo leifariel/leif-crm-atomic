@@ -18,7 +18,6 @@ import type {
 import {
   byMostRecentlyEndedFirst,
   byNewestStartFirst,
-  bySoonestStartFirst,
   classifyEnrollment,
   type EnrollmentPhase,
 } from "./classifyEnrollment";
@@ -243,14 +242,16 @@ export const useClientsGrouped = (): {
     other.push(row);
   }
 
-  // Current: newest-starting at the top, Leif's stated order. Upcoming
-  // reads forwards — the next container to prepare for comes first. Past
-  // is most recently finished first.
+  // Current AND Upcoming both read newest-start-first, Leif's stated
+  // order. Upcoming used to read forwards, on the reasoning that the next
+  // container to prepare for should come first; he asked for the two lists
+  // to agree, so the most recently agreed start sits at the top of both.
+  // Past is different on purpose: it reads by who most recently finished.
   livingExample.current.sort((a, b) =>
     byNewestStartFirst(a.enrollment, b.enrollment),
   );
   livingExample.upcoming.sort((a, b) =>
-    bySoonestStartFirst(a.enrollment, b.enrollment),
+    byNewestStartFirst(a.enrollment, b.enrollment),
   );
   livingExample.past.sort((a, b) =>
     byMostRecentlyEndedFirst(

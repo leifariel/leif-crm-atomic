@@ -3,7 +3,6 @@ import { describe, expect, it, test } from "vitest";
 import {
   byMostRecentlyEndedFirst,
   byNewestStartFirst,
-  bySoonestStartFirst,
   classifyEnrollment,
 } from "./classifyEnrollment";
 import type { Enrollment } from "../types";
@@ -114,15 +113,18 @@ describe("ordering", () => {
     );
   });
 
-  it("puts the soonest-starting upcoming client at the top", () => {
+  it("orders upcoming clients the same way as current ones — latest start first", () => {
+    // Upcoming used to read forwards, soonest-starting at the top. Leif
+    // asked for both lists to agree, so this is the same comparator
+    // Current Clients uses and the January start now outranks November's.
     const rows = [
       enrollment({ id: 1, start_date: "2027-01-05" }),
       enrollment({ id: 2, start_date: "2026-11-08" }),
     ];
 
-    expect(
-      [...rows].sort(bySoonestStartFirst).map((e) => Number(e.id)),
-    ).toEqual([2, 1]);
+    expect([...rows].sort(byNewestStartFirst).map((e) => Number(e.id))).toEqual(
+      [1, 2],
+    );
   });
 
   it("sorts an unknown start date last rather than treating it as ancient", () => {

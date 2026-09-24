@@ -431,6 +431,10 @@ export const englishCrmMessages = {
       needs_onboarding: "Needs Onboarding",
       active_clients: "Active",
       past_clients: "Past Clients",
+      // Both lists say their order out loud, so it is not something to
+      // infer from the rows. Current and Upcoming read the same way.
+      current_order_hint: "Newest start first",
+      upcoming_order_hint: "Latest start first",
       payment_context: "Payment",
       paid_in_full: "Paid in full.",
       onboarding_checklist: "Onboarding",

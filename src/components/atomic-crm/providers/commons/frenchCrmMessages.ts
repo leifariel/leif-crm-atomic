@@ -441,6 +441,8 @@ export const frenchCrmMessages = {
       needs_onboarding: "Intégration à faire",
       active_clients: "Actifs",
       past_clients: "Anciens clients",
+      current_order_hint: "Début le plus récent en premier",
+      upcoming_order_hint: "Début le plus tardif en premier",
       payment_context: "Paiement",
       paid_in_full: "Payé intégralement.",
       onboarding_checklist: "Intégration",

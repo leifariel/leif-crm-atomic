@@ -117,21 +117,19 @@ export const computeIndividualCapacity = (
     (phase === "occupied" ? occupied : committed).push(holder);
   }
 
-  // Current clients newest first; people who have not started yet,
-  // soonest first.
+  // Both lists read newest start first, name ascending within a date.
   //
-  // The two lists answer different questions, so they are not the same
-  // sort reversed. Current Clients is who Leif is working with now, and
-  // the person who joined most recently is the one he is still learning —
-  // the ones from May he knows. Starting Later is a queue, and a queue is
-  // read from the front: the next person to arrive is the one that matters.
+  // Starting Later used to read forwards, as a queue: the next person to
+  // arrive is the one that matters. Leif asked for the two lists to agree
+  // instead, so the most recently agreed start sits at the top of both and
+  // he does not have to change how he reads the page halfway down it.
   //
-  // Current Clients was ordered by expected END date, which is derived
-  // from a calendar and moves whenever Year Tracking changes — so the list
-  // silently reordered itself after a sync, around a date that is a
-  // projection rather than a fact about the person.
+  // Neither is ordered by expected END date. That is derived from the
+  // calendar and moves whenever Year Tracking changes, so the list used to
+  // silently reorder itself after a sync, around a projection rather than
+  // a fact about the person.
   occupied.sort(byStartDescThenName);
-  committed.sort(byStartThenName);
+  committed.sort(byStartDescThenName);
 
   const active = occupied.length;
   const events = buildSlotEvents(occupied, committed, today);
@@ -320,6 +318,12 @@ export const computeFutureOpenings = (
 
       return {
         month,
+        // Deliberately still ascending, unlike the Starting Later list.
+        // This is a timeline of one month — who frees up and who starts
+        // inside it — and a timeline reads forwards. `freeing` is
+        // ascending by end date for the same reason; ordering the two
+        // halves of one panel in opposite directions would make the month
+        // harder to read, not easier.
         freeing: entry.freeing.slice().sort(byEndThenName),
         committing: entry.committing.slice().sort(byStartThenName),
         peakOccupancy,

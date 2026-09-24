@@ -118,21 +118,12 @@ export const byMostRecentlyEndedFirst = (
   return Number(b.id) - Number(a.id);
 };
 
-// Upcoming reads the other way round: the container starting soonest is
-// the one Leif needs to prepare for next.
-export const bySoonestStartFirst = (
-  a: Pick<Enrollment, "id" | "start_date">,
-  b: Pick<Enrollment, "id" | "start_date">,
-): number => {
-  const aKey = a.start_date ?? "";
-  const bKey = b.start_date ?? "";
-  if (aKey !== bKey) {
-    if (!aKey) return 1;
-    if (!bKey) return -1;
-    return aKey.localeCompare(bKey);
-  }
-  return Number(a.id) - Number(b.id);
-};
+// Upcoming has no comparator of its own. It used to read the other way
+// round — the container starting soonest is the one to prepare for next —
+// and byNewestStartFirst above now orders both lists, because Leif asked
+// them to agree. Deleted rather than left sitting here unused: a
+// comparator called "soonest first" is an invitation to quietly restore
+// the old order.
 
 const toDateKey = (value: Date): string =>
   `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(

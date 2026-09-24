@@ -323,13 +323,12 @@ describe("Living Example program page — capacity Leif can plan around", () => 
     for (const [, name] of COMMITTED) expect(text).toContain(name);
   });
 
-  it("lists current clients newest first, and future clients soonest first", async () => {
-    // Two lists, two questions. Current Clients is who Leif is working
-    // with now, and the person who joined most recently is the one he is
-    // still learning. Starting Later is a queue, read from the front.
+  it("lists current and future clients the same way — newest start first", async () => {
+    // One rule for both lists, which is what Leif asked for: the most
+    // recently agreed start sits at the top whether or not it has begun.
     //
-    // It used to sort Current Clients by expected END date — derived from
-    // the calendar, so the list silently reordered itself after a sync,
+    // Neither is sorted by expected END date. That is derived from the
+    // calendar, so the list used to silently reorder itself after a sync,
     // around a projection rather than a fact about the person.
     const screen = await render(buildTestCrm());
     await expect
@@ -367,14 +366,20 @@ describe("Living Example program page — capacity Leif can plan around", () => 
       ),
     ).toBe(true);
 
-    // And the queue runs the other way: the next to arrive is first.
+    // And Starting Later reads the SAME way, newest start first, rather
+    // than running the other way as a queue. Leif asked for the two lists
+    // to agree so he does not have to change how he reads the page
+    // halfway down it. Name is still the tie-break inside a date, so the
+    // four sharing 8 November stay in a fixed order.
     expect(
       ascending(
         order(later, [
-          "Ava Frotton", // Oct 5
-          "Denise Cormier", // Oct 5
           "Daniel Alexander", // Nov 8
           "Emma Wijns", // Nov 8
+          "Heidi Elias", // Nov 8
+          "Linda Turner", // Nov 8
+          "Ava Frotton", // Oct 5
+          "Denise Cormier", // Oct 5
         ]),
       ),
     ).toBe(true);
