@@ -96,14 +96,18 @@ has not exercised is not evidence of anything, however much of it there is.
 
 **Intended sequence:** (1) finish current small workflow UX loose ends →
 (2) ~~tight reliability layer~~ **SEALED 2026-09-21, see §8** →
-(3) **Capacity + Waitlist** → (4) Gmail → (5) Gmail production acceptance →
-(6) Instagram/Meta → (7) Instagram production acceptance → (8) accumulated UX +
-maturity sprint → (9) Openings Planner.
+(3) ~~Capacity + Waitlist~~ **SEALED 2026-09-24, see §8** →
+(4) **Waitlist quick-create, then Applications cleanup — see §8b** →
+(5) Gmail → (6) Gmail production acceptance → (7) Instagram/Meta →
+(8) Instagram production acceptance → (9) accumulated UX + maturity
+sprint → (10) Openings Planner.
 
 Capacity + Waitlist moved ahead of Gmail deliberately: Gmail will want to say
 something true about openings, and neither the Living Example capacity maths
-nor the waitlist is operational yet. Build the truth before the thing that
-announces it.
+nor the waitlist was operational yet. Build the truth before the thing that
+announces it. That truth now exists, and §8b carries the two waitlist and
+applications gaps the try-run exposed — both of which Gmail will also lean
+on — ahead of Gmail for the same reason.
 
 ---
 
@@ -660,10 +664,47 @@ Reliability work is supposed to find things, and it did:
   … already exists*. Linux CI is unaffected (no `/var` symlink). Harness
   infrastructure, not product.
 
-### Capacity + Waitlist — DEPLOYED 2026-09-22, OPEN for Leif's try-run
+### Capacity + Waitlist — SEALED 2026-09-24
 
-**Not sealed.** Deployed to production for human acceptance; the feature
-stays open until Leif has used it and accepted it (§2).
+**Accepted at `7258bd8a6beb6909e6974fb3ae2d8a7f7c4d3eed`**, after Leif used
+each part of it on production. Deployed 2026-09-22, open for eleven days
+of try-run, repaired four times against what that try-run found, and
+sealed only once he had accepted the last of it (§2).
+
+Main CI green. 137/137 migrations aligned, **0 pending**, latest
+`20260922100000`.
+
+**What was accepted**
+
+- **Current Clients** — `start_date DESC`, newest start to oldest.
+- **Upcoming / Starting Later** — `start_date DESC` as well. It used to
+  read forwards as a queue; Leif asked for the two lists to agree so he is
+  not changing how he reads the page halfway down it. The within-date
+  tie-break differs between the two surfaces — the Clients page ties by
+  id, the Program page by name, because `ClientRow` has no name to sort on
+  without a contacts fetch — and that difference is **accepted, not a
+  blocker**. It is visible on real data: four clients share 8 November.
+- **The month / openings breakdown stays chronological ASC**, deliberately.
+  It is a timeline of who frees up and who starts inside one month, sitting
+  beside `freeing`, and a timeline reads forwards. A contract test pins it
+  so nobody flips it later out of symmetry.
+- Projected-opening UX, the lightbox, and the confidence signal.
+- Final-session-week occupancy and release semantics.
+- Duplicate Year Tracking windows deduped.
+- Sync Calendar, Sync Stripe, and the compact Dashboard header controls.
+- Stale retired cadence alerts reconciled — six to zero on one press.
+- **Ambiguity is never auto-classified.** Nothing guesses on Leif's behalf.
+
+**Five live unresolved cadence issues, intentionally waiting for Leif**
+
+- Jules Litman-Cleper ×4 — ordinals 1, 2, 6 and 7, raised 2026-09-22.
+- Sarah Monast ×1 — ordinal 4, the week of 20–24 September, raised
+  `2026-09-24 00:00`.
+
+Sarah's is **new, and is the system working rather than a regression**.
+Her week closed overnight with no fulfilling session, so the hourly pass
+raised exactly one question and left it unclassified. A seal taken from a
+stale count would have said four; it says five because it was re-measured.
 
 #### PASSED human acceptance: owner Stripe sync from the Dashboard (2026-09-23)
 
@@ -844,6 +885,72 @@ describe it.
 migration that touches existing rows. Both repairs were proven that way
 first, and the Won path and the January-2027 delete refusal were proven the
 same way afterwards, leaving no synthetic data behind.
+
+---
+
+## 8b. NEXT SLICE — Waitlist quick-create
+
+**Start with diagnosis, not implementation.** The seal audit found that
+inline Contact creation already exists in the code:
+`WaitlistPersonInput.tsx` has `handleCreatePerson` wired to the
+autocomplete's `onCreate`, and `AddToWaitlistSheet.tsx` — the
+`+ Add to Waitlist` entry point — uses that input.
+
+And yet Leif's production try-run could not create a new person and get
+them onto the waitlist in one flow. So something built does not work, and
+building it a second time would leave two half-working paths instead of
+one working one. **Find out why the existing path fails before writing
+anything.**
+
+One unverified suspicion to test first, not to trust: the input reads
+through `ReferenceInput source="contact_id" reference="contacts_summary"`
+— a VIEW — while `handleCreatePerson` creates into `contacts`. A freshly
+created person may simply not resolve back through the view.
+
+Desired behavior:
+
+    + Add to Waitlist
+      -> search existing person
+      -> if no match, create the person inline
+      -> save Contact + Waitlist Entry together
+      -> the new person is on the waitlist immediately
+
+Requirements to hold:
+
+- Reuse the existing Contact when one is found.
+- Inline-create only a genuinely new one.
+- No navigating to Contacts first.
+- The Do Not Engage guard survives.
+- No duplicate Contacts.
+- Desired timing and Notes stay Waitlist Entry fields, not Contact fields.
+- **No fake placeholder email.** A person Leif met once may not have one.
+- Fast enough to add a batch of people back to back.
+
+### Then, in order
+
+1. **Applications page cleanup** — the January 2027 GYU applications must
+   surface as real Needs Review; stop using Historical as the catch-all;
+   separate the current funnel from pre-CRM questionnaire history; give
+   the page top-level All Applications / + New Application access.
+2. **Pipeline Application Received → full application lightbox.**
+3. **Gmail** (§9).
+4. **Gmail reliability / human acceptance.**
+5. **Remaining Waitlist email / batch management.**
+6. **Instagram** (§10).
+
+### Infrastructure debt — tracked separately, blocks nothing above
+
+- `users` Edge Function `SB_PUBLISHABLE_KEY` auth issue (§7).
+- GitHub Pages deploy failure — the only red step in every Deploy run.
+- macOS `.claude/hooks` worktree-test debt (§7).
+- The broader `authenticated` TRUNCATE grant: 52 public tables grant it,
+  Supabase's default `grant all` pattern. Not reachable through PostgREST,
+  wider than intended.
+- A pre-existing alternating pass/fail flake in **partial** test selections
+  (`enrollments/` plus the capacity file). Measured on both the changed and
+  unchanged tree and identical on each, so it predates the sort change. The
+  full app project and the four-project CI command are green. The
+  alternating pattern hints at state carried between consecutive runs.
 
 ---
 
