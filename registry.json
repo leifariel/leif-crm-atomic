@@ -462,6 +462,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/sales-calls/completeAttendedSalesCallMirror.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/sales-calls/cancelSalesCall.ts",
           "type": "registry:component"
         },
@@ -1315,6 +1319,10 @@
         },
         {
           "path": "src/components/atomic-crm/deals/applyDealStageDrop.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/deals/acceptSaleMirror.ts",
           "type": "registry:component"
         },
         {
