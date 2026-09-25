@@ -1,66 +1,80 @@
 import { useGetList, useGetMany, type Identifier } from "ra-core";
 
 import type { Application, Cohort, Contact, Deal, Offer } from "../types";
+import {
+  classifyApplication,
+  type ApplicationBucket,
+} from "./classifyApplication";
 
 export type ApplicationRow = {
   applicationId: Identifier;
-  dealId: Identifier;
+  // Optional on purpose: 78 production Applications have no Opportunity,
+  // and a legitimate applicant who never entered the pipeline should not
+  // vanish from the page for it.
+  dealId: Identifier | null;
   contactId: Identifier;
   contactName: string;
   status: Application["status"];
   submittedAt: string;
+  bucket: ApplicationBucket;
+  // Surfaced on Pre-CRM rows so the sales context that makes them live is
+  // visible on the row rather than implied by the section alone.
+  dealStage: string | null;
 };
 
-export type IndividualOfferGroup = {
+export type ApplicationBuckets = Record<ApplicationBucket, ApplicationRow[]>;
+
+export type ApplicationSection = {
+  key: string;
+  /** "The Living Example" or "Growing Yourself Up" */
   offer: Offer;
-  applications: ApplicationRow[];
+  /** null for an individual offer, the cohort for a group one */
+  cohort: Cohort | null;
+  buckets: ApplicationBuckets;
+  total: number;
 };
 
-export type CohortGroup = {
-  cohort: Cohort;
-  applications: ApplicationRow[];
-};
+const emptyBuckets = (): ApplicationBuckets => ({
+  "needs-review": [],
+  reviewed: [],
+  "pre-crm-active-sales": [],
+  historical: [],
+});
 
-export type GroupOfferGroup = {
-  offer: Offer;
-  cohorts: CohortGroup[];
-};
-
-export type ApplicationGroups = {
-  individualGroups: IndividualOfferGroup[];
-  groupOfferGroups: GroupOfferGroup[];
-};
-
-// Backs the Applications page's Needs Review / Reviewed split (UX cleanup
-// pass, §3) over the SAME Offer/1:1 vs Cohort/GYU grouping the page
-// already used (Runtime + Visual Consistency slice, §5): real Offer/Cohort
-// relationships, not a new Application table or a hand-maintained grouping
-// list. An Application with no matching deal/offer (shouldn't happen, but
-// data can always be mid-migration) is simply omitted rather than crashing
-// the page. "Needs review" is exactly `status === 'pending'` — the same
-// vocabulary reviewApplication.ts and applicationConstants.ts already use;
-// no new review-state concept introduced.
+// The Applications page, grouped the way Leif reads it: which programme,
+// then what it needs from him.
+//
+// It used to ask `source` first — public_form meant review work,
+// historical_import meant history — and then find the programme by
+// walking opportunity_id to the Deal. Both were wrong in a way that cost
+// real work: six January 2027 applications Leif needs to read sat in a
+// Historical section because of how they arrived, and 78 Applications had
+// no Opportunity to walk, so they could not be placed at all.
+//
+// Programme and person come from the APPLICATION's own columns, which are
+// populated on every production row: offer_id, intended_cohort_id,
+// contact_id. The Deal is consulted for one question only — is a sales
+// process still running — and never for identity.
+//
+// One exception, and it adds information rather than requiring it: five
+// Fall 2026 records carry their cohort only on the Deal. Where the
+// Application has no intended_cohort_id and the Deal names one, that is
+// used. The two never disagree in production (checked), so this cannot
+// silently override an Application's own answer.
 export const useApplicationsGrouped = (): {
   isPending: boolean;
-  needsReview: ApplicationGroups;
-  reviewed: ApplicationGroups;
+  sections: ApplicationSection[];
+  totals: Record<ApplicationBucket, number>;
 } => {
   const { data: applications, isPending: applicationsPending } =
     useGetList<Application>("applications", {
-      // Live submissions only. Imported historical Applications keep their
-      // true status ('pending', 'approved', ...) because that is what the
-      // source recorded, but a back-filled record of something that already
-      // happened is not present-day review work — without this filter the
-      // historical import would drop ~97 "pending" rows into the Needs
-      // Review queue. Distinguished by record origin rather than by
-      // falsifying status.
-      filter: { source: "public_form" },
+      // Every Application, whatever its provenance. What it IS decides
+      // where it goes, not how it got here.
+      filter: {},
       pagination: { page: 1, perPage: 1000 },
       sort: { field: "submitted_at", order: "DESC" },
     });
 
-  // opportunity_id is optional now, so only Applications that actually have
-  // an Opportunity contribute a Deal id to look up.
   const dealIds = [
     ...new Set(
       (applications ?? [])
@@ -74,27 +88,30 @@ export const useApplicationsGrouped = (): {
     { enabled: dealIds.length > 0 },
   );
 
-  const offerIds = [...new Set((deals ?? []).map((d) => d.offer_id))];
-  const { data: offers, isPending: offersPending } = useGetMany<Offer>(
+  const { data: offers, isPending: offersPending } = useGetList<Offer>(
     "offers",
-    { ids: offerIds },
-    { enabled: offerIds.length > 0 },
+    {
+      filter: {},
+      pagination: { page: 1, perPage: 100 },
+      sort: { field: "id", order: "ASC" },
+    },
+  );
+  const { data: cohorts, isPending: cohortsPending } = useGetList<Cohort>(
+    "cohorts",
+    {
+      filter: {},
+      pagination: { page: 1, perPage: 200 },
+      sort: { field: "id", order: "ASC" },
+    },
   );
 
-  const cohortIds = [
+  const contactIds = [
     ...new Set(
-      (deals ?? [])
-        .map((d) => d.cohort_id)
+      (applications ?? [])
+        .map((a) => a.contact_id)
         .filter((id): id is Identifier => id != null),
     ),
   ];
-  const { data: cohorts, isPending: cohortsPending } = useGetMany<Cohort>(
-    "cohorts",
-    { ids: cohortIds },
-    { enabled: cohortIds.length > 0 },
-  );
-
-  const contactIds = [...new Set((deals ?? []).map((d) => d.contact_id))];
   const { data: contacts, isPending: contactsPending } = useGetMany<Contact>(
     "contacts",
     { ids: contactIds },
@@ -103,97 +120,136 @@ export const useApplicationsGrouped = (): {
 
   const isPending =
     applicationsPending ||
-    (dealIds.length > 0 &&
-      (dealsPending ||
-        (offerIds.length > 0 && offersPending) ||
-        (cohortIds.length > 0 && cohortsPending) ||
-        (contactIds.length > 0 && contactsPending)));
+    offersPending ||
+    cohortsPending ||
+    (dealIds.length > 0 && dealsPending) ||
+    (contactIds.length > 0 && contactsPending);
 
-  const empty: ApplicationGroups = {
-    individualGroups: [],
-    groupOfferGroups: [],
-  };
   if (isPending) {
-    return { isPending: true, needsReview: empty, reviewed: empty };
+    return {
+      isPending: true,
+      sections: [],
+      totals: {
+        "needs-review": 0,
+        reviewed: 0,
+        "pre-crm-active-sales": 0,
+        historical: 0,
+      },
+    };
   }
 
   const dealById = new Map((deals ?? []).map((d) => [String(d.id), d]));
   const offerById = new Map((offers ?? []).map((o) => [String(o.id), o]));
+  const cohortById = new Map((cohorts ?? []).map((c) => [String(c.id), c]));
   const contactById = new Map((contacts ?? []).map((c) => [String(c.id), c]));
 
-  const buildGroups = (rows: ApplicationRow[]): ApplicationGroups => {
-    const rowsByOfferId = new Map<string, ApplicationRow[]>();
-    const rowsByCohortId = new Map<string, ApplicationRow[]>();
-
-    for (const row of rows) {
-      const deal = dealById.get(String(row.dealId));
-      if (!deal) continue;
-      const offer = offerById.get(String(deal.offer_id));
-      if (!offer) continue;
-
-      if (offer.type === "individual") {
-        const key = String(offer.id);
-        rowsByOfferId.set(key, [...(rowsByOfferId.get(key) ?? []), row]);
-      } else if (deal.cohort_id != null) {
-        const key = String(deal.cohort_id);
-        rowsByCohortId.set(key, [...(rowsByCohortId.get(key) ?? []), row]);
-      }
-    }
-
-    const individualGroups: IndividualOfferGroup[] = (offers ?? [])
-      .filter((offer) => offer.type === "individual")
-      .map((offer) => ({
-        offer,
-        applications: rowsByOfferId.get(String(offer.id)) ?? [],
-      }))
-      .filter((group) => group.applications.length > 0);
-
-    const groupOfferGroups: GroupOfferGroup[] = (offers ?? [])
-      .filter((offer) => offer.type === "group")
-      .map((offer) => ({
-        offer,
-        cohorts: (cohorts ?? [])
-          .filter((cohort) => String(cohort.offer_id) === String(offer.id))
-          .map((cohort) => ({
-            cohort,
-            applications: rowsByCohortId.get(String(cohort.id)) ?? [],
-          }))
-          .filter((cohortGroup) => cohortGroup.applications.length > 0),
-      }))
-      .filter((group) => group.cohorts.length > 0);
-
-    return { individualGroups, groupOfferGroups };
+  const sectionMap = new Map<string, ApplicationSection>();
+  const totals: Record<ApplicationBucket, number> = {
+    "needs-review": 0,
+    reviewed: 0,
+    "pre-crm-active-sales": 0,
+    historical: 0,
   };
 
-  const needsReviewRows: ApplicationRow[] = [];
-  const reviewedRows: ApplicationRow[] = [];
-
   for (const application of applications ?? []) {
-    const deal = dealById.get(String(application.opportunity_id));
-    if (!deal) continue;
-    const offer = offerById.get(String(deal.offer_id));
-    if (!offer) continue;
-    const contact = contactById.get(String(deal.contact_id));
+    const deal =
+      application.opportunity_id != null
+        ? (dealById.get(String(application.opportunity_id)) ?? null)
+        : null;
 
+    // The Application's own offer_id first — it is set on every
+    // production row, and it is what makes the 78 Opportunity-less ones
+    // placeable at all. The Deal is a rescue for a row that somehow has
+    // neither, never the requirement: nothing should vanish from this
+    // page for want of an Opportunity.
+    const offer =
+      offerById.get(String(application.offer_id)) ??
+      (deal ? (offerById.get(String(deal.offer_id)) ?? null) : null);
+    if (!offer) continue;
+
+    const cohortId = application.intended_cohort_id ?? deal?.cohort_id ?? null;
+    const cohort =
+      offer.type === "group" && cohortId != null
+        ? (cohortById.get(String(cohortId)) ?? null)
+        : null;
+
+    const bucket = classifyApplication(application, { cohort, deal });
+
+    const contact = contactById.get(String(application.contact_id));
     const row: ApplicationRow = {
       applicationId: application.id,
-      dealId: deal.id,
-      contactId: deal.contact_id,
+      dealId: deal?.id ?? null,
+      contactId: application.contact_id,
       contactName: contact
-        ? `${contact.first_name} ${contact.last_name}`
-        : deal.name,
+        ? `${contact.first_name} ${contact.last_name}`.trim()
+        : (deal?.name ?? "Unknown person"),
       status: application.status,
       submittedAt: application.submitted_at,
+      bucket,
+      dealStage: deal?.stage ?? null,
     };
 
-    (application.status === "pending" ? needsReviewRows : reviewedRows).push(
-      row,
-    );
+    const key = cohort ? `cohort:${cohort.id}` : `offer:${offer.id}`;
+    const section = sectionMap.get(key) ?? {
+      key,
+      offer,
+      cohort,
+      buckets: emptyBuckets(),
+      total: 0,
+    };
+    section.buckets[bucket].push(row);
+    section.total += 1;
+    sectionMap.set(key, section);
+    totals[bucket] += 1;
+  }
+
+  // Newest submission first inside every subsection — the same order the
+  // list is already fetched in, made explicit so it survives grouping.
+  for (const section of sectionMap.values()) {
+    for (const rows of Object.values(section.buckets)) {
+      rows.sort(byNewestSubmission);
+    }
   }
 
   return {
     isPending: false,
-    needsReview: buildGroups(needsReviewRows),
-    reviewed: buildGroups(reviewedRows),
+    sections: [...sectionMap.values()].sort(bySectionOrder),
+    totals,
   };
+};
+
+const byNewestSubmission = (a: ApplicationRow, b: ApplicationRow): number => {
+  if (a.submittedAt !== b.submittedAt) {
+    return b.submittedAt.localeCompare(a.submittedAt);
+  }
+  // Ties broken by name so the order never shuffles between renders.
+  return a.contactName.localeCompare(b.contactName);
+};
+
+// What Leif has to act on, first.
+//
+// A section with review work outranks one without, because that is the
+// question the page exists to answer. Then open cohorts ahead of closed
+// ones, then the individual offer, then newest cohort first. Fully
+// tie-broken on key so the order is stable across renders.
+const bySectionOrder = (
+  a: ApplicationSection,
+  b: ApplicationSection,
+): number => {
+  const needs = (s: ApplicationSection) =>
+    s.buckets["needs-review"].length > 0 ? 0 : 1;
+  if (needs(a) !== needs(b)) return needs(a) - needs(b);
+
+  const openCohort = (s: ApplicationSection) =>
+    s.cohort?.status === "applications_open" ? 0 : 1;
+  if (openCohort(a) !== openCohort(b)) return openCohort(a) - openCohort(b);
+
+  // The rolling 1:1 programme above finished cohorts.
+  const individual = (s: ApplicationSection) => (s.cohort == null ? 0 : 1);
+  if (individual(a) !== individual(b)) return individual(a) - individual(b);
+
+  if (a.cohort && b.cohort && a.cohort.id !== b.cohort.id) {
+    return Number(b.cohort.id) - Number(a.cohort.id);
+  }
+  return a.key.localeCompare(b.key);
 };

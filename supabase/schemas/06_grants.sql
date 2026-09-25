@@ -93,6 +93,18 @@ revoke all on function public.submit_public_application(bigint, bigint, text, te
 revoke all on function public.submit_public_application(bigint, bigint, text, text, text, text, jsonb) from authenticated;
 grant all on function public.submit_public_application(bigint, bigint, text, text, text, text, jsonb) to service_role;
 
+-- The signed-in counterpart: creating an Application by hand, together
+-- with the Application Received Opportunity the review workflow cannot
+-- work without, in one transaction. SECURITY INVOKER, and authenticated
+-- already holds insert on deals and applications below — so this adds no
+-- capability, only atomicity. anon is excluded on purpose: this is a CRM
+-- action, never a public one. (20260920120000 narrowed the default
+-- privileges for new functions, so the grant has to be explicit.)
+revoke all on function public.create_manual_application(bigint, bigint, bigint) from public;
+revoke all on function public.create_manual_application(bigint, bigint, bigint) from anon;
+grant execute on function public.create_manual_application(bigint, bigint, bigint) to authenticated;
+grant execute on function public.create_manual_application(bigint, bigint, bigint) to service_role;
+
 -- Table grants
 grant all on table public.companies to anon;
 grant all on table public.companies to authenticated;

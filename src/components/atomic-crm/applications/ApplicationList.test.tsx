@@ -36,7 +36,19 @@ const deals = [
   { id: 201, contact_id: 101, offer_id: 2, cohort_id: 10, name: "Priya" },
   { id: 202, contact_id: 102, offer_id: 2, cohort_id: 11, name: "Jordan" },
   { id: 203, contact_id: 103, offer_id: 1, cohort_id: null, name: "Naomi" },
-  { id: 204, contact_id: 104, offer_id: 1, cohort_id: null, name: "Historic" },
+  // Concluded on purpose: this old-funnel questionnaire belongs in
+  // Historical, and "no stage, no outcome" would read as a sales process
+  // still running and put it under Pre-CRM — Active Sales instead.
+  {
+    id: 204,
+    contact_id: 104,
+    offer_id: 1,
+    cohort_id: null,
+    name: "Historic",
+    stage: "decision",
+    outcome: "lost",
+    archived_at: null,
+  },
 ];
 
 const applications = [
@@ -116,8 +128,7 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
       translate: (key, options) => {
         if (key === "resources.applications.needs_review")
           return "Needs Review";
-        if (key === "resources.applications.reviewed")
-          return "Reviewed Applications";
+        if (key === "resources.applications.reviewed") return "Reviewed";
         if (typeof options?._ === "string") {
           return options._;
         }
@@ -131,15 +142,26 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
   </CoreAdminContext>
 );
 
+const sectionFor = (
+  screen: { container: HTMLElement },
+  heading: string,
+): HTMLElement | null =>
+  [...screen.container.querySelectorAll("section")].find((el) =>
+    [...el.querySelectorAll("h2")].some((h) => h.textContent === heading),
+  ) ?? null;
+
 describe("ApplicationList", () => {
   it("puts the individual (1:1) offer's pending application under Needs Review, with the simplified heading", async () => {
     const screen = await render(<ApplicationList />, { wrapper: Wrapper });
-    await expect.element(screen.getByText("Needs Review")).toBeInTheDocument();
-    // "1:1 — " prefix dropped (UX cleanup pass, §3).
+    // "Needs Review" now appears once per programme that has any, which
+    // is the point of the page — so this scopes to the 1:1 section
+    // rather than asserting a single global heading.
     await expect
       .element(screen.getByText("The Living Example"))
       .toBeInTheDocument();
-    await expect.element(screen.getByText("Rosalind Park")).toBeInTheDocument();
+    const le = sectionFor(screen, "The Living Example");
+    expect(le?.textContent).toContain("Needs Review");
+    expect(le?.textContent).toContain("Rosalind Park");
   });
 
   it("keeps an imported historical Application out of Needs Review without falsifying its status", async () => {
@@ -171,12 +193,12 @@ describe("ApplicationList", () => {
     const sections = [...container.querySelectorAll("h2")];
     const novemberSection = sections
       .find((el) => el.textContent === "Spring Cohort")
-      ?.closest("div");
+      ?.closest("section");
     expect(novemberSection?.textContent).not.toContain("Priya Nair");
 
     const septemberSection = sections
       .find((el) => el.textContent === "September Cohort")
-      ?.closest("div");
+      ?.closest("section");
     expect(septemberSection?.textContent).not.toContain("Jordan Lee");
   });
 
@@ -194,9 +216,20 @@ describe("ApplicationList", () => {
       .element(screen.getByText("Historic Applicant"))
       .not.toBeInTheDocument();
 
-    const historicalTrigger = screen.getByText("Historical Applications");
-    await expect.element(historicalTrigger).toBeInTheDocument();
-    await historicalTrigger.click();
+    // Wait for something POSITIVE before reading the DOM: every
+    // assertion above is an absence, and an absence is satisfied while
+    // the page is still loading, so the container was empty here.
+    await expect
+      .element(screen.getByText("The Living Example"))
+      .toBeInTheDocument();
+
+    // Historical sits inside the programme it belongs to, so open the
+    // 1:1 one specifically — proving it was filed there and not globally.
+    const le = sectionFor(screen, "The Living Example")!;
+    const trigger = [...le.querySelectorAll("button")].find((b) =>
+      /Historical/.test(b.textContent ?? ""),
+    )!;
+    trigger.click();
 
     await expect
       .element(screen.getByText("Historic Applicant"))
@@ -206,10 +239,17 @@ describe("ApplicationList", () => {
   it("keeps a Deal-less historical Application visible, grouped by what it was applied FOR", async () => {
     const screen = await render(<ApplicationList />, { wrapper: Wrapper });
 
-    await screen.getByText("Historical Applications").click();
+    await expect.element(screen.getByText("Spring Cohort")).toBeInTheDocument();
 
-    // Resolved from the Application's own intended_cohort_id — it has no
-    // Deal to read an offer off, which is exactly why it used to disappear.
+    // Opened inside the Spring Cohort section specifically. This record
+    // has no Deal at all, so the only thing that could have filed it here
+    // is its own intended_cohort_id — which is exactly why it used to
+    // disappear when grouping walked through the Opportunity.
+    const spring = sectionFor(screen, "Spring Cohort")!;
+    [...spring.querySelectorAll("button")]
+      .find((b) => /Historical/.test(b.textContent ?? ""))!
+      .click();
+
     await expect
       .element(screen.getByText("Dealless Applicant"))
       .toBeInTheDocument();
@@ -217,8 +257,10 @@ describe("ApplicationList", () => {
 
   it("shows the offer group label above its cohorts", async () => {
     const screen = await render(<ApplicationList />, { wrapper: Wrapper });
+    // The parent programme is named beside each of its cohorts, so it
+    // appears once per cohort section rather than once overall.
     await expect
-      .element(screen.getByText("Growing Yourself Up"))
+      .element(screen.getByText("Growing Yourself Up").first())
       .toBeInTheDocument();
   });
 
@@ -230,7 +272,7 @@ describe("ApplicationList", () => {
       .element(screen.getByText("Naomi Ellison"))
       .not.toBeInTheDocument();
 
-    const reviewedTrigger = screen.getByText("Reviewed Applications");
+    const reviewedTrigger = screen.getByText("Reviewed");
     await expect.element(reviewedTrigger).toBeInTheDocument();
     await reviewedTrigger.click();
 

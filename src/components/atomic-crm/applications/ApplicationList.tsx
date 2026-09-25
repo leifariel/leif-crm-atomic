@@ -1,4 +1,7 @@
+import { useState } from "react";
 import { useTranslate } from "ra-core";
+import { Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DateField } from "@/components/admin/date-field";
 import {
@@ -8,60 +11,71 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 
-import { PageHeader, PersonCard, Section } from "../misc/ProgramLayout";
+import { PageHeader, PersonCard } from "../misc/ProgramLayout";
 import { humanizeCohortName } from "../cohorts/humanizeCohortName";
+import { CopyApplicationLinkButton } from "../public-application/CopyApplicationLinkButton";
+import { ApplicationCreateDialog } from "./ApplicationCreateDialog";
 import {
   applicationStatusBadgeVariant,
   applicationStatusLabels,
 } from "./applicationConstants";
+import type { ApplicationBucket } from "./classifyApplication";
 import {
   useApplicationsGrouped,
-  type ApplicationGroups,
   type ApplicationRow,
+  type ApplicationSection,
 } from "./useApplicationsGrouped";
-import { useHistoricalApplications } from "./useHistoricalApplications";
-import { HistoricalApplicationSections } from "./HistoricalApplicationSections";
 
-// Applications is a single, unified Application table underneath — the
-// grouping below is purely presentational, derived from each Application's
-// real Offer/Cohort relationship (Runtime + Visual Consistency slice, §5):
-// one section per individual (1:1) Offer, and one section per Cohort under
-// its group Offer. No new Application resource, no hand-maintained list.
+// The Applications page answers three questions, in this order: which
+// programme, does Leif need to review this, and if not what is it really.
 //
-// UX cleanup pass, §3: "what needs my attention" is now the PRIMARY
-// question this page answers. Needs Review (status 'pending') is always
-// expanded; every already-reviewed outcome (Approved/Not Fit/Needs Higher
-// Care/Do Not Engage — applicationConstants.ts's own vocabulary, nothing
-// new) is demoted into a collapsed "Reviewed Applications" history section
-// so real application volume doesn't bury what's actually actionable.
-// Review behavior/outcome semantics are completely untouched — this only
-// changes which section a row renders in, driven by the same `status`
-// field reviewApplication.ts already writes.
+// It used to answer the second one first, with a single global Needs
+// Review list, and it decided membership by provenance — which buried six
+// January 2027 applications Leif needed to read. Programme comes first
+// now, and within each programme the subsections say only what is true.
+// See classifyApplication.ts for the rules and the facts behind them.
 export const ApplicationList = () => {
   const translate = useTranslate();
-  const { isPending, needsReview, reviewed } = useApplicationsGrouped();
-  // Imported Applications are a separate population on purpose: history to
-  // browse, never review work. They are also the reason this page read
-  // "No applications yet" while holding 159 records.
-  const {
-    isPending: historicalPending,
-    total: historicalCount,
-    groups: historicalGroups,
-  } = useHistoricalApplications();
+  const { isPending, sections, totals } = useApplicationsGrouped();
+  const [createOpen, setCreateOpen] = useState(false);
 
-  if (isPending || historicalPending) return null;
+  if (isPending) return null;
 
-  const needsReviewCount = countApplications(needsReview);
-  const reviewedCount = countApplications(reviewed);
-  const isEmpty =
-    needsReviewCount === 0 && reviewedCount === 0 && historicalCount === 0;
+  const isEmpty = sections.length === 0;
 
   return (
     <div className="flex flex-col gap-8 mt-1 p-1 max-w-3xl">
-      <PageHeader
-        title={translate("resources.applications.name", { smart_count: 2 })}
-        summary={translate("resources.applications.orientation")}
-      />
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <PageHeader
+            title={translate("resources.applications.name", { smart_count: 2 })}
+            summary={translate("resources.applications.orientation")}
+          />
+        </div>
+        {/* This page IS All Applications — the header and the nav item say
+            so, so there is no button that only navigates to where you
+            already are. New Application is a real action, so it gets one. */}
+        <Button variant="outline" size="sm" onClick={() => setCreateOpen(true)}>
+          <Plus className="size-4" />
+          {translate("resources.applications.action.create", {
+            _: "New Application",
+          })}
+        </Button>
+      </div>
+
+      <ApplicationCreateDialog open={createOpen} onOpenChange={setCreateOpen} />
+
+      {totals["needs-review"] > 0 && (
+        <p className="text-sm text-muted-foreground">
+          {translate("resources.applications.waiting_summary", {
+            _: "%{count} waiting for you across %{programmes} programmes.",
+            count: totals["needs-review"],
+            programmes: sections.filter(
+              (s) => s.buckets["needs-review"].length > 0,
+            ).length,
+          })}
+        </p>
+      )}
 
       {isEmpty && (
         <p className="text-sm text-muted-foreground">
@@ -71,125 +85,140 @@ export const ApplicationList = () => {
         </p>
       )}
 
-      {needsReviewCount > 0 && (
-        <div className="flex flex-col gap-6">
-          <h2 className="text-lg font-semibold">
-            {translate("resources.applications.needs_review", {
-              _: "Needs Review",
-            })}
-          </h2>
-          <ApplicationGroupSections groups={needsReview} />
-        </div>
-      )}
-
-      {needsReviewCount === 0 && reviewedCount > 0 && (
-        <p className="text-sm text-muted-foreground">
-          {translate("resources.applications.needs_review_empty", {
-            _: "Nothing waiting for review.",
-          })}
-        </p>
-      )}
-
-      {reviewedCount > 0 && (
-        <Accordion type="single" collapsible>
-          <AccordionItem value="reviewed" className="border-none">
-            <AccordionTrigger className="text-lg font-semibold hover:no-underline py-0">
-              {translate("resources.applications.reviewed", {
-                _: "Reviewed Applications",
-                count: reviewedCount,
-              })}
-              <span className="text-sm font-normal text-muted-foreground ml-auto mr-2">
-                {reviewedCount}
-              </span>
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className="flex flex-col gap-6 pt-2">
-                <ApplicationGroupSections groups={reviewed} />
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      )}
-
-      {historicalCount > 0 && (
-        <Accordion type="single" collapsible>
-          <AccordionItem value="historical" className="border-none">
-            <AccordionTrigger className="text-lg font-semibold hover:no-underline py-0">
-              {translate("resources.applications.historical", {
-                _: "Historical Applications",
-              })}
-              <span className="text-sm font-normal text-muted-foreground ml-auto mr-2">
-                {historicalCount}
-              </span>
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className="flex flex-col gap-6 pt-2">
-                <p className="text-sm text-muted-foreground">
-                  {translate("resources.applications.historical_orientation", {
-                    _: "Applications imported from before the CRM. They are a record of what happened, not work waiting on you.",
-                  })}
-                </p>
-                <HistoricalApplicationSections groups={historicalGroups} />
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
-      )}
+      {sections.map((section) => (
+        <ProgrammeSection key={section.key} section={section} />
+      ))}
     </div>
   );
 };
 
-const countApplications = (groups: ApplicationGroups): number =>
-  groups.individualGroups.reduce((sum, g) => sum + g.applications.length, 0) +
-  groups.groupOfferGroups.reduce(
-    (sum, g) => sum + g.cohorts.reduce((s, c) => s + c.applications.length, 0),
-    0,
-  );
+// One programme or cohort, with only the subsections it actually has.
+const ProgrammeSection = ({ section }: { section: ApplicationSection }) => {
+  const translate = useTranslate();
+  const { offer, cohort, buckets } = section;
 
-const ApplicationGroupSections = ({
-  groups,
-}: {
-  groups: ApplicationGroups;
-}) => (
-  <>
-    {groups.individualGroups.map((group) => (
-      // "1:1 — " prefix dropped (UX cleanup pass, §3): the owner already
-      // knows The Living Example is a 1:1 program.
-      <Section key={`offer-${group.offer.id}`} title={group.offer.name}>
-        <ApplicationRows rows={group.applications} />
-      </Section>
-    ))}
+  const title = cohort
+    ? humanizeCohortName(cohort.name, offer.name)
+    : offer.name;
 
-    {groups.groupOfferGroups.map((group) => (
-      // Applications hierarchy repair: the Offer (parent Program, e.g.
-      // "Growing Yourself Up") is now the visually primary heading and
-      // each Cohort (the particular run, e.g. "September Cohort") is
-      // secondary/smaller — previously reversed, since Section's own
-      // title was always the larger of the two regardless of which
-      // concept it labeled. Grouping/domain behavior and the persisted
-      // Offer/Cohort names are untouched — display hierarchy only.
-      <div key={`offer-${group.offer.id}`} className="flex flex-col gap-4">
-        <h3 className="text-xl font-semibold">{group.offer.name}</h3>
-        {group.cohorts.map((cohortGroup) => (
-          <Section
-            key={`cohort-${cohortGroup.cohort.id}`}
-            emphasis="secondary"
-            // Redundant Offer initials dropped from the Cohort name (e.g.
-            // "September GYU Cohort" -> "September Cohort") — a pure
-            // presentation helper, the persisted Cohort name is untouched
-            // (see humanizeCohortName.ts's own header).
-            title={humanizeCohortName(
-              cohortGroup.cohort.name,
-              group.offer.name,
-            )}
-          >
-            <ApplicationRows rows={cohortGroup.applications} />
-          </Section>
-        ))}
+  // Only where the destination is unambiguous: the 1:1 programme has one
+  // public form, and a cohort has its own. A group Offer with no cohort
+  // context does not, so it gets no link rather than a guessed one.
+  const applyPath = cohort
+    ? `/apply/growing-yourself-up/${cohort.id}`
+    : offer.type === "individual"
+      ? "/apply/living-example"
+      : null;
+
+  return (
+    <section className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-baseline gap-2">
+          {cohort && (
+            <span className="text-sm text-muted-foreground">{offer.name}</span>
+          )}
+          <h2 className="text-xl font-semibold">{title}</h2>
+        </div>
+        {applyPath && (
+          <CopyApplicationLinkButton
+            path={applyPath}
+            label={translate("resources.applications.apply_link_label", {
+              _: "%{name} application",
+              name: title,
+            })}
+          />
+        )}
       </div>
-    ))}
-  </>
-);
+
+      {/* Waiting on Leif — always open, because it is the reason to be
+          here. The rest are collapsed history he can open when he wants
+          it. An empty subsection is omitted entirely rather than becoming
+          a box with nothing in it. */}
+      <BucketSection
+        bucket="needs-review"
+        rows={buckets["needs-review"]}
+        label={translate("resources.applications.needs_review", {
+          _: "Needs Review",
+        })}
+        open
+      />
+      <BucketSection
+        bucket="reviewed"
+        rows={buckets.reviewed}
+        label={translate("resources.applications.reviewed", {
+          _: "Reviewed",
+        })}
+      />
+      <BucketSection
+        bucket="pre-crm-active-sales"
+        rows={buckets["pre-crm-active-sales"]}
+        label={translate("resources.applications.pre_crm_active", {
+          _: "Pre-CRM — Active Sales",
+        })}
+        note={translate("resources.applications.pre_crm_active_note", {
+          _: "Old-funnel questionnaires whose sales conversation is still open. No review is owed on these.",
+        })}
+      />
+      <BucketSection
+        bucket="historical"
+        rows={buckets.historical}
+        label={translate("resources.applications.historical", {
+          _: "Historical",
+        })}
+        note={translate("resources.applications.historical_note", {
+          _: "Pre-CRM questionnaires from the old book-a-call funnel. Any decision shown was recorded before this CRM.",
+        })}
+      />
+    </section>
+  );
+};
+
+const BucketSection = ({
+  bucket,
+  rows,
+  label,
+  note,
+  open = false,
+}: {
+  bucket: ApplicationBucket;
+  rows: ApplicationRow[];
+  label: string;
+  note?: string;
+  open?: boolean;
+}) => {
+  if (rows.length === 0) return null;
+
+  if (open) {
+    return (
+      <div className="flex flex-col gap-2">
+        <div className="flex items-baseline gap-2">
+          <h3 className="text-base font-semibold">{label}</h3>
+          <span className="text-sm text-muted-foreground">{rows.length}</span>
+        </div>
+        <ApplicationRows rows={rows} />
+      </div>
+    );
+  }
+
+  return (
+    <Accordion type="single" collapsible>
+      <AccordionItem value={bucket} className="border-none">
+        <AccordionTrigger className="text-base font-semibold hover:no-underline py-0">
+          {label}
+          <span className="text-sm font-normal text-muted-foreground ml-auto mr-2">
+            {rows.length}
+          </span>
+        </AccordionTrigger>
+        <AccordionContent>
+          <div className="flex flex-col gap-2 pt-2">
+            {note && <p className="text-xs text-muted-foreground">{note}</p>}
+            <ApplicationRows rows={rows} />
+          </div>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
+  );
+};
 
 const ApplicationRows = ({ rows }: { rows: ApplicationRow[] }) => {
   const translate = useTranslate();
@@ -217,6 +246,11 @@ const ApplicationRows = ({ rows }: { rows: ApplicationRow[] }) => {
                   source="submitted_at"
                   record={{ submitted_at: row.submittedAt }}
                 />
+                {/* The sales fact that makes a Pre-CRM row live, said on
+                    the row rather than left implied by the section. */}
+                {row.bucket === "pre-crm-active-sales" && row.dealStage && (
+                  <> · {row.dealStage.replace(/_/g, " ")}</>
+                )}
               </>
             }
             trailing={

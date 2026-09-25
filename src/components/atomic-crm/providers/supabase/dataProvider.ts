@@ -245,6 +245,31 @@ const getDataProviderWithCustomMethods = () => {
       }
       return data as { status: string };
     },
+    // Creating an Application by hand also establishes the canonical
+    // Application Received Opportunity it cannot be reviewed without.
+    // Production runs it as ONE transaction so the CRM can never land
+    // holding an Application with no Opportunity — a record that looks
+    // like review work and cannot be worked — because a second client
+    // write failed. See applications/createManualApplication.ts.
+    async createManualApplication(input: {
+      contactId: Identifier;
+      offerId: Identifier;
+      cohortId?: Identifier | null;
+    }) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "create_manual_application",
+        {
+          p_contact_id: input.contactId,
+          p_offer_id: input.offerId,
+          p_cohort_id: input.cohortId ?? null,
+        },
+      );
+      if (error) {
+        console.error("create_manual_application.error", error);
+        throw new Error("Failed to create the application");
+      }
+      return data as Record<string, unknown>;
+    },
     // Refused here as well as in the Edge Function, so that a merge cannot
     // leave this machine even if some future caller finds the method.
     // See contacts/contactSafety.ts.

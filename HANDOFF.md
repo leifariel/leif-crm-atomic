@@ -229,6 +229,31 @@ question wording and exact answer are preserved per response
 **99 historical pending Applications are not a review backlog** — only
 genuinely actionable ones surface.
 
+**The Applications page is grouped by Programme/Cohort first**, then by what
+each record needs: Needs Review, Reviewed, Pre-CRM — Active Sales,
+Historical — [classifyApplication.ts](src/components/atomic-crm/applications/classifyApplication.ts).
+Reviewed means `reviewed_at IS NOT NULL`; an imported decision with a null
+timestamp stays a historical fact and is never promoted. Programme and person
+come from the Application's **own** `offer_id` / `intended_cohort_id` /
+`contact_id` — the Opportunity is context, never identity, so an Application
+with `opportunity_id` NULL neither disappears from the list nor renders a
+blank Show page.
+
+**Three origins:** `public_form`, `historical_import`, `manual`. A manual
+Application is one Leif entered herself; it borrows neither other name,
+carries no questionnaire answers, and starts pending.
+
+**A current-funnel Application entails an Opportunity.** Creating one by hand
+writes the Application and its canonical `application_received` Opportunity in
+**one transaction** (`create_manual_application()`), because every review
+outcome writes to both. `entry_path` is `'other'` — no public form produced
+it. Reuse of a live Opportunity is allowed only up to `approved`; at
+`call_booked`, `decision`, legacy `onboarding` or any unknown stage the create
+is **refused** and the live sale is shown instead, because approving would
+otherwise drag the sale backward. A concluded prior sale correctly begins a
+new cycle. Pinned across runtimes by
+[oneReviewableStageRule.test.ts](contracts/applications/oneReviewableStageRule.test.ts).
+
 ### Opportunities / sales
 **One Opportunity per sales attempt.** Active means `archived_at IS NULL AND
 stage <> 'won' AND outcome IS NULL` — [dealActivity.ts](src/components/atomic-crm/deals/dealActivity.ts).
@@ -932,11 +957,37 @@ Requirements to hold:
    surface as real Needs Review; stop using Historical as the catch-all;
    separate the current funnel from pre-CRM questionnaire history; give
    the page top-level All Applications / + New Application access.
+   *Built and committed; **not sealed** — awaiting deployment and Leif's
+   try-run. See §4 Applications for what it settled.*
 2. **Pipeline Application Received → full application lightbox.**
 3. **Gmail** (§9).
 4. **Gmail reliability / human acceptance.**
 5. **Remaining Waitlist email / batch management.**
 6. **Instagram** (§10).
+
+### PUBLIC APPLICATION RESUBMISSION / LATER-STAGE OPPORTUNITY SAFEGUARD — open debt
+
+**Not a proven production incident. Not repaired in the Applications Program
+Review Inbox slice, on purpose.**
+
+`submit_public_application()` reuses an active Opportunity at **any** active
+stage. So a public-form resubmission can attach a new pending Application to
+an Opportunity already at `call_booked` or `decision`; approving that
+Application later writes `stage = 'approved'` onto it and would regress the
+sale.
+
+Manual Application creation already refuses exactly this
+([createManualApplication.ts](src/components/atomic-crm/applications/createManualApplication.ts)
+and `create_manual_application()`, cut at `approved`). The public-form path
+deliberately kept its broader behaviour: the manual safeguard was scoped to
+the owner-only action being added, and widening a live anonymous intake path
+was out of scope.
+
+**The future repair should evaluate whether the public-form path needs the
+same later-stage protection**, and if so whether refusing an anonymous
+submission is acceptable or whether the Application should attach without the
+approval being allowed to move the stage. No production row was found in this
+state; nothing here says one exists.
 
 ### Infrastructure debt — tracked separately, blocks nothing above
 

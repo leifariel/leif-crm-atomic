@@ -29,6 +29,10 @@ import type {
   Task,
   WaitlistEntry,
 } from "../../types";
+import {
+  createManualApplicationMirror,
+  type ManualApplicationInput,
+} from "../../applications/createManualApplication";
 import type { ConfigurationContextValue } from "../../root/ConfigurationContext";
 import { validateOfferCohort } from "../../deals/offerCohortValidation";
 import {
@@ -838,6 +842,28 @@ export const createDataProvider = ({
       // withLifecycleCallbacks wrapper below, not on this object, so only
       // the outer one fires syncDealSalesCallAt.
       return cancelSalesCallMirror(dataProvider, salesCallId);
+    },
+    // The OUTER provider again, for the same reason as cancellation: the
+    // "deals" afterCreate hook (waitlist sync) lives in the
+    // withLifecycleCallbacks wrapper, and production gets that same
+    // behaviour from the deals triggers. Points at the mirror directly so
+    // createManualApplication does not dispatch back into this
+    // registration forever. FakeRest has no transactions, so only the
+    // step ORDER is mirrored here — the atomicity guarantee comes from
+    // the real function.
+    createManualApplication: async (input: ManualApplicationInput) => {
+      const result = await createManualApplicationMirror(dataProvider, input);
+      // Shaped exactly like the RPC's jsonb, field for field — a key
+      // missing here is a field the demo silently loses while production
+      // has it, which is how "%{stage}" reached a dialog uninterpolated.
+      return {
+        status: result.status,
+        application_id: "applicationId" in result ? result.applicationId : null,
+        opportunity_id: "opportunityId" in result ? result.opportunityId : null,
+        stage: "stage" in result ? result.stage : null,
+        reused_opportunity:
+          "reusedOpportunity" in result ? result.reusedOpportunity : false,
+      };
     },
     getConfiguration: async (): Promise<ConfigurationContextValue> => {
       const { data } = await baseDataProvider.getOne("configuration", {

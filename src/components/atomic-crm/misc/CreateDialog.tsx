@@ -9,6 +9,7 @@ import {
 import {
   CreateBase,
   Form,
+  ResourceContextProvider,
   useNotify,
   useRedirect,
   useResourceContext,
@@ -26,6 +27,17 @@ export interface CreateDialogProps extends CreateBaseProps {
   title?: ReactNode;
   defaultValues?: FormProps["defaultValues"];
   headerActions?: ReactNode;
+  /**
+   * Save through a domain action instead of a plain resource create.
+   *
+   * Some records cannot be created on their own. A manually entered
+   * Application also establishes the Opportunity the review workflow
+   * needs, in one transaction — so the save is one named domain
+   * operation, not dataProvider.create("applications"). When this is
+   * given, the caller owns notifying and closing, because only it knows
+   * what its action actually did.
+   */
+  onSubmit?: (values: Record<string, unknown>) => void | Promise<void>;
 }
 
 /**
@@ -49,6 +61,7 @@ export const CreateDialog = ({
   mutationOptions,
   defaultValues,
   headerActions,
+  onSubmit,
   ...createBaseProps
 }: CreateDialogProps) => {
   const resource = useResourceContext(createBaseProps);
@@ -82,43 +95,53 @@ export const CreateDialog = ({
     onSuccess: handleSuccess,
   };
 
+  const body = (
+    <Form
+      defaultValues={defaultValues}
+      className="flex flex-col"
+      onSubmit={onSubmit}
+    >
+      <DialogHeader className="border-b px-5 py-4">
+        <div className={cn("flex items-center gap-2", headerActions && "pr-8")}>
+          <DialogTitle className="min-w-0 flex-1 truncate text-base font-semibold">
+            {title}
+          </DialogTitle>
+          {headerActions && <div className="shrink-0">{headerActions}</div>}
+        </div>
+      </DialogHeader>
+
+      <div className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto px-5 py-4">
+        {children}
+      </div>
+
+      <DialogFooter className="border-t px-5 py-3">
+        <SaveButton className="w-full" />
+      </DialogFooter>
+    </Form>
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="sm:max-w-md gap-0 p-0"
         aria-describedby={undefined}
       >
-        <CreateBase
-          {...createBaseProps}
-          redirect={redirectTo}
-          mutationOptions={enhancedMutationOptions}
-        >
-          <Form defaultValues={defaultValues} className="flex flex-col">
-            <DialogHeader className="border-b px-5 py-4">
-              <div
-                className={cn(
-                  "flex items-center gap-2",
-                  headerActions && "pr-8",
-                )}
-              >
-                <DialogTitle className="min-w-0 flex-1 truncate text-base font-semibold">
-                  {title}
-                </DialogTitle>
-                {headerActions && (
-                  <div className="shrink-0">{headerActions}</div>
-                )}
-              </div>
-            </DialogHeader>
-
-            <div className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto px-5 py-4">
-              {children}
-            </div>
-
-            <DialogFooter className="border-t px-5 py-3">
-              <SaveButton className="w-full" />
-            </DialogFooter>
-          </Form>
-        </CreateBase>
+        {onSubmit ? (
+          // No CreateBase: the domain action owns the write, so there is
+          // no resource mutation for it to run, and nothing for it to
+          // redirect or notify about.
+          <ResourceContextProvider value={resource ?? ""}>
+            {body}
+          </ResourceContextProvider>
+        ) : (
+          <CreateBase
+            {...createBaseProps}
+            redirect={redirectTo}
+            mutationOptions={enhancedMutationOptions}
+          >
+            {body}
+          </CreateBase>
+        )}
       </DialogContent>
     </Dialog>
   );

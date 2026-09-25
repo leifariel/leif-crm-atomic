@@ -1862,10 +1862,6 @@
           "type": "registry:component"
         },
         {
-          "path": "src/components/atomic-crm/applications/useHistoricalApplications.ts",
-          "type": "registry:component"
-        },
-        {
           "path": "src/components/atomic-crm/applications/useApplicationsGrouped.ts",
           "type": "registry:component"
         },
@@ -1886,6 +1882,14 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/applications/createManualApplication.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/classifyApplication.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/applications/applicationReviewSla.ts",
           "type": "registry:component"
         },
@@ -1895,10 +1899,6 @@
         },
         {
           "path": "src/components/atomic-crm/applications/answerLabels.ts",
-          "type": "registry:component"
-        },
-        {
-          "path": "src/components/atomic-crm/applications/HistoricalApplicationSections.tsx",
           "type": "registry:component"
         },
         {
@@ -1914,7 +1914,19 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/applications/ApplicationProgramFields.tsx",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/applications/ApplicationList.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/ApplicationEditDialog.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/ApplicationCreateDialog.tsx",
           "type": "registry:component"
         },
         {

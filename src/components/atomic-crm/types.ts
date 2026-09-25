@@ -263,7 +263,10 @@ export type ApplicationStatus =
 // outstanding work; 'historical_import' is a back-filled record of what
 // already happened and must never become present-day work, whatever its
 // status says.
-export type ApplicationSource = "public_form" | "historical_import";
+// Where the record came from. "manual" means Leif created it in the CRM
+// herself: no form submission, no questionnaire answers, no Opportunity
+// and no review — only that she entered it.
+export type ApplicationSource = "public_form" | "historical_import" | "manual";
 
 export type Application = {
   // The canonical person relationship — an Application belongs to a

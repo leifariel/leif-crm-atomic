@@ -401,6 +401,14 @@ create table public.applications (
     -- creating present-day review work. historical_import_records cannot
     -- serve this purpose — it is deliberately revoked from anon and
     -- authenticated (see 06_grants.sql), so no UI read path can consult it.
+    --
+    -- 'manual' is the third origin: Leif created the record in the CRM
+    -- herself. It is neither of the other two and must not borrow either
+    -- name — calling it 'public_form' would claim a submission that never
+    -- happened, and 'historical_import' would claim it predates the CRM.
+    -- It carries no questionnaire answers, no Opportunity and no review;
+    -- it says only that she entered it, and it starts 'pending' like any
+    -- other application awaiting her decision.
     source text not null default 'public_form',
     -- Phase 4H proposal, ACTUALLY APPLIED in Phase 4O (real Postgres
     -- rejected the first Gate A batch of Contact+Application-only
@@ -472,7 +480,7 @@ create table public.applications (
     created_at timestamp with time zone not null default now(),
     updated_at timestamp with time zone not null default now(),
     constraint applications_status_check check (status in ('pending', 'approved', 'needs_higher_care', 'not_fit', 'do_not_engage', 'denied', 'waitlist')),
-    constraint applications_source_check check (source in ('public_form', 'historical_import'))
+    constraint applications_source_check check (source in ('public_form', 'historical_import', 'manual'))
 );
 
 -- The commercial/client lifecycle after a successful sale. At most one per
