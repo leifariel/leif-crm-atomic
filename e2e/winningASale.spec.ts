@@ -13,14 +13,23 @@ import { expect, test } from "./fixtures";
 //   42501 permission denied for function seed_enrollment_onboarding
 //
 // WHO that blocks matters, and is easy to get wrong. An ordinary signed-in
-// user was never allowed to set Won: handle_deal_saved() refuses it, because
-// Won must only ever be reached by a real payment and a CRM user must not be
-// able to fabricate one. The role that DOES reach it is `service_role` —
-// the Stripe webhook. So the outage is not a button Leif cannot press; it
-// is a client paying and the CRM failing to enroll them.
+// user still cannot set Won by editing a Deal — handle_deal_saved() refuses
+// it — but the REASON has changed since this was written, and the reason is
+// the whole point.
 //
-// Both halves are asserted below: the webhook path must work, and the
-// business refusal for an ordinary user must survive the privilege fix.
+// This file used to say "Won must only ever be reached by a real payment".
+// 20260918180000 overturned that: "a model that treated Won as a payment
+// fact. It is not. Won means the sale was accepted." The guard that encoded
+// the old model was never retired, and for a week that made recording a
+// sale from the CRM impossible — Becky Schmauch's call went in attended
+// while her Opportunity stayed at Call Booked with no Enrollment.
+//
+// So what is refused now is a HAND-EDITED stage, not a role. The canonical
+// sale actions (complete_attended_sales_call, record_prospect_accepted) are
+// SECURITY DEFINER and run as the owner, which a client cannot become; the
+// Stripe webhook still reaches it as `service_role`. Both halves are still
+// asserted below: the webhook path must work, and the business refusal
+// for an ordinary user must survive both fixes.
 //
 // It runs as the REAL roles against real Postgres, because that is the only
 // place a privilege boundary exists. A FakeRest test cannot fail this way,
@@ -164,9 +173,11 @@ test.describe("completing a sale", () => {
   test("an ordinary signed-in user still cannot fabricate a Won sale", async ({
     createSales,
   }) => {
-    // Not a side effect to be tolerated — a rule to be preserved. Won means
-    // somebody paid, and a CRM user editing a Deal must not be able to say
-    // so. The privilege fix must not weaken this.
+    // Not a side effect to be tolerated — a rule to be preserved. Won turns
+    // into an Enrollment, an onboarding checklist and possibly a claimed
+    // scholarship slot, so a CRM user typing into a stage field must not be
+    // able to conjure all of that. Neither the privilege fix nor the sale
+    // repair may weaken this.
     const { sale, email, password } = await newSale(createSales, "direct");
     const { admin, dealId } = await seedOpportunity(sale.id, "direct");
     const user = await asSignedInUser(email, password);
@@ -176,7 +187,9 @@ test.describe("completing a sale", () => {
       .update({ stage: "won" })
       .eq("id", dealId);
     expect(error).not.toBeNull();
-    expect(error!.message).toMatch(/only reached via a successful Stripe/i);
+    expect(error!.message).toMatch(
+      /cannot be set to Won by editing its stage/i,
+    );
 
     const { data: enrollments } = await admin
       .from("enrollments")
