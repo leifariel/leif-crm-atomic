@@ -1,6 +1,11 @@
 import { DragDropContext, type OnDragEndResponder } from "@hello-pangea/dnd";
 import isEqual from "lodash/isEqual";
-import { useDataProvider, useGetList, useListContext } from "ra-core";
+import {
+  useDataProvider,
+  useGetList,
+  useListContext,
+  useNotify,
+} from "ra-core";
 import { useEffect, useState } from "react";
 
 import { useConfigurationContext } from "../root/ConfigurationContext";
@@ -22,6 +27,7 @@ export const DealListContent = () => {
   );
   const { data: unorderedDeals, isPending, refetch } = useListContext<Deal>();
   const dataProvider = useDataProvider();
+  const notify = useNotify();
 
   // Won Opportunities whose setup is not finished. They are excluded from
   // the board's own query (Won is a pipeline-exit status), so they are
@@ -87,9 +93,33 @@ export const DealListContent = () => {
 
     // The durable half lives in applyDealStageDrop so it can be proven
     // without simulating a browser drag.
-    applyDealStageDrop(dataProvider, { result, dealsByStage }).then(() => {
-      refetch();
-    });
+    applyDealStageDrop(dataProvider, { result, dealsByStage }).then(
+      (outcome) => {
+        // A refused drop used to snap the card back and say nothing, so a
+        // gesture that cannot work looked like one that had failed. Won
+        // and Onboarding are the two columns this reaches: neither is a
+        // stage you move a card into, and the board should say which it
+        // is rather than leave Leif to guess.
+        if (!outcome.applied && outcome.reason === "synthetic-column") {
+          const to = result.destination?.droppableId;
+          notify(
+            to === "won"
+              ? "resources.deals.drop.won_is_a_sale"
+              : "resources.deals.drop.onboarding_is_derived",
+            {
+              type: "info",
+              messageArgs: {
+                _:
+                  to === "won"
+                    ? "A sale is recorded on the call or the prospect's decision, not by moving the card."
+                    : "Onboarding shows itself: a card appears here once the sale is won and its setup is unfinished.",
+              },
+            },
+          );
+        }
+        refetch();
+      },
+    );
   };
 
   return (

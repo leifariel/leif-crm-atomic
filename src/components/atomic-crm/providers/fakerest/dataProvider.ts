@@ -33,6 +33,8 @@ import {
   createManualApplicationMirror,
   type ManualApplicationInput,
 } from "../../applications/createManualApplication";
+import { completeAttendedSalesCallMirror } from "../../sales-calls/completeAttendedSalesCallMirror";
+import { acceptSaleMirror } from "../../deals/acceptSaleMirror";
 import type { ConfigurationContextValue } from "../../root/ConfigurationContext";
 import { validateOfferCohort } from "../../deals/offerCohortValidation";
 import {
@@ -851,6 +853,19 @@ export const createDataProvider = ({
     // registration forever. FakeRest has no transactions, so only the
     // step ORDER is mirrored here — the atomicity guarantee comes from
     // the real function.
+    // The Decision door. FakeRest has no transactions and no trigger, so
+    // the mirror is the sequential code already in recordSalesDecision —
+    // leaving this undefined would break the type, so it delegates to a
+    // tiny local stand-in that keeps the same contract.
+    recordProspectAccepted: async (opportunityId) =>
+      acceptSaleMirror(dataProvider, opportunityId),
+    // FakeRest has no transactions, so only the step ORDER is mirrored
+    // here — the atomicity guarantee comes from the real function. The
+    // OUTER provider, so the "deals" and "sales_calls" lifecycle hooks in
+    // the withLifecycleCallbacks wrapper fire, which is what production
+    // gets from its triggers.
+    completeAttendedSalesCall: async (input) =>
+      completeAttendedSalesCallMirror(dataProvider, input),
     createManualApplication: async (input: ManualApplicationInput) => {
       const result = await createManualApplicationMirror(dataProvider, input);
       // Shaped exactly like the RPC's jsonb, field for field — a key

@@ -104,7 +104,14 @@ const YesNoActions = ({ deal }: { deal: Deal }) => {
     setBusy(true);
     try {
       const result = await recordYes(dataProvider, { opportunityId: deal.id });
-      if (result.status === "already-resolved") {
+      if (result.status === "conflicting-outcome") {
+        // It ended differently — declined, ghosted, archived. Saying yes
+        // now would rewrite somebody's recorded answer, so it fails closed
+        // and says which answer is already there.
+        notify(result.reason || "This opportunity already ended.", {
+          type: "warning",
+        });
+      } else if (result.status === "already-resolved") {
         notify("This Opportunity has already been resolved.", {
           type: "warning",
         });

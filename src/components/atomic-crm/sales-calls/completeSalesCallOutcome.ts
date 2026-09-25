@@ -55,10 +55,61 @@ export type CompleteSalesCallOutcomeResult =
 // can never silently overwrite a newer outcome. Every branch below mirrors
 // the ticket's own decision table exactly — see this slice's report for
 // the stage/outcome reasoning.
+type TransactionalProvider = DataProvider & {
+  completeAttendedSalesCall?: (input: {
+    salesCallId: Identifier;
+    ownerDecision: string;
+    prospectDecision?: string | null;
+    followUpDate?: string | null;
+  }) => Promise<Record<string, unknown>>;
+};
+
 export const completeSalesCallOutcome = async (
   input: CompleteSalesCallOutcomeInput,
 ): Promise<CompleteSalesCallOutcomeResult> => {
   const { dataProvider } = input;
+
+  // Production runs the attended branch as ONE transaction.
+  //
+  // It used to be this function's own sequence of separate writes, and
+  // Becky Schmauch's sale is what that cost: the attendance landed, the
+  // Won write was refused by handle_deal_saved(), and she was left with a
+  // completed call against an Opportunity still at Call Booked — one
+  // click, half persisted, behind a generic "server connection error".
+  // Everything below stays as the FakeRest mirror for the demo and the
+  // tests, the same dual-implementation pattern as cancelSalesCall.ts.
+  const rpc = (dataProvider as TransactionalProvider).completeAttendedSalesCall;
+  if (rpc && input.attendance === "attended") {
+    if (!input.ownerDecision) {
+      return {
+        status: "validation-error",
+        message: "An owner-fit decision is required for an attended call.",
+      };
+    }
+    if (input.ownerDecision === "would_work_with" && !input.prospectDecision) {
+      return {
+        status: "validation-error",
+        message: "A prospect decision is required when Would Work With.",
+      };
+    }
+    const result = await rpc({
+      salesCallId: input.salesCallId,
+      ownerDecision: input.ownerDecision,
+      prospectDecision: input.prospectDecision ?? null,
+      followUpDate: input.followUpDate ?? null,
+    });
+    const status = result.status as CompleteSalesCallOutcomeResult["status"];
+    if (status === "validation-error") {
+      return { status, message: String(result.message ?? "") };
+    }
+    // The follow-up Task and the Offer Page token are outside the sale
+    // itself — neither is business truth about whether it happened — so
+    // they stay here rather than joining the transaction.
+    if (status === "completed") {
+      await afterAttendedOutcome(input, result);
+    }
+    return { status } as CompleteSalesCallOutcomeResult;
+  }
   const { data: salesCall } = await dataProvider
     .getOne<SalesCall>("sales_calls", { id: input.salesCallId })
     .catch(() => ({ data: null as SalesCall | null }));
@@ -191,6 +242,46 @@ export const completeSalesCallOutcome = async (
   }
 
   return { status: "completed" };
+};
+
+// What follows a recorded sale, but is not part of it: the follow-up
+// Task a "thinking" answer needs, and the personalised Offer Page token a
+// Won sale issues. Both are idempotent and neither changes whether the
+// sale happened, so a failure here leaves the sale itself intact.
+const afterAttendedOutcome = async (
+  input: CompleteSalesCallOutcomeInput,
+  result: Record<string, unknown>,
+): Promise<void> => {
+  const { dataProvider } = input;
+  const opportunityId = result.opportunity_id as Identifier | undefined;
+  const contactId = result.contact_id as Identifier | undefined;
+  if (opportunityId == null || contactId == null) return;
+
+  const now = new Date().toISOString();
+  // The call happened, so its task is done. Never the reverse: completing
+  // this task must not itself mutate sales status — that already happened
+  // inside the transaction above.
+  await completeSalesCallTask(dataProvider, contactId, now);
+  // Recording what happened is exactly the answer a resolve_sales_call
+  // ambiguity task was waiting for. A safe no-op when none is pending.
+  await completeResolveSalesCallTask(
+    dataProvider,
+    contactId,
+    now,
+    input.salesCallId,
+  );
+
+  if (result.stage === "decision" && result.follow_up_date) {
+    await ensureFollowUpTask(dataProvider, {
+      contactId,
+      contactName: input.contactName,
+      followUpDate: String(result.follow_up_date),
+      salesId: await resolveDefaultTaskSalesId(dataProvider),
+    });
+  }
+  if (result.stage === "won") {
+    await ensureOfferPageToken(dataProvider, opportunityId);
+  }
 };
 
 const buildAttendedDealUpdate = ({

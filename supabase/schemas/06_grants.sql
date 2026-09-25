@@ -696,3 +696,27 @@ revoke all on public.contact_external_identities from anon;
 grant select on public.contact_merges to authenticated;
 revoke all on public.contact_merges from anon;
 grant select on public.contact_email_addresses to authenticated;
+
+-- The canonical sale actions. The two WRAPPERS are granted to the signed-in
+-- CRM user; the primitive and the enrollment helper are reachable by nobody
+-- — they are called by being the owner, which is exactly what
+-- handle_deal_saved()'s Won guard checks. anon gets nothing: accepting a
+-- sale is never a public capability.
+revoke all on function public.accept_sale(bigint) from public;
+revoke all on function public.accept_sale(bigint) from anon;
+revoke all on function public.accept_sale(bigint) from authenticated;
+revoke all on function public.accept_sale(bigint) from service_role;
+revoke all on function public.ensure_sale_enrollment(bigint) from public;
+revoke all on function public.ensure_sale_enrollment(bigint) from anon;
+revoke all on function public.ensure_sale_enrollment(bigint) from authenticated;
+revoke all on function public.ensure_sale_enrollment(bigint) from service_role;
+
+revoke all on function public.complete_attended_sales_call(bigint, text, text, date) from public;
+revoke all on function public.complete_attended_sales_call(bigint, text, text, date) from anon;
+grant execute on function public.complete_attended_sales_call(bigint, text, text, date) to authenticated;
+grant execute on function public.complete_attended_sales_call(bigint, text, text, date) to service_role;
+
+revoke all on function public.record_prospect_accepted(bigint) from public;
+revoke all on function public.record_prospect_accepted(bigint) from anon;
+grant execute on function public.record_prospect_accepted(bigint) to authenticated;
+grant execute on function public.record_prospect_accepted(bigint) to service_role;

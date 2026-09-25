@@ -293,13 +293,33 @@ describe("recording Yes", () => {
     expect(second.data).toHaveLength(1);
   });
 
-  it("refuses to re-decide something that already left the pipeline", async () => {
+  it("refuses to re-decide something that already left the pipeline, and says how it ended", async () => {
+    // This used to answer "already-resolved", which covered two different
+    // situations: a sale already Won, and a sale that ended as something
+    // else. Only the second is a conflict, and saying which one it is
+    // matters — Leif pressing Yes on a declined Opportunity should be told
+    // it was declined, not told something vague about resolution.
     const dataProvider = makeProvider([buildDeal({ outcome: "lost" })]);
 
-    expect(await recordYes(dataProvider, { opportunityId: 10 })).toEqual({
-      status: "already-resolved",
-    });
+    const result = await recordYes(dataProvider, { opportunityId: 10 });
+    expect(result.status).toBe("conflicting-outcome");
+    expect(
+      result.status === "conflicting-outcome" ? result.reason : "",
+    ).toMatch(/lost/);
+    // And nothing was rewritten.
     expect((await readDeal(dataProvider)).stage).toBe("decision");
+    expect((await readDeal(dataProvider)).outcome).toBe("lost");
+  });
+
+  it("still converges rather than refusing when the sale is already Won", async () => {
+    // A sale that landed halfway is finished here, not rejected — the
+    // Becky case, on the Decision button.
+    const dataProvider = makeProvider([buildDeal({ stage: "won" })]);
+
+    expect(await recordYes(dataProvider, { opportunityId: 10 })).toEqual({
+      status: "won",
+    });
+    expect((await readDeal(dataProvider)).stage).toBe("won");
   });
 });
 

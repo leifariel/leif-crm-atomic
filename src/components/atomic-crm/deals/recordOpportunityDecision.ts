@@ -2,6 +2,7 @@ import type { DataProvider, Identifier } from "ra-core";
 
 import type { Deal } from "../types";
 import { ensureContactTag } from "../tags/ensureContactTag";
+import { recordYes } from "./recordSalesDecision";
 
 // What happens when somebody at Decision actually decides.
 //
@@ -65,22 +66,19 @@ export const recordOpportunityDecision = async (
     return { status: "already-resolved" };
   }
 
-  const now = new Date().toISOString();
-
   if (decision === "won") {
-    // Won, with no outcome: winning is not exiting. The existing
-    // handle_deal_won trigger creates or retains the Enrollment from here,
-    // idempotently, so nothing about that mechanism is duplicated.
-    await dataProvider.update<Deal>("deals", {
-      id: deal.id,
-      data: {
-        stage: "won",
-        stage_entered_at: now,
-        prospect_decision: "yes",
-      },
-      previousData: deal,
-    });
-    return { status: "recorded", decision };
+    // The same business event the Opportunity's own Yes button records and
+    // the sales-call outcome records: the prospect accepted. So it goes
+    // through the same primitive rather than being a third implementation
+    // — recordYes owns the call to it, and everything this function adds
+    // (the Ghosted tag, the exit reasons) is about the OTHER two answers.
+    //
+    // Winning is not exiting, so no outcome is written. The Enrollment
+    // follows from Won on the database side.
+    const result = await recordYes(dataProvider, { opportunityId: deal.id });
+    if (result.status === "won") return { status: "recorded", decision };
+    if (result.status === "not-found") return { status: "not-found" };
+    return { status: "already-resolved" };
   }
 
   // Both exits leave the ACTIVE pipeline through outcome — the canonical

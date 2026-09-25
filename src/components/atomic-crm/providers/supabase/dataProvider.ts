@@ -270,6 +270,50 @@ const getDataProviderWithCustomMethods = () => {
       }
       return data as Record<string, unknown>;
     },
+    // Recording an attended call's outcome changes the Sales Call, the
+    // Opportunity, the Contact and — on a yes — the Enrollment, its
+    // onboarding checklist and its Tasks. Becky Schmauch's sale is why
+    // this is one transaction: it used to be six separate requests, the
+    // first three committed, the fourth was refused, and she was left
+    // with a call marked Attended against an Opportunity still at Call
+    // Booked. See completeSalesCallOutcome.ts.
+    async completeAttendedSalesCall(input: {
+      salesCallId: Identifier;
+      ownerDecision: string;
+      prospectDecision?: string | null;
+      followUpDate?: string | null;
+    }) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "complete_attended_sales_call",
+        {
+          p_sales_call_id: input.salesCallId,
+          p_owner_decision: input.ownerDecision,
+          p_prospect_decision: input.prospectDecision ?? null,
+          p_follow_up_date: input.followUpDate || null,
+        },
+      );
+      if (error) {
+        console.error("complete_attended_sales_call.error", error);
+        throw new Error("Failed to record the sales call outcome");
+      }
+      return data as Record<string, unknown>;
+    },
+    // The prospect accepted, recorded from a Decision control rather than
+    // from a call. Same primitive underneath as the sales-call path —
+    // accept_sale() — so there is one place a sale is accepted and not
+    // three. Convergent: a sale that landed halfway finishes rather than
+    // being politely refused forever.
+    async recordProspectAccepted(opportunityId: Identifier) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "record_prospect_accepted",
+        { p_opportunity_id: opportunityId },
+      );
+      if (error) {
+        console.error("record_prospect_accepted.error", error);
+        throw new Error("Failed to record the sale");
+      }
+      return data as Record<string, unknown>;
+    },
     // Refused here as well as in the Edge Function, so that a merge cannot
     // leave this machine even if some future caller finds the method.
     // See contacts/contactSafety.ts.

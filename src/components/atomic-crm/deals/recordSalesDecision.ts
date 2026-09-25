@@ -40,12 +40,49 @@ export type SalesDecisionResult =
   | { status: "not-found" }
   // Already out of the pipeline, or already Won. A second click or a stale
   // tab is a safe no-op, never a second write.
-  | { status: "already-resolved" };
+  | { status: "already-resolved" }
+  // It ended differently — declined, ghosted, archived. Saying yes now
+  // would rewrite somebody's recorded answer, so it fails closed.
+  | { status: "conflicting-outcome"; reason: string };
+
+type SaleCapableProvider = DataProvider & {
+  recordProspectAccepted?: (
+    opportunityId: Identifier,
+  ) => Promise<Record<string, unknown>>;
+};
 
 export const recordYes = async (
   dataProvider: DataProvider,
   { opportunityId }: { opportunityId: Identifier },
 ): Promise<SalesDecisionResult> => {
+  // Production accepts the sale in ONE transaction, through the same
+  // primitive the sales-call path uses. This used to be a browser PATCH
+  // writing stage='won', which handle_deal_saved() refuses — the same
+  // defect that cost Becky Schmauch's sale, on a different button.
+  const rpc = (dataProvider as SaleCapableProvider).recordProspectAccepted;
+  if (rpc) {
+    const result = await rpc(opportunityId);
+    const status = result.status as string;
+    if (status === "not-found") return { status: "not-found" };
+    if (status === "conflicting-outcome") {
+      return {
+        status: "conflicting-outcome",
+        reason: String(result.reason ?? ""),
+      };
+    }
+    // 'won' or 'already-won' — both mean the sale is recorded and its
+    // Enrollment exists. The Task close below is idempotent either way.
+    const { data: won } = await dataProvider.getOne<Deal>("deals", {
+      id: opportunityId,
+    });
+    await closeSalesDecisionTasks(
+      dataProvider,
+      won.contact_id,
+      new Date().toISOString(),
+    );
+    return { status: "won" };
+  }
+
   const { data: deal } = await dataProvider
     .getOne<Deal>("deals", { id: opportunityId })
     .catch(() => ({ data: null as Deal | null }));

@@ -251,26 +251,15 @@ declare
   v_option_pricing_mode text;
   v_rows int;
 begin
-  -- Payment-authority guard (Go-Live Blocker: Won Payment Authority slice):
-  -- handle_deal_won()'s own AFTER trigger unconditionally creates a real
-  -- Enrollment, onboarding checklist/Tasks, and (for scholarship pricing)
-  -- consumes a real scholarship slot the instant stage becomes 'won' — with
-  -- no other check on how it got there. Won must only ever be reached via a
-  -- successful Stripe payment (stripe_webhook/index.ts, which writes
-  -- through supabaseAdmin using the service_role key — see that function's
-  -- own header). auth.role() reflects the verified PostgREST JWT's `role`
-  -- claim: 'service_role' for the real webhook, 'authenticated' for an
-  -- ordinary CRM user, and NULL for a direct database/migration connection
-  -- that never went through PostgREST at all (trusted recovery/admin
-  -- context — deliberately still permitted, per that path's own need to
-  -- correct data by hand). An ordinary authenticated CRM user must never be
-  -- able to fabricate a successful purchase merely by editing a Deal.
+  -- Won is a SALES fact: the prospect accepted. Not paid, not enrolled,
+  -- not onboarded (20260918180000). Still not something to type into a
+  -- field by hand, because handle_deal_won() turns it into an Enrollment,
+  -- an onboarding checklist and possibly a claimed scholarship slot.
   if new.stage = 'won'
      and (tg_op = 'INSERT' or old.stage is distinct from 'won')
-     and auth.role() is not null
-     and auth.role() <> 'service_role'
+     and current_user in ('anon', 'authenticated')
   then
-    raise exception 'Deal % cannot be set to Won directly — Won is only reached via a successful Stripe payment', new.id;
+    raise exception 'Deal % cannot be set to Won by editing its stage — record the sale through the sales-call outcome or the prospect decision', new.id;
   end if;
 
   select * into v_offer from offers where id = new.offer_id;
@@ -291,32 +280,15 @@ begin
     end if;
   end if;
 
-  -- Historical Migration slice: everything from here to the matching end if
-  -- is live scholarship CONTROL — who may grant it, when, and who holds the
-  -- Offer's single slot. An import states what was already true and claims
-  -- no live capacity, so it is skipped wholesale under migration mode. See
-  -- set_historical_migration_mode()'s own header for why this GUC check is
-  -- safe, and handle_deal_won() for the identical treatment of its own
-  -- side effects.
   if current_setting('app.migration_mode', true) is distinct from 'true' then
-    -- Scholarship Pricing + Capacity slice: pricing_mode is frozen the
-    -- instant a Deal reaches Won, exactly like every other commercial
-    -- snapshot field below — never editable again afterward.
     if tg_op = 'UPDATE' and old.stage = 'won' and new.pricing_mode is distinct from old.pricing_mode then
       raise exception 'Cannot change pricing_mode on deal % once it has reached Won', new.id;
     end if;
 
-    -- Scholarship can only ever be granted via an explicit Deal edit (Leif
-    -- toggling an EXISTING Opportunity), never at creation — this also
-    -- sidesteps needing new.id (not yet populated in a BEFORE INSERT
-    -- trigger for a generated-identity primary key) for the slot claim below.
     if tg_op = 'INSERT' and new.pricing_mode = 'scholarship' then
       raise exception 'A new Opportunity cannot be created directly as scholarship — grant scholarship pricing via Deal edit after creation';
     end if;
 
-    -- A scholarship Deal's held slot is scoped to its CURRENT offer_id — never
-    -- silently re-scope a held reservation to a different Offer. Release the
-    -- scholarship first, then move offer_id, then re-grant if still desired.
     if tg_op = 'UPDATE'
        and old.pricing_mode = 'scholarship'
        and new.offer_id is distinct from old.offer_id
@@ -330,14 +302,6 @@ begin
           raise exception 'Offer % has no scholarship price configured', new.offer_id;
         end if;
 
-        -- Atomic grant: claims this Offer's single scholarship_slots row for
-        -- this Deal. The INSERT ... ON CONFLICT DO UPDATE ... WHERE guard is
-        -- Postgres's native compare-and-swap — the row lock taken while
-        -- evaluating the conflicting row serializes two concurrent grant
-        -- attempts for the same Offer automatically; whichever commits first
-        -- wins outright, the other's WHERE fails to match (0 rows), detected
-        -- below via GET DIAGNOSTICS and turned into a clean rejection of the
-        -- whole write. No app-level check-then-act gap.
         insert into scholarship_slots (offer_id, holder_deal_id, reserved_at)
         values (new.offer_id, new.id, now())
         on conflict (offer_id) do update
@@ -353,9 +317,6 @@ begin
         insert into scholarship_slot_events (offer_id, deal_id, event_type, occurred_at)
         values (new.offer_id, new.id, 'scholarship_granted', now());
       elsif old.pricing_mode = 'scholarship' then
-        -- Release: only valid pre-Won (the immutability guard above already
-        -- rejected this branch once Won), so this exact Deal is guaranteed to
-        -- still be the slot's holder_deal_id if it ever held one.
         update scholarship_slots
           set holder_deal_id = null, reserved_at = null, updated_at = now()
           where offer_id = old.offer_id and holder_deal_id = new.id;
@@ -366,11 +327,6 @@ begin
     end if;
   end if;
 
-  -- Snapshot commercial info at save time so a later Offer/payment-option
-  -- change never rewrites historical sales context on an existing
-  -- Opportunity. Sources from scholarship_price instead of current_price
-  -- when pricing_mode is 'scholarship' — offer_name_snapshot itself never
-  -- encodes pricing mode (pricing_mode carries that identity instead).
   if tg_op = 'INSERT'
      or new.offer_id is distinct from old.offer_id
      or new.pricing_mode is distinct from old.pricing_mode
@@ -396,20 +352,11 @@ begin
     if v_option_offer_id is null then
       raise exception 'Invalid selected_payment_option_id %', new.selected_payment_option_id;
     end if;
-    -- Scholarship Pricing + Capacity slice: a payment option must always
-    -- match this Deal's own offer/pricing mode — never accidentally
-    -- selectable across offers or across standard/scholarship (the UI
-    -- already scopes the choices it offers; this is the authoritative
-    -- backstop).
     if v_option_offer_id <> new.offer_id or v_option_pricing_mode <> new.pricing_mode then
       raise exception 'Payment option % does not match deal %''s offer/pricing_mode', new.selected_payment_option_id, new.id;
     end if;
   end if;
 
-  -- The Opportunity's name is always derived from its Contact, never
-  -- user-typed (Programs + Opportunity UX slice, §1): this is what makes it
-  -- structurally impossible for an Opportunity to display one person while
-  -- being linked to another.
   select * into v_contact from contacts where id = new.contact_id;
   if v_contact.id is not null then
     new.name := trim(both ' ' from coalesce(v_contact.first_name, '') || ' ' || coalesce(v_contact.last_name, ''));
@@ -419,10 +366,6 @@ begin
 end;
 $$;
 
--- Validates the Offer/Cohort relationship on a Waitlist Entry (Waitlists
--- slice, §3) — mirrors the same rule handle_deal_saved() enforces for
--- Opportunities: a Cohort is only ever set on a group Offer, and only to a
--- Cohort that actually belongs to it.
 CREATE OR REPLACE FUNCTION "public"."handle_waitlist_entry_saved"() RETURNS "trigger"
     LANGUAGE "plpgsql"
     SET "search_path" TO 'public'
@@ -3009,4 +2952,248 @@ BEGIN
     'reused_opportunity', v_reused
   );
 END;
+$$;
+
+-- Every way a sale is accepted, through one door.
+--
+-- Won means the sale was accepted — not paid, not enrolled, not onboarded
+-- (20260918180000). Three UIs record that same business event, so there is
+-- one primitive underneath and thin wrappers only where the surrounding
+-- facts differ. handle_deal_saved() above permits it because these run
+-- SECURITY DEFINER as the owner, which a client cannot become; an ordinary
+-- browser PATCH of stage='won' is still refused.
+--
+-- accept_sale() is CONVERGENT, not merely idempotent: a sale that landed
+-- halfway — Becky Schmauch's, whose call read attended while her
+-- Opportunity sat at Call Booked with no Enrollment — is finished by
+-- resubmitting the decision, not refused forever.
+CREATE OR REPLACE FUNCTION "public"."ensure_sale_enrollment"("p_deal_id" bigint) RETURNS bigint
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+declare
+  v_deal deals%rowtype;
+  v_cohort cohorts%rowtype;
+  v_enrollment_id bigint;
+begin
+  select * into v_deal from deals where id = p_deal_id;
+  if not found or v_deal.stage <> 'won' then
+    return null;
+  end if;
+
+  if v_deal.cohort_id is not null then
+    select * into v_cohort from cohorts where id = v_deal.cohort_id;
+  end if;
+
+  -- Idempotent: enrollments.opportunity_id is unique, so this can run any
+  -- number of times and create at most one.
+  insert into enrollments (opportunity_id, status, start_date, end_date, onboarding_tracking, start_date_source)
+  values (
+    v_deal.id,
+    'onboarding',
+    v_cohort.program_start_at::date,
+    v_cohort.program_end_at::date,
+    -- A sale made today is tracked. legacy_untracked is only ever a
+    -- statement about the past, never a default for new work.
+    'tracked',
+    -- A Cohort start is a date Leif published when she created the round.
+    -- An individual Offer has no such date: the Start Week is hers to set,
+    -- and until she does it stays unknown rather than inferred.
+    case when v_cohort.program_start_at is not null then 'owner' end
+  )
+  on conflict (opportunity_id) do nothing
+  returning id into v_enrollment_id;
+
+  if v_enrollment_id is not null then
+    perform public.seed_enrollment_onboarding(v_enrollment_id);
+  end if;
+
+  return v_enrollment_id;
+end;
+$$;
+
+CREATE OR REPLACE FUNCTION "public"."accept_sale"("p_deal_id" bigint) RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+declare
+  v_deal deals%rowtype;
+  v_already boolean;
+  v_enrollments int;
+begin
+  select * into v_deal from deals where id = p_deal_id for update;
+  if not found then
+    return jsonb_build_object('status', 'not-found');
+  end if;
+
+  -- A sale may not overwrite somebody's recorded no, and an archived
+  -- Opportunity is not quietly reopened by a click.
+  if v_deal.archived_at is not null then
+    return jsonb_build_object('status', 'conflicting-outcome',
+      'reason', 'This opportunity has been archived.');
+  end if;
+  if v_deal.outcome is not null then
+    return jsonb_build_object('status', 'conflicting-outcome',
+      'reason', format('This opportunity already ended as "%s".', v_deal.outcome));
+  end if;
+
+  v_already := v_deal.stage = 'won';
+
+  if not v_already then
+    -- Permitted because this function runs as its owner, which is what
+    -- handle_deal_saved() above is actually checking.
+    update deals
+       set stage = 'won',
+           prospect_decision = 'yes'
+     where id = p_deal_id;
+  end if;
+
+  -- Either way, the facts a Won sale has must exist. On the transition the
+  -- trigger has already made them and this is a no-op; on a sale that
+  -- landed halfway it is the repair.
+  perform public.ensure_sale_enrollment(p_deal_id);
+  select count(*) into v_enrollments from enrollments where opportunity_id = p_deal_id;
+
+  return jsonb_build_object(
+    'status', case when v_already then 'already-won' else 'won' end,
+    'opportunity_id', p_deal_id,
+    'contact_id', v_deal.contact_id,
+    'enrollments', v_enrollments
+  );
+end;
+$$;
+
+CREATE OR REPLACE FUNCTION "public"."complete_attended_sales_call"("p_sales_call_id" bigint, "p_owner_decision" "text", "p_prospect_decision" "text" DEFAULT NULL::"text", "p_follow_up_date" "date" DEFAULT NULL::"date") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+declare
+  v_call sales_calls%rowtype;
+  v_deal deals%rowtype;
+  v_now timestamptz := now();
+  v_sale jsonb;
+  v_follow_up date;
+  v_converged boolean := false;
+begin
+  select * into v_call from sales_calls where id = p_sales_call_id for update;
+  if not found then
+    return jsonb_build_object('status', 'not-found');
+  end if;
+  if v_call.opportunity_id is null then
+    return jsonb_build_object('status', 'no-opportunity');
+  end if;
+
+  if p_owner_decision is null then
+    return jsonb_build_object('status', 'validation-error',
+      'message', 'An owner-fit decision is required for an attended call.');
+  end if;
+  if p_owner_decision = 'would_work_with' and p_prospect_decision is null then
+    return jsonb_build_object('status', 'validation-error',
+      'message', 'A prospect decision is required when Would Work With.');
+  end if;
+
+  select * into v_deal from deals where id = v_call.opportunity_id for update;
+  if not found then
+    return jsonb_build_object('status', 'no-opportunity');
+  end if;
+
+  -- A call recorded as a no-show is a different answer to the same
+  -- question, and this is not the place to overturn it.
+  if v_call.attendance = 'no_show' then
+    return jsonb_build_object('status', 'already-completed');
+  end if;
+
+  if v_call.attendance is null then
+    -- The normal path: the call has not been resolved yet.
+    update sales_calls
+       set attendance = 'attended',
+           attendance_recorded_at = v_now,
+           status = 'completed',
+           updated_at = v_now
+     where id = v_call.id;
+  else
+    -- Already attended. The question is whether the DECISION landed.
+    -- Becky's did not: her call reads attended while her Opportunity sits
+    -- at Call Booked with no Enrollment. Resubmitting is how she finishes
+    -- it, so this is a convergence rather than a refusal.
+    v_converged := true;
+    if v_deal.owner_decision is not null
+       and v_deal.owner_decision is distinct from p_owner_decision then
+      return jsonb_build_object('status', 'conflicting-outcome',
+        'reason', format('This call was already recorded as "%s".', v_deal.owner_decision));
+    end if;
+    if v_deal.prospect_decision is not null
+       and p_prospect_decision is not null
+       and v_deal.prospect_decision is distinct from p_prospect_decision then
+      return jsonb_build_object('status', 'conflicting-outcome',
+        'reason', format('This call was already recorded as "%s".', v_deal.prospect_decision));
+    end if;
+  end if;
+
+  -- The event is part of the call's history, and a sale that landed
+  -- halfway may be missing it. Written once, ever.
+  if not exists (
+    select 1 from sales_call_events
+     where sales_call_id = v_call.id and kind = 'attendance_recorded'
+  ) then
+    insert into sales_call_events (sales_call_id, kind, occurred_at, attendance)
+    values (v_call.id, 'attendance_recorded', v_now, 'attended');
+  end if;
+
+  if p_owner_decision = 'do_not_engage' then
+    if v_deal.outcome is null then
+      update deals set owner_decision = 'do_not_engage', outcome = 'lost' where id = v_deal.id;
+    end if;
+    update contacts set sales_eligibility = 'do_not_engage' where id = v_deal.contact_id;
+
+  elsif p_owner_decision = 'workshops_only' then
+    -- A genuine pipeline exit, explicitly not a lost sale.
+    if v_deal.outcome is null then
+      update deals set owner_decision = 'workshops_only', outcome = 'workshops_only' where id = v_deal.id;
+    end if;
+
+  elsif p_prospect_decision = 'yes' then
+    update deals set owner_decision = 'would_work_with' where id = v_deal.id;
+    v_sale := public.accept_sale(v_deal.id);
+    if v_sale ->> 'status' = 'conflicting-outcome' then
+      return v_sale;
+    end if;
+
+  elsif p_prospect_decision = 'no' then
+    if v_deal.outcome is null then
+      update deals
+         set owner_decision = 'would_work_with', prospect_decision = 'no',
+             follow_up_date = null, outcome = 'lost'
+       where id = v_deal.id;
+    end if;
+
+  else
+    v_follow_up := coalesce(p_follow_up_date, (v_now + interval '4 days')::date);
+    update deals
+       set owner_decision = 'would_work_with', prospect_decision = 'thinking',
+           follow_up_date = v_follow_up, stage = 'decision'
+     where id = v_deal.id;
+  end if;
+
+  select * into v_deal from deals where id = v_deal.id;
+
+  return jsonb_build_object(
+    'status', case when v_converged then 'converged' else 'completed' end,
+    'opportunity_id', v_deal.id,
+    'contact_id', v_deal.contact_id,
+    'stage', v_deal.stage,
+    'outcome', v_deal.outcome,
+    'follow_up_date', v_follow_up,
+    'enrollments', (select count(*) from enrollments where opportunity_id = v_deal.id)
+  );
+end;
+$$;
+
+CREATE OR REPLACE FUNCTION "public"."record_prospect_accepted"("p_opportunity_id" bigint) RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+begin
+  return public.accept_sale(p_opportunity_id);
+end;
 $$;

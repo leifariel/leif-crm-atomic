@@ -5,6 +5,7 @@ import {
   useRecordContext,
   useTranslate,
 } from "ra-core";
+import { isWritableStage } from "./dealActivity";
 import { useEffect, useRef } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
 import { ReferenceInput } from "@/components/admin/reference-input";
@@ -182,10 +183,26 @@ const DealMiscInputs = () => {
   // its own current value — the guard only cares about transitions INTO
   // Won, and a record whose stage is already "won" submitting "won"
   // unchanged is a no-op on both the trigger and handle_deal_won() itself.
-  const editableDealStages =
-    record?.stage === "won"
-      ? dealStages
-      : dealStages.filter((stage) => stage.value !== "won");
+  // Legacy 'onboarding' is offered here no longer.
+  //
+  // Leif saw it in this selector and chose it, reasonably: it is where the
+  // board shows people after a sale. The database refuses the value
+  // outright (guard_persisted_onboarding_stage) — it is legacy storage
+  // from fourteen renamed rows, and the board's Onboarding column is
+  // DERIVED from Won plus an Enrollment plus unfinished setup. Offering a
+  // value that cannot be saved is the defect; isWritableStage is the
+  // canonical rule for what may be written, and now the editor and the
+  // Kanban both ask it rather than each deciding for themselves.
+  //
+  // Won stays out too, for a different reason: it is a sale, recorded by
+  // the sales-call outcome or the prospect decision, not a stage you type.
+  // An already-Won record still needs the choice present or the Select
+  // renders blank for its own current value.
+  const editableDealStages = dealStages.filter(
+    (stage) =>
+      (isWritableStage(stage.value) && stage.value !== "won") ||
+      stage.value === record?.stage,
+  );
   return (
     <div className="flex flex-col gap-4 flex-1">
       <h3 className="text-base font-medium">
