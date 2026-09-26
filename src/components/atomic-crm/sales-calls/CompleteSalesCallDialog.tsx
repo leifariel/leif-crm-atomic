@@ -56,11 +56,23 @@ export const CompleteSalesCallDialog = ({
   onOpenChange,
   salesCallId,
   contactName,
+  /**
+   * The call is already recorded as attended and only its DECISION is
+   * missing — Becky Schmauch's shape.
+   *
+   * The same dialog, not a second one: it opens with Attended already
+   * understood and asks only the question that has no answer. "What
+   * happened with this call?" is not re-asked, because it has been
+   * answered, and offering No-show or Cancelled here would let a recovery
+   * rewrite a recorded fact rather than complete it.
+   */
+  decisionOnly = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   salesCallId: Identifier;
   contactName: string;
+  decisionOnly?: boolean;
 }) => {
   const translate = useTranslate();
   const dataProvider = useDataProvider();
@@ -70,7 +82,9 @@ export const CompleteSalesCallDialog = ({
   // The three-way human answer. Only 'attended'/'no_show' are attendance
   // values the database understands; 'cancelled' is a different kind of
   // fact and goes down its own canonical path.
-  const [outcome, setOutcome] = useState<SalesCallOutcomeChoice | null>(null);
+  const [outcome, setOutcome] = useState<SalesCallOutcomeChoice | null>(
+    decisionOnly ? "attended" : null,
+  );
   const [ownerDecision, setOwnerDecision] =
     useState<OpportunityOwnerDecision | null>(null);
   const [prospectDecision, setProspectDecision] =
@@ -79,7 +93,7 @@ export const CompleteSalesCallDialog = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const reset = () => {
-    setOutcome(null);
+    setOutcome(decisionOnly ? "attended" : null);
     setOwnerDecision(null);
     setProspectDecision(null);
     setFollowUpDate("");
@@ -142,6 +156,24 @@ export const CompleteSalesCallDialog = ({
         });
         handleOpenChange(false);
         refresh();
+      } else if (result.status === "converged") {
+        // The call was attended but its decision had never landed. This is
+        // the first time it has been recorded, not a repeat.
+        notify("resources.deals.sales_call.outcome_recorded", {
+          type: "info",
+          _: "Outcome recorded.",
+        });
+        handleOpenChange(false);
+        refresh();
+      } else if (result.status === "conflicting-outcome") {
+        // Says which answer is already there rather than overwriting it.
+        notify(result.reason || "This call already has a different outcome.", {
+          type: "warning",
+        });
+        handleOpenChange(false);
+        refresh();
+      } else if (result.status === "validation-error") {
+        notify(result.message, { type: "warning" });
       } else if (result.status === "already-completed") {
         notify("resources.deals.sales_call.already_completed", {
           type: "warning",
@@ -164,9 +196,15 @@ export const CompleteSalesCallDialog = ({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {translate("resources.deals.sales_call.complete_title", {
-              _: "Complete Sales Call",
-            })}
+            {/* "Complete" would be wrong here: the call IS complete, and
+                saying otherwise reads as though the recovery undoes it. */}
+            {decisionOnly
+              ? translate("resources.deals.sales_call.record_outcome_title", {
+                  _: "Record Outcome",
+                })
+              : translate("resources.deals.sales_call.complete_title", {
+                  _: "Complete Sales Call",
+                })}
           </DialogTitle>
           <DialogDescription>
             {translate("resources.deals.sales_call.complete_description", {
@@ -177,36 +215,47 @@ export const CompleteSalesCallDialog = ({
         </DialogHeader>
 
         <div className="flex flex-col gap-6">
-          <fieldset className="flex flex-col gap-3">
-            <Label className="text-sm font-medium">
-              {/* Works for all three: "Attendance" cannot describe a call
-                  that never happened. */}
-              {translate("resources.deals.sales_call.what_happened", {
-                _: "What happened with this call?",
+          {decisionOnly ? (
+            // Already answered. Shown as the established fact it is, so
+            // Leif can see what the dialog is assuming, and not as a
+            // control that could rewrite it.
+            <p className="text-sm text-muted-foreground">
+              {translate("resources.deals.sales_call.attended_already", {
+                _: "This call is recorded as Attended. What was decided?",
               })}
-            </Label>
-            <RadioGroup
-              value={outcome ?? undefined}
-              onValueChange={(value) =>
-                setOutcome(value as SalesCallOutcomeChoice)
-              }
-            >
-              {salesCallOutcomeChoices.map((choice) => (
-                <div key={choice.value} className="flex items-center gap-2">
-                  <RadioGroupItem
-                    value={choice.value}
-                    id={`attendance-${choice.value}`}
-                  />
-                  <Label
-                    htmlFor={`attendance-${choice.value}`}
-                    className="font-normal"
-                  >
-                    {choice.label}
-                  </Label>
-                </div>
-              ))}
-            </RadioGroup>
-          </fieldset>
+            </p>
+          ) : (
+            <fieldset className="flex flex-col gap-3">
+              <Label className="text-sm font-medium">
+                {/* Works for all three: "Attendance" cannot describe a call
+                  that never happened. */}
+                {translate("resources.deals.sales_call.what_happened", {
+                  _: "What happened with this call?",
+                })}
+              </Label>
+              <RadioGroup
+                value={outcome ?? undefined}
+                onValueChange={(value) =>
+                  setOutcome(value as SalesCallOutcomeChoice)
+                }
+              >
+                {salesCallOutcomeChoices.map((choice) => (
+                  <div key={choice.value} className="flex items-center gap-2">
+                    <RadioGroupItem
+                      value={choice.value}
+                      id={`attendance-${choice.value}`}
+                    />
+                    <Label
+                      htmlFor={`attendance-${choice.value}`}
+                      className="font-normal"
+                    >
+                      {choice.label}
+                    </Label>
+                  </div>
+                ))}
+              </RadioGroup>
+            </fieldset>
+          )}
 
           {outcome === "attended" && (
             <fieldset className="flex flex-col gap-3 rounded-lg border p-4">

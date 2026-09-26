@@ -46,6 +46,15 @@ export type CompleteSalesCallOutcomeResult =
   // write (double-click, cached tab, Back/Forward — same convention as
   // reviewApplication.ts's "already-reviewed" guard).
   | { status: "already-completed" }
+  // The call was already attended, but its DECISION had never landed, and
+  // this call recorded it. Becky Schmauch's shape: finishing a sale that
+  // went in halfway is not a duplicate, it is the first time the decision
+  // has ever been written. Success, and worth saying differently.
+  | { status: "converged" }
+  // It ended some other way — declined, ghosted, archived. Recording a
+  // decision now would rewrite somebody's recorded answer, so it fails
+  // closed and says which answer is already there.
+  | { status: "conflicting-outcome"; reason: string }
   | { status: "validation-error"; message: string };
 
 // The single domain function behind the "Complete Sales Call" dialog
@@ -102,10 +111,16 @@ export const completeSalesCallOutcome = async (
     if (status === "validation-error") {
       return { status, message: String(result.message ?? "") };
     }
+    if (status === "conflicting-outcome") {
+      return { status, reason: String(result.reason ?? "") };
+    }
     // The follow-up Task and the Offer Page token are outside the sale
     // itself — neither is business truth about whether it happened — so
     // they stay here rather than joining the transaction.
-    if (status === "completed") {
+    //
+    // 'converged' counts: a sale finished late still needs its Offer Page
+    // link, and a late "thinking" still needs its follow-up Task.
+    if (status === "completed" || status === "converged") {
       await afterAttendedOutcome(input, result);
     }
     return { status } as CompleteSalesCallOutcomeResult;

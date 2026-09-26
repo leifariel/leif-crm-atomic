@@ -205,3 +205,60 @@ describe("what the board and the editor treat as a writable stage", () => {
     expect(BOARD).toMatch(/notify\(/);
   });
 });
+
+// The half-landed sale has to be REACHABLE, not merely recoverable.
+//
+// The repair above made complete_attended_sales_call() convergent, and then
+// Becky's Opportunity still could not be finished: the page asked whether
+// ATTENDANCE had been recorded, so her completed/attended/no-decision call
+// fell into a display-only branch with no action at all, and the two
+// statuses the convergence returns were missing from the client's own result
+// type — a converged save would have shown a connection error while
+// succeeding. A working backend nobody can press is not a fixed defect.
+describe("reaching the convergence from the Opportunity", () => {
+  const SECTION = readFileSync(
+    "src/components/atomic-crm/sales-calls/DealSalesCallSection.tsx",
+    "utf8",
+  );
+  const DIALOG = readFileSync(
+    "src/components/atomic-crm/sales-calls/CompleteSalesCallDialog.tsx",
+    "utf8",
+  );
+
+  test("the page asks whether a DECISION is owed, not whether attendance is", () => {
+    expect(SECTION).toMatch(/salesCallDecisionOwed/);
+    expect(SECTION).toMatch(/record_outcome_action/);
+  });
+
+  test("it reuses the one outcome dialog rather than a second implementation", () => {
+    // Two implementations of "what was decided" is how the FakeRest mirror
+    // and the RPC drifted apart in the first place.
+    expect(SECTION).toMatch(/<CompleteSalesCallDialog[\s\S]*?decisionOnly/);
+    expect(DIALOG).toMatch(
+      /complete_attended_sales_call|completeSalesCallOutcome|onComplete/,
+    );
+  });
+
+  test("both convergence statuses reach the client", () => {
+    // Neither was in the result union when the repair shipped, so each one
+    // fell through to the generic error branch.
+    expect(OUTCOME).toMatch(/status:\s*"converged"/);
+    expect(OUTCOME).toMatch(/status:\s*"conflicting-outcome"/);
+    expect(DIALOG).toMatch(/"converged"/);
+    expect(DIALOG).toMatch(/"conflicting-outcome"/);
+  });
+
+  test("a converged sale still gets everything Won implies", () => {
+    // The Offer Page token, the Task closes: skipped entirely if the
+    // after-step only recognises "completed".
+    expect(OUTCOME).toMatch(
+      /status === "completed" \|\| status === "converged"/,
+    );
+  });
+
+  test("the recovery cannot rewrite a recorded attendance", () => {
+    // Offering No-show inside a recovery would let finishing a decision
+    // overturn an observation. The dialog states the attendance instead.
+    expect(DIALOG).toMatch(/recorded as Attended/);
+  });
+});

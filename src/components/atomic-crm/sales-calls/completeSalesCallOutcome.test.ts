@@ -416,7 +416,12 @@ describe("completeSalesCallOutcome", () => {
     expect(deal.stage).toBe("call_booked");
   });
 
-  it("is idempotent: completing an already-completed call is a safe no-op, never a second write", async () => {
+  // This used to expect "already-completed" — a blanket refusal for any
+  // attended call. That refusal is what left Becky Schmauch unable to finish
+  // her own sale, so the rule is now narrower and stricter: resubmitting the
+  // SAME answer finishes the job, and an answer that DISAGREES with what was
+  // recorded fails closed. Either way, never a second write.
+  it("refuses to overwrite a decision that was already recorded", async () => {
     const { dataProvider } = buildFixtures();
 
     await completeSalesCallOutcome({
@@ -435,7 +440,7 @@ describe("completeSalesCallOutcome", () => {
       ownerDecision: "would_work_with",
       prospectDecision: "no",
     });
-    expect(second.status).toBe("already-completed");
+    expect(second.status).toBe("conflicting-outcome");
 
     const { data: deal } = await dataProvider.getOne<Deal>("deals", {
       id: DEAL_ID,
@@ -757,5 +762,189 @@ describe("No-show convergence on a half-recorded legacy call", () => {
       id: CONTACT_ID,
     });
     expect(contact.tags ?? []).toHaveLength(1);
+  });
+});
+
+// Finishing a call whose decision never landed.
+//
+// Becky Schmauch's call was Completed / Attended with no decision anywhere,
+// because the attendance write and the Won write were separate requests and
+// only the first survived. Resubmitting must FINISH it — not be refused as
+// "already completed", and not fabricate a second attendance.
+describe("completeSalesCallOutcome, on a call that is already attended", () => {
+  const beckyShape = {
+    salesCallOverrides: {
+      status: "completed" as const,
+      attendance: "attended" as const,
+      attendance_recorded_at: "2026-09-20T18:00:00.000Z",
+    },
+  };
+
+  it("converges: Won lands, and everything Won implies still happens", async () => {
+    const { dataProvider } = buildFixtures(beckyShape);
+
+    const result = await completeSalesCallOutcome({
+      dataProvider,
+      salesCallId: SALES_CALL_ID,
+      contactName: "Ada Lovelace",
+      attendance: "attended",
+      ownerDecision: "would_work_with",
+      prospectDecision: "yes",
+    });
+    // Not "already-completed": the sale had not been recorded at all.
+    expect(result.status).toBe("converged");
+
+    const { data: deal } = await dataProvider.getOne<Deal>("deals", {
+      id: DEAL_ID,
+    });
+    expect(deal.stage).toBe("won");
+    expect(deal.prospect_decision).toBe("yes");
+    // A converged sale is a sale: the Offer Page token is part of Won, and
+    // a status the caller did not recognise would silently skip it.
+    expect(deal.offer_page_token).toBeTruthy();
+
+    const { data: task } = await dataProvider.getOne<Task>("tasks", {
+      id: TASK_ID,
+    });
+    expect(task.status).toBe("completed");
+  });
+
+  it("does not re-record the attendance it already has", async () => {
+    const { dataProvider } = buildFixtures(beckyShape);
+
+    await completeSalesCallOutcome({
+      dataProvider,
+      salesCallId: SALES_CALL_ID,
+      contactName: "Ada Lovelace",
+      attendance: "attended",
+      ownerDecision: "would_work_with",
+      prospectDecision: "yes",
+    });
+
+    const { data: call } = await dataProvider.getOne<SalesCall>("sales_calls", {
+      id: SALES_CALL_ID,
+    });
+    // WHEN she was seen is historical truth, not something a later repair
+    // of the decision gets to restamp.
+    expect(call.attendance_recorded_at).toBe("2026-09-20T18:00:00.000Z");
+
+    const { data: events } = await dataProvider.getList("sales_call_events", {
+      filter: { sales_call_id: SALES_CALL_ID, kind: "attendance_recorded" },
+      pagination: { page: 1, perPage: 10 },
+      sort: { field: "id", order: "ASC" },
+    });
+    expect(events).toHaveLength(1);
+  });
+
+  it("fails closed rather than overwriting a decision that disagrees", async () => {
+    const { dataProvider } = buildFixtures({
+      ...beckyShape,
+      dealOverrides: { owner_decision: "workshops_only" },
+    });
+
+    const result = await completeSalesCallOutcome({
+      dataProvider,
+      salesCallId: SALES_CALL_ID,
+      contactName: "Ada Lovelace",
+      attendance: "attended",
+      ownerDecision: "would_work_with",
+      prospectDecision: "yes",
+    });
+    expect(result.status).toBe("conflicting-outcome");
+    // And it says what it found, so the UI can be specific instead of
+    // showing a connection error.
+    expect(result).toHaveProperty("reason", expect.stringMatching(/workshops/));
+
+    const { data: deal } = await dataProvider.getOne<Deal>("deals", {
+      id: DEAL_ID,
+    });
+    expect(deal.owner_decision).toBe("workshops_only");
+    expect(deal.stage).toBe("call_booked");
+  });
+
+  it("fails closed on a sale that already ended", async () => {
+    const { dataProvider } = buildFixtures({
+      ...beckyShape,
+      dealOverrides: { outcome: "lost", prospect_decision: "no" },
+    });
+
+    const result = await completeSalesCallOutcome({
+      dataProvider,
+      salesCallId: SALES_CALL_ID,
+      contactName: "Ada Lovelace",
+      attendance: "attended",
+      ownerDecision: "would_work_with",
+      prospectDecision: "yes",
+    });
+    expect(result.status).toBe("conflicting-outcome");
+
+    const { data: deal } = await dataProvider.getOne<Deal>("deals", {
+      id: DEAL_ID,
+    });
+    expect(deal.stage).toBe("call_booked");
+    expect(deal.outcome).toBe("lost");
+  });
+
+  it("accepts the same answer twice without writing anything twice", async () => {
+    // A double click, or a stale tab. Convergence must be harmless.
+    const { dataProvider } = buildFixtures({
+      ...beckyShape,
+      dealOverrides: {
+        owner_decision: "would_work_with",
+        prospect_decision: "yes",
+        stage: "won",
+      },
+    });
+
+    const result = await completeSalesCallOutcome({
+      dataProvider,
+      salesCallId: SALES_CALL_ID,
+      contactName: "Ada Lovelace",
+      attendance: "attended",
+      ownerDecision: "would_work_with",
+      prospectDecision: "yes",
+    });
+    expect(result.status).toBe("converged");
+
+    const { data: deal } = await dataProvider.getOne<Deal>("deals", {
+      id: DEAL_ID,
+    });
+    expect(deal.stage).toBe("won");
+    expect(deal.outcome).toBeNull();
+    const { data: events } = await dataProvider.getList("sales_call_events", {
+      filter: { sales_call_id: SALES_CALL_ID, kind: "attendance_recorded" },
+      pagination: { page: 1, perPage: 10 },
+      sort: { field: "id", order: "ASC" },
+    });
+    expect(events).toHaveLength(1);
+  });
+
+  it("will not reopen a no-show as attended", async () => {
+    const { dataProvider } = buildFixtures({
+      salesCallOverrides: {
+        status: "completed",
+        attendance: "no_show",
+        attendance_recorded_at: "2026-09-20T18:00:00.000Z",
+      },
+    });
+
+    const result = await completeSalesCallOutcome({
+      dataProvider,
+      salesCallId: SALES_CALL_ID,
+      contactName: "Ada Lovelace",
+      attendance: "attended",
+      ownerDecision: "would_work_with",
+      prospectDecision: "yes",
+    });
+    expect(result.status).toBe("already-completed");
+
+    const { data: call } = await dataProvider.getOne<SalesCall>("sales_calls", {
+      id: SALES_CALL_ID,
+    });
+    expect(call.attendance).toBe("no_show");
+    const { data: deal } = await dataProvider.getOne<Deal>("deals", {
+      id: DEAL_ID,
+    });
+    expect(deal.stage).toBe("call_booked");
   });
 });

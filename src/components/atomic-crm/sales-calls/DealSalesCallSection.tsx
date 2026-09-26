@@ -18,6 +18,7 @@ import { salesCallAttendances } from "./salesCallConstants";
 import { formatSalesCallScheduleWithPrecision } from "./salesCallSchedule";
 import { CompleteSalesCallDialog } from "./CompleteSalesCallDialog";
 import { LogSalesCallDialog } from "./LogSalesCallDialog";
+import { salesCallDecisionOwed } from "./salesCallDecisionOwed";
 
 const findLabel = (
   choices: { value: string; label: string }[],
@@ -81,6 +82,7 @@ export const DealSalesCallSection = () => {
   const record = useRecordContext<Deal>();
   const translate = useTranslate();
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
+  const [recordOutcomeOpen, setRecordOutcomeOpen] = useState(false);
   const [logDialogOpen, setLogDialogOpen] = useState(false);
 
   const { data: salesCalls, isPending } = useGetList<SalesCall>(
@@ -148,8 +150,18 @@ export const DealSalesCallSection = () => {
     );
   }
 
+  // Two different questions, and the page used to ask only the first.
+  //
+  //   has the call been resolved      attendance recorded at all
+  //   what did we decide              the Opportunity's own decision
+  //
+  // Becky Schmauch's call answered the first and not the second: Completed,
+  // Attended, and no decision anywhere — so this section showed her state
+  // and no action, and the convergence path built for exactly her could not
+  // be reached. See salesCallDecisionOwed.ts.
   const isPendingOutcome =
     salesCall.status === "booked" && !salesCall.attendance;
+  const decisionOwed = salesCallDecisionOwed(salesCall, record);
 
   return (
     <div
@@ -216,6 +228,21 @@ export const DealSalesCallSection = () => {
             {findLabel(salesCallAttendances, salesCall.attendance)}
           </div>
 
+          {decisionOwed && (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary p-3">
+              <span className="text-sm text-muted-foreground">
+                {translate("resources.deals.sales_call.decision_missing", {
+                  _: "The call happened, but no decision was recorded.",
+                })}
+              </span>
+              <Button size="sm" onClick={() => setRecordOutcomeOpen(true)}>
+                {translate("resources.deals.sales_call.record_outcome_action", {
+                  _: "Record outcome",
+                })}
+              </Button>
+            </div>
+          )}
+
           {salesCall.attendance === "attended" && (
             <div className="flex flex-wrap gap-8">
               {record.owner_decision && (
@@ -267,6 +294,18 @@ export const DealSalesCallSection = () => {
         onOpenChange={setCompleteDialogOpen}
         salesCallId={salesCall.id}
         contactName={contactName}
+      />
+
+      {/* The same dialog, opened knowing the attendance is already
+          recorded, so it asks only the question with no answer. One
+          implementation, one canonical path — completeSalesCallOutcome ->
+          complete_attended_sales_call. */}
+      <CompleteSalesCallDialog
+        open={recordOutcomeOpen}
+        onOpenChange={setRecordOutcomeOpen}
+        salesCallId={salesCall.id}
+        contactName={contactName}
+        decisionOnly
       />
     </div>
   );

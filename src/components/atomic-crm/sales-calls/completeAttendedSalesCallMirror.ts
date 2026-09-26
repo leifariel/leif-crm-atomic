@@ -33,10 +33,10 @@ export const completeAttendedSalesCallMirror = async (
     .getOne<SalesCall>("sales_calls", { id: input.salesCallId })
     .catch(() => ({ data: null as SalesCall | null }));
   if (!call) return { status: "not-found" };
-  // Idempotent by refetch: a double click or a retry converges rather than
-  // writing a second outcome over the first.
-  if (call.attendance != null) return { status: "already-completed" };
   if (call.opportunity_id == null) return { status: "no-opportunity" };
+  // A no-show is a different answer to the same question, and this is not
+  // the place to overturn it.
+  if (call.attendance === "no_show") return { status: "already-completed" };
 
   if (!input.ownerDecision) {
     return {
@@ -51,30 +51,76 @@ export const completeAttendedSalesCallMirror = async (
     };
   }
 
-  const now = new Date().toISOString();
-  await dataProvider.update<SalesCall>("sales_calls", {
-    id: call.id,
-    // status leaves 'booked' the instant an outcome exists, which frees
-    // sales_calls_one_booked_per_opportunity_idx for a genuine rebooking.
-    data: {
-      attendance: "attended",
-      attendance_recorded_at: now,
-      status: "completed",
-    },
-    previousData: call,
-  });
-  await dataProvider.create("sales_call_events", {
-    data: {
-      sales_call_id: call.id,
-      kind: "attendance_recorded",
-      occurred_at: now,
-      attendance: "attended",
-    },
-  });
-
   const { data: deal } = await dataProvider.getOne<Deal>("deals", {
     id: call.opportunity_id,
   });
+
+  // Already attended? Then the question is whether the DECISION landed.
+  // Becky's had not, so resubmitting finishes it rather than being refused
+  // — and a decision that already exists and disagrees fails closed.
+  const converged = call.attendance === "attended";
+  if (converged) {
+    if (
+      deal.owner_decision != null &&
+      deal.owner_decision !== input.ownerDecision
+    ) {
+      return {
+        status: "conflicting-outcome",
+        reason: `This call was already recorded as "${deal.owner_decision}".`,
+      };
+    }
+    if (
+      deal.prospect_decision != null &&
+      input.prospectDecision != null &&
+      deal.prospect_decision !== input.prospectDecision
+    ) {
+      return {
+        status: "conflicting-outcome",
+        reason: `This call was already recorded as "${deal.prospect_decision}".`,
+      };
+    }
+    if (deal.outcome != null) {
+      return {
+        status: "conflicting-outcome",
+        reason: `This opportunity already ended as "${deal.outcome}".`,
+      };
+    }
+  }
+
+  const now = new Date().toISOString();
+  if (!converged) {
+    await dataProvider.update<SalesCall>("sales_calls", {
+      id: call.id,
+      // status leaves 'booked' the instant an outcome exists, which frees
+      // sales_calls_one_booked_per_opportunity_idx for a genuine rebooking.
+      data: {
+        attendance: "attended",
+        attendance_recorded_at: now,
+        status: "completed",
+      },
+      previousData: call,
+    });
+  }
+
+  // Written once, ever — a sale that landed halfway may already have it.
+  const { data: existingEvents } = await dataProvider.getList(
+    "sales_call_events",
+    {
+      filter: { sales_call_id: call.id, kind: "attendance_recorded" },
+      pagination: { page: 1, perPage: 5 },
+      sort: { field: "id", order: "ASC" },
+    },
+  );
+  if (existingEvents.length === 0) {
+    await dataProvider.create("sales_call_events", {
+      data: {
+        sales_call_id: call.id,
+        kind: "attendance_recorded",
+        occurred_at: now,
+        attendance: "attended",
+      },
+    });
+  }
 
   let update: Partial<Deal>;
   let followUp: string | null = null;
@@ -126,7 +172,7 @@ export const completeAttendedSalesCallMirror = async (
   }
 
   return {
-    status: "completed",
+    status: converged ? "converged" : "completed",
     opportunity_id: deal.id,
     contact_id: deal.contact_id,
     stage: update.stage ?? deal.stage,

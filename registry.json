@@ -414,6 +414,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/sales-calls/salesCallDecisionOwed.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/sales-calls/salesCallConstants.ts",
           "type": "registry:component"
         },
