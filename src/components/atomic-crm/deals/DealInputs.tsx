@@ -153,7 +153,7 @@ const DealInfoInputs = () => {
           filter={{ offer_id: offerId, pricing_mode: pricingMode }}
         >
           <AutocompleteInput
-            label="resources.deals.fields.selected_payment_option_id"
+            label="resources.deals.fields.selected_payment_option_catalog"
             optionText={paymentOptionText}
             helperText={false}
             className="w-full [&_button]:w-full"

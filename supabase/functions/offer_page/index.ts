@@ -3,6 +3,11 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { corsHeaders, OptionsMiddleware } from "../_shared/cors.ts";
 import { createErrorResponse } from "../_shared/utils.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
+import {
+  assessCheckoutForDeal,
+  CHECKOUT_FACT_COLUMNS,
+} from "../_shared/postSaleCheckout.ts";
+import { AGREED_TERMS_OPTION_ID } from "../_shared/agreedTermsOption.ts";
 
 // Payment domain foundation slice: the production read path for the
 // public /offer/:token personalized Offer Page. Deliberately NOT gated by
@@ -39,6 +44,9 @@ type DealRow = {
   selected_payment_total: number | null;
   selected_installment_count: number | null;
   selected_installment_amount: number | null;
+  stripe_subscription_id: string | null;
+  stripe_subscription_schedule_id: string | null;
+  payment_setup_confirmed_at: string | null;
   offer_page_opened_at: string | null;
 };
 
@@ -68,14 +76,18 @@ const findDealByToken = async (token: string): Promise<DealRow | null> => {
   const { data } = await supabaseAdmin
     .from("deals")
     .select(
-      "id, contact_id, offer_id, cohort_id, stage, pricing_mode, offer_name_snapshot, offer_price_snapshot, selected_payment_option_id, selected_payment_total, selected_installment_count, selected_installment_amount, offer_page_opened_at",
+      `contact_id, offer_id, cohort_id, offer_name_snapshot, offer_price_snapshot, selected_payment_option_id, offer_page_opened_at, ${CHECKOUT_FACT_COLUMNS}`,
     )
     .eq("offer_page_token", token)
     .maybeSingle();
   return (data as DealRow | null) ?? null;
 };
 
-const resolvePaymentOptions = async (
+// A sold client is not shopping: the terms Leif recorded ARE the offer, so
+// the catalog is not consulted at all. Offering Becky 4 x $1,000 against
+// her agreed single payment of $4,000 would invite her to execute
+// something nobody agreed to.
+const resolveCatalogOptions = async (
   deal: DealRow,
 ): Promise<
   {
@@ -153,7 +165,24 @@ const handleContext = async (body: Record<string, unknown>) => {
     cohortName = (cohort as CohortRow | null)?.name ?? null;
   }
 
-  const paymentOptions = await resolvePaymentOptions(deal);
+  const assessment = await assessCheckoutForDeal(deal);
+  const paymentOptions =
+    assessment.status === "catalog"
+      ? await resolveCatalogOptions(deal)
+      : assessment.status === "payable"
+        ? [
+            {
+              id: AGREED_TERMS_OPTION_ID,
+              name:
+                assessment.terms.installments === 1
+                  ? "Payment"
+                  : "Payment plan",
+              total: assessment.terms.total,
+              installments: assessment.terms.installments,
+              installmentAmount: assessment.terms.installmentAmount,
+            },
+          ]
+        : [];
 
   return jsonResponse({
     kind: "found",
@@ -164,8 +193,37 @@ const handleContext = async (body: Record<string, unknown>) => {
     frozenPrice: deal.offer_price_snapshot,
     isScholarship: deal.pricing_mode === "scholarship",
     paymentOptions,
-    alreadyWon: deal.stage === "won",
+    // Four situations that used to be one "alreadyWon", and the wrong one
+    // was announced: somebody just sold to, who had paid nothing, was told
+    // "Payment received". Each state now says only what it knows.
+    payment: describePaymentState(assessment),
   });
+};
+
+const describePaymentState = (
+  assessment: Awaited<ReturnType<typeof assessCheckoutForDeal>>,
+): { status: string; collected: number; remaining: number | null } => {
+  if (assessment.status === "catalog") {
+    return { status: "choosing", collected: 0, remaining: null };
+  }
+  if (assessment.status === "payable") {
+    return {
+      status: "payable",
+      collected: assessment.collected,
+      remaining: assessment.terms.total - assessment.collected,
+    };
+  }
+  const status =
+    assessment.reason === "paid-in-full"
+      ? "paid-in-full"
+      : assessment.reason === "plan-exists"
+        ? "plan-exists"
+        : assessment.reason === "setup-confirmed-elsewhere"
+          ? "setup-elsewhere"
+          : // terms-unknown and not-representable are the CRM own problem to
+            // solve, never something to explain to the buyer.
+            "unavailable";
+  return { status, collected: assessment.collected, remaining: null };
 };
 
 const handleRecordOpened = async (body: Record<string, unknown>) => {

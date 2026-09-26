@@ -5,6 +5,10 @@ import { corsHeaders, OptionsMiddleware } from "../_shared/cors.ts";
 import { createErrorResponse } from "../_shared/utils.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 import { recordStripeCustomerForContact } from "../_shared/linkStripeCustomer.ts";
+import {
+  assessCheckoutForDeal,
+  CHECKOUT_FACT_COLUMNS,
+} from "../_shared/postSaleCheckout.ts";
 
 // Stripe test-mode integration slice: the production write path for
 // "create a real Checkout Session for this Offer Page". Deliberately NOT
@@ -32,9 +36,25 @@ import { recordStripeCustomerForContact } from "../_shared/linkStripeCustomer.ts
 //     --header 'Content-Type: application/json' \
 //     --data '{"token":"<a-real-committed-deal-token>","paymentOptionId":6}'
 
-const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") ?? "", {
-  apiVersion: "2025-08-27.basil",
-});
+// Constructed on first use, not at module load.
+//
+// `new Stripe("")` THROWS — "Neither apiKey nor config.authenticator
+// provided" — and at module scope that killed the whole worker before any
+// request was handled, so a missing or mid-rotation STRIPE_SECRET_KEY turned
+// even the refusals this function is supposed to answer with (paid in full,
+// a live plan, terms nobody recorded, an agreement Stripe cannot charge) into
+// an opaque WORKER_ERROR. Found while proving exactly those refusals happen
+// BEFORE anything reaches Stripe: without a key, nothing could be proven at
+// all, because the function could not boot. Lazily now, so every decision
+// that does not need Stripe is answered without it, and a genuinely missing
+// key is one clear 503 instead of a crash.
+let stripeClient: Stripe | null = null;
+const getStripe = (): Stripe | null => {
+  const key = Deno.env.get("STRIPE_SECRET_KEY");
+  if (!key) return null;
+  stripeClient ??= new Stripe(key, { apiVersion: "2025-08-27.basil" });
+  return stripeClient;
+};
 
 type DealRow = {
   id: number;
@@ -45,6 +65,12 @@ type DealRow = {
   offer_name_snapshot: string | null;
   offer_price_snapshot: number | null;
   selected_payment_option_id: number | null;
+  selected_payment_total: number | null;
+  selected_installment_count: number | null;
+  selected_installment_amount: number | null;
+  stripe_subscription_id: string | null;
+  stripe_subscription_schedule_id: string | null;
+  payment_setup_confirmed_at: string | null;
 };
 
 type ContactRow = {
@@ -76,7 +102,7 @@ const findDealByToken = async (token: string): Promise<DealRow | null> => {
   const { data } = await supabaseAdmin
     .from("deals")
     .select(
-      "id, contact_id, offer_id, stage, pricing_mode, offer_name_snapshot, offer_price_snapshot, selected_payment_option_id",
+      `contact_id, offer_id, offer_name_snapshot, offer_price_snapshot, selected_payment_option_id, ${CHECKOUT_FACT_COLUMNS}`,
     )
     .eq("offer_page_token", token)
     .maybeSingle();
@@ -122,6 +148,7 @@ const resolveAuthorizedOption = async (
 };
 
 const resolveOrCreateStripeCustomer = async (
+  stripe: Stripe,
   contact: ContactRow,
 ): Promise<string> => {
   if (contact.stripe_customer_id) return contact.stripe_customer_id;
@@ -149,22 +176,71 @@ const resolveOrCreateStripeCustomer = async (
 
 const handleCreate = async (body: Record<string, unknown>) => {
   const token = String(body.token ?? "");
-  const paymentOptionId = Number(body.paymentOptionId);
-  if (!token || !Number.isFinite(paymentOptionId)) {
-    return jsonResponse({ status: "invalid-request" }, 400);
-  }
+  if (!token) return jsonResponse({ status: "invalid-request" }, 400);
 
   const deal = await findDealByToken(token);
   if (!deal || deal.offer_price_snapshot == null) {
     return jsonResponse({ status: "not-found" });
   }
-  if (deal.stage === "won") {
-    return jsonResponse({ status: "already-won" });
+
+  // Whether payment may still be taken is a question about money, plans and
+  // Leif own statements — never about the stage. This function used to
+  // refuse every Won Opportunity outright, which since 20260918180000 (Won
+  // is a sales fact) meant every sold client was unpayable.
+  const assessment = await assessCheckoutForDeal(deal);
+  if (assessment.status === "blocked") {
+    return jsonResponse({
+      status: "payment-not-available",
+      reason: assessment.reason,
+    });
   }
 
-  const option = await resolveAuthorizedOption(deal, paymentOptionId);
+  // A sold client pays what was agreed, resolved here from the Deal. The
+  // browser sends an option id; for a sold client it is ignored entirely,
+  // so it cannot nominate a cheaper catalog row or a different structure.
+  let option: OfferPaymentOptionRow | null;
+  if (assessment.status === "payable") {
+    option = {
+      id: -1,
+      offer_id: deal.offer_id,
+      name: deal.offer_name_snapshot ?? "Payment",
+      total: assessment.terms.total,
+      installments: assessment.terms.installments,
+      installment_amount: assessment.terms.installmentAmount,
+      is_public: false,
+      pricing_mode: deal.pricing_mode,
+    };
+  } else {
+    const paymentOptionId = Number(body.paymentOptionId);
+    if (!Number.isFinite(paymentOptionId)) {
+      return jsonResponse({ status: "invalid-request" }, 400);
+    }
+    option = await resolveAuthorizedOption(deal, paymentOptionId);
+  }
   if (!option) {
     return jsonResponse({ status: "unauthorized-option" });
+  }
+
+  // Only a REAL catalog row is stamped into Stripe metadata. The webhook
+  // freezes selected_payment_option_id from it, and agreed terms have no
+  // catalog row to freeze — writing a sentinel there would put a
+  // nonexistent option id on the Deal and break its FK.
+  const catalogOptionId = assessment.status === "payable" ? null : option.id;
+
+  // The last line of defence before real money: rebuild the charge from the
+  // resolved terms and demand it equal the agreement to the cent. $4,000 in
+  // 3 fails here rather than charging $3,999.99 and reading "$0.01
+  // remaining" forever.
+  const reconstructedCents =
+    Math.round(option.installment_amount * 100) * option.installments;
+  if (
+    option.installments > 1 &&
+    reconstructedCents !== Math.round(option.total * 100)
+  ) {
+    return jsonResponse({
+      status: "payment-not-available",
+      reason: "not-representable",
+    });
   }
 
   const { data: contact } = await supabaseAdmin
@@ -184,7 +260,16 @@ const handleCreate = async (body: Record<string, unknown>) => {
       ?.currency ?? "USD"
   ).toLowerCase();
 
+  // Everything above this line is decided from CRM state alone. Stripe is
+  // reached only now, once the charge has been rebuilt and matched to the
+  // cent — so a missing key can never be mistaken for a refusal.
+  const stripe = getStripe();
+  if (!stripe) {
+    return jsonResponse({ status: "stripe-not-configured" }, 503);
+  }
+
   const stripeCustomerId = await resolveOrCreateStripeCustomer(
+    stripe,
     contact as ContactRow,
   );
 
@@ -205,7 +290,9 @@ const handleCreate = async (body: Record<string, unknown>) => {
     cancel_url: cancelUrl,
     metadata: {
       deal_id: String(deal.id),
-      payment_option_id: String(option.id),
+      ...(catalogOptionId != null
+        ? { payment_option_id: String(catalogOptionId) }
+        : {}),
       // Scholarship Pricing + Capacity slice: the reactive half of the
       // stale-Checkout-Session invariant ("old commercial terms must not
       // remain payable after Leif changes pricing mode") — stripe_webhook
@@ -231,7 +318,9 @@ const handleCreate = async (body: Record<string, unknown>) => {
           subscription_data: {
             metadata: {
               deal_id: String(deal.id),
-              payment_option_id: String(option.id),
+              ...(catalogOptionId != null
+                ? { payment_option_id: String(catalogOptionId) }
+                : {}),
               total_installments: String(option.installments),
               pricing_mode: deal.pricing_mode,
             },
@@ -241,7 +330,9 @@ const handleCreate = async (body: Record<string, unknown>) => {
           payment_intent_data: {
             metadata: {
               deal_id: String(deal.id),
-              payment_option_id: String(option.id),
+              ...(catalogOptionId != null
+                ? { payment_option_id: String(catalogOptionId) }
+                : {}),
               pricing_mode: deal.pricing_mode,
             },
           },

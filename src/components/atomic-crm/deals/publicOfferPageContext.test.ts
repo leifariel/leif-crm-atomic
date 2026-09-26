@@ -108,7 +108,8 @@ describe("getOfferPageContext", () => {
       expect(result.offerName).toBe("Growing Yourself Up");
       expect(result.cohortName).toBe("Real-Infrastructure Cohort");
       expect(result.frozenPrice).toBe(1400);
-      expect(result.alreadyWon).toBe(false);
+      // Not sold yet, so they are still choosing.
+      expect(result.payment.status).toBe("choosing");
     }
   });
 
@@ -170,12 +171,23 @@ describe("getOfferPageContext", () => {
     }
   });
 
-  it("reflects alreadyWon for a Deal that has already reached Won", async () => {
-    const { dataProvider } = buildFixtures({ stage: "won" });
+  // This used to assert alreadyWon === true and nothing else. Won alone
+  // told the page to say "Payment received" — see postSaleCheckout.ts. A
+  // sold Opportunity with no recorded terms cannot offer a payment either,
+  // but it must not claim one arrived.
+  it("a Won Deal with no recorded terms offers nothing and claims nothing", async () => {
+    const { dataProvider } = buildFixtures({
+      stage: "won",
+      selected_payment_total: null,
+      selected_installment_count: null,
+      selected_installment_amount: null,
+    });
     const result = await getOfferPageContext(dataProvider, TOKEN);
     expect(result.kind).toBe("found");
     if (result.kind === "found") {
-      expect(result.alreadyWon).toBe(true);
+      expect(result.payment.status).toBe("unavailable");
+      expect(result.paymentOptions).toHaveLength(0);
+      expect(result.payment.collected).toBe(0);
     }
   });
 });

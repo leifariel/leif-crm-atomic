@@ -177,7 +177,11 @@ describe("Public /offer/:token route — unauthenticated access + real wiring", 
       .not.toBeInTheDocument();
   });
 
-  it("a Deal already at Won shows the completed state, not a stale payment option list", async () => {
+  // These two used to assert "Payment received ✓" for any Won Deal. Won means
+  // the sale was agreed, not that money arrived — so that notice was shown to
+  // people who had paid nothing, and the checkout that could have taken their
+  // money was refused on the same reading. See deals/postSaleCheckout.ts.
+  it("a sold Deal with no recorded terms claims no payment and offers no stale option list", async () => {
     await page.viewport(1280, 900);
     const { screen } = await renderOfferPageRoute(
       buildDeal({ stage: "won" }),
@@ -185,11 +189,18 @@ describe("Public /offer/:token route — unauthenticated access + real wiring", 
     );
 
     await expect
-      .element(screen.getByText("Payment received ✓"))
+      .element(screen.getByText("Nothing to pay here yet"))
       .toBeInTheDocument();
+    await expect
+      .element(screen.getByText("Payment received ✓"))
+      .not.toBeInTheDocument();
+    // The catalog is not offered to somebody already sold to.
+    await expect
+      .element(screen.getByText("Pay in Full"))
+      .not.toBeInTheDocument();
   });
 
-  it("a Deal already Won shows the agreed plan as terms, never as a receipt", async () => {
+  it("a sold Deal shows its agreed plan as terms it can still pay, never as a receipt", async () => {
     await page.viewport(1280, 900);
     const { screen } = await renderOfferPageRoute(
       buildDeal({
@@ -202,15 +213,16 @@ describe("Public /offer/:token route — unauthenticated access + real wiring", 
       "/offer/real-token-123",
     );
 
+    // Terms, and the button that acts on them. Nothing claims money arrived.
+    await expect.element(screen.getByText("Agreed terms")).toBeInTheDocument();
     await expect
       .element(screen.getByText("Payment received ✓"))
-      .toBeInTheDocument();
-    // The plan's shape ("2 × $700 USD") stays visible per Leif's own
-    // instruction to keep the selected payment option visible — but it is
-    // never left to stand alone, since read in isolation it could imply
-    // both installments already happened.
+      .not.toBeInTheDocument();
     await expect
       .element(screen.getByText("2 × $700 USD", { exact: true }))
+      .toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("button", { name: "Pay" }))
       .toBeInTheDocument();
     // The old copy here asserted a first payment had been received, built
     // from the installment structure with nothing behind it — which is what

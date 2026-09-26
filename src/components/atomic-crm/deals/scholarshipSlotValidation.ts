@@ -137,9 +137,26 @@ export const transitionScholarshipSlotToEnrollment = async (
   }: { offerId: Identifier; dealId: Identifier; enrollmentId: Identifier },
 ): Promise<void> => {
   const slot = await findScholarshipSlot(dataProvider, offerId);
-  if (!slot || String(slot.holder_deal_id ?? "") !== String(dealId)) {
+  // Nothing to hand over. A scholarship Opportunity that holds no slot is
+  // the shape every historical import has — Mel Yacovelli, Sam Milz and
+  // Gigi George are all Won on scholarship pricing with no slot and no slot
+  // event, because 20260917170000 deliberately skips the slot machinery
+  // under migration mode ("claiming it from an import would invent an
+  // operational side effect the historical path exists to suppress").
+  //
+  // This used to raise, and that made the mirror stricter than production:
+  // handle_deal_won() only reaches its own raise on a genuine transition
+  // INTO Won, where the grant is guaranteed to have happened, while this
+  // runs whenever a Won Opportunity is saved and its Enrollment is missing.
+  // The effect in demo mode was that ANY edit to one of those three failed
+  // — found while proving the scholarship-confirmation write, which is an
+  // ordinary edit to exactly that shape.
+  if (!slot || slot.holder_deal_id == null) return;
+  if (String(slot.holder_deal_id) !== String(dealId)) {
+    // Somebody else holds it. That IS an inconsistency, and the half of
+    // this check worth keeping.
     throw new ScholarshipPricingModeError(
-      `Deal ${dealId} reached Won as scholarship but held no scholarship slot for offer ${offerId} — data inconsistency`,
+      `Deal ${dealId} reached Won as scholarship but offer ${offerId}'s scholarship slot is held by deal ${slot.holder_deal_id} — data inconsistency`,
     );
   }
   await dataProvider.update("scholarship_slots", {

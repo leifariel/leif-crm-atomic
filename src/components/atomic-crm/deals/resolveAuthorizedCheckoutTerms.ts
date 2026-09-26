@@ -1,6 +1,24 @@
 import type { DataProvider, Identifier } from "ra-core";
 
-import type { Contact, Deal, OfferPaymentOption } from "../types";
+import type {
+  Contact,
+  Deal,
+  DealPaymentScheduleItem,
+  DealStripePlanObject,
+  OfferPaymentOption,
+} from "../types";
+import {
+  assessPostSaleCheckout,
+  type PostSaleCheckoutBlock,
+} from "./postSaleCheckout";
+import { AGREED_TERMS_OPTION_ID } from "./publicOfferPageContext";
+
+// The shape both branches below produce: a catalog row, or the agreed
+// terms of an already-sold Opportunity wearing the same four fields.
+type AuthorizedTerms = Pick<
+  OfferPaymentOption,
+  "id" | "name" | "total" | "installments" | "installment_amount"
+>;
 import type { ConfigurationContextValue } from "../root/ConfigurationContext";
 
 // Stripe test-mode integration slice: the SECURITY-CRITICAL authorization
@@ -33,7 +51,12 @@ import type { ConfigurationContextValue } from "../root/ConfigurationContext";
 // convention as every other integration in this app.
 export type CheckoutTermsResult =
   | { status: "not-found" }
-  | { status: "already-won" }
+  // The sale is agreed and payment may not be taken here: paid in full, a
+  // live plan, an arrangement Leif recorded elsewhere, terms nobody wrote
+  // down, or an agreement Stripe cannot charge to the cent. Replaced
+  // "already-won", which refused every sold client on the strength of the
+  // stage alone and so left Becky Schmauch sold and unpayable.
+  | { status: "payment-not-available"; reason: PostSaleCheckoutBlock }
   | { status: "unauthorized-option" }
   | {
       status: "authorized";
@@ -67,13 +90,29 @@ export const resolveAuthorizedCheckoutTerms = async (
   const deal = deals[0];
   if (!deal || deal.offer_price_snapshot == null)
     return { status: "not-found" };
-  if (deal.stage === "won") return { status: "already-won" };
 
-  const option = await resolveAuthorizedOption(
-    dataProvider,
+  const assessment = assessPostSaleCheckout({
     deal,
-    paymentOptionId,
-  );
+    scheduleItems: await listScheduleItems(dataProvider, deal.id),
+    planObjects: await listPlanObjects(dataProvider, deal.id),
+  });
+  if (assessment.status === "blocked") {
+    return { status: "payment-not-available", reason: assessment.reason };
+  }
+
+  // A sold client pays the terms that were agreed, resolved here from the
+  // Deal — whatever option id the browser sent is ignored outright, so it
+  // cannot nominate a cheaper catalog row or a different structure.
+  const option: AuthorizedTerms | null =
+    assessment.status === "payable"
+      ? {
+          id: AGREED_TERMS_OPTION_ID,
+          name: deal.offer_name_snapshot ?? "",
+          total: assessment.terms.total,
+          installments: assessment.terms.installments,
+          installment_amount: assessment.terms.installmentAmount,
+        }
+      : await resolveAuthorizedOption(dataProvider, deal, paymentOptionId);
   if (!option) return { status: "unauthorized-option" };
 
   const contact = await dataProvider
@@ -165,3 +204,23 @@ const resolveAuthorizedOption = async (
     null
   );
 };
+
+const listScheduleItems = (dataProvider: DataProvider, dealId: Identifier) =>
+  dataProvider
+    .getList<DealPaymentScheduleItem>("deal_payment_schedule_items", {
+      filter: { deal_id: dealId },
+      pagination: { page: 1, perPage: 100 },
+      sort: { field: "sequence", order: "ASC" },
+    })
+    .then(({ data }) => data)
+    .catch(() => []);
+
+const listPlanObjects = (dataProvider: DataProvider, dealId: Identifier) =>
+  dataProvider
+    .getList<DealStripePlanObject>("deal_stripe_plan_objects", {
+      filter: { deal_id: dealId },
+      pagination: { page: 1, perPage: 50 },
+      sort: { field: "id", order: "ASC" },
+    })
+    .then(({ data }) => data)
+    .catch(() => []);

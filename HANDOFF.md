@@ -97,17 +97,22 @@ has not exercised is not evidence of anything, however much of it there is.
 **Intended sequence:** (1) finish current small workflow UX loose ends →
 (2) ~~tight reliability layer~~ **SEALED 2026-09-21, see §8** →
 (3) ~~Capacity + Waitlist~~ **SEALED 2026-09-24, see §8** →
-(4) **Waitlist quick-create, then Applications cleanup — see §8b** →
-(5) Gmail → (6) Gmail production acceptance → (7) Instagram/Meta →
-(8) Instagram production acceptance → (9) accumulated UX + maturity
-sprint → (10) Openings Planner.
+(4) ~~the sale repair~~ **SEALED 2026-09-25, see §5** →
+(5) **post-Won payment setup — CURRENT, see §8b** →
+(6) Waitlist quick-create, then Applications cleanup — see §8c →
+(7) Gmail → (8) Gmail production acceptance → (9) Instagram/Meta →
+(10) Instagram production acceptance → (11) accumulated UX + maturity
+sprint → (12) Openings Planner.
 
 Capacity + Waitlist moved ahead of Gmail deliberately: Gmail will want to say
 something true about openings, and neither the Living Example capacity maths
 nor the waitlist was operational yet. Build the truth before the thing that
-announces it. That truth now exists, and §8b carries the two waitlist and
+announces it. That truth now exists, and §8c carries the two waitlist and
 applications gaps the try-run exposed — both of which Gmail will also lean
 on — ahead of Gmail for the same reason.
+
+Post-Won payment setup jumped ahead of both: Becky is a real client, sold
+and unpaid, and the CRM currently has no action that can take her money.
 
 ---
 
@@ -457,6 +462,33 @@ rollback; rows do not.
 Afterwards: 0 wrong-question Tasks, 0 appointment Tasks, 0 future attendance
 Tasks, 200 Sales Calls unchanged. **The loop that could not close now closes,
 proven by use rather than by assertion.**
+
+**The sale repair — ACCEPTED / SEALED 2026-09-25** at `eab821bb`
+(`2a1eab80` + `56577ab0` + `9ffac974` + `eab821bb`). Becky Schmauch's own
+sale, recorded by Leif in production and then verified read-only:
+
+- Opportunity 192 `won`, `owner_decision = would_work_with`,
+  `prospect_decision = yes`, `outcome` null
+- exactly **one** Enrollment (91), status `onboarding`, tracking `tracked`
+- exactly **four** onboarding items, all pending
+- exactly **one** `attendance_recorded` event, still carrying its ORIGINAL
+  `2026-09-25 02:24:34` timestamp — the convergence finished the decision
+  without restamping the observation
+- agreed terms `$4,000 / 1 installment`, `selected_payment_total_source =
+  owner_confirmed`; **$0 collected**, no Stripe object, no fabricated
+  payment truth
+- synthetic Onboarding placement derived, not stored
+
+Two defects in the repair itself were found and fixed before acceptance:
+the client result type carried neither `converged` nor
+`conflicting-outcome` (so a converged save would have shown a connection
+error while succeeding), and the after-attended work ran only for
+`completed` (so a late sale got no Offer Page token). Both are asserted in
+[wonIsWritableByItsOwnWriter.test.ts](contracts/deals/wonIsWritableByItsOwnWriter.test.ts)
+and in `winningASale.spec.ts` against real Postgres as `authenticated`.
+
+**What it exposed, and what became the next slice:** Becky is now Won with
+terms recorded and no way to create the payment arrangement. See §8b.
 
 **Reliability Pass 1 — ACCEPTED / SEALED 2026-09-21** at `7bb47194`. Not a
 try-run: this pass built no product surface for Leif to exercise, so acceptance
@@ -913,7 +945,172 @@ same way afterwards, leaving no synthetic data behind.
 
 ---
 
-## 8b. NEXT SLICE — Waitlist quick-create
+## 8b. CURRENT SLICE — Post-Won payment setup / Offer Page truth
+
+**Audit complete 2026-09-25, no code written.** Opened by Becky's own
+acceptance: the CRM now correctly reaches *Won → agreed total recorded →
+Payment setup pending → Next: Create payment plan*, and **there is no
+action behind that sentence.**
+
+Two independent blocks, both dating from when Won meant paid:
+
+- `publicOfferPageContext.alreadyWon = deal.stage === 'won'` (2026-09-04)
+  hides every Pay button and shows **"Payment received ✓"** to somebody who
+  has paid nothing.
+- `stripe_checkout` refuses `{status: "already-won"}` on `deal.stage ===
+  'won'` (2026-09-04), so the server would refuse even if the button were
+  restored. `resolveAuthorizedCheckoutTerms` carries the same guard.
+
+Both predate `20260918180000` ("Won is a sales fact, not a payment fact")
+by two weeks. **Neither is still required:** `handle_deal_won()` is
+idempotent, `recordDealPaymentSucceeded` already returns `already-won` and
+writes nothing, and the reconciler deliberately includes Won deals. The
+guards are legacy replay-protection that has since been implemented
+properly one layer down.
+
+**No new stored state is needed.** `paymentTruth.ts` already derives all
+five states (terms unknown → setup pending → scheduled → active → paid in
+full) and already owns the right predicate: **`paymentSetupComplete`**
+(paid in full, or a live plan, or `payment_setup_confirmed_at`). The repair
+is to make the Offer Page and the checkout ask *that* instead of `stage`.
+
+`payment_setup_confirmed_at` / `payment_setup_source` already exist
+(`20260918310000`) with **no writer anywhere** — the second missing action.
+
+Requirements to hold:
+
+- Leif takes Becky from her exact current state to a real arrangement
+  without changing Won, fabricating paid status, duplicating the
+  Enrollment, or rewriting the agreed terms.
+- Checkout authorization is derived from the **owner-confirmed agreed
+  terms**, not from the catalog. Real agreements already include structures
+  absent from `offer_payment_options` (8 of 29).
+- An owner-confirmed total is never silently replaced by a list price.
+- `pricing_mode = 'scholarship'` stays an explicit owner fact; a material
+  conflict with the agreed total asks Leif rather than substituting.
+- Stripe cannot represent every agreement deterministically — unequal
+  splits, non-monthly cadence, a total that does not divide evenly. Those
+  escalate to the outside-Stripe arrangement, never to an approximation.
+
+Full audit, root causes, state table, Stripe-representability rules, the
+minimal UX proposal and the required proofs: see the audit report of
+2026-09-25 (this slice's opening report).
+
+### ACCEPTED product decisions (2026-09-25) — built, awaiting Leif's try-run
+
+**`paymentSetupComplete` answers "offer another checkout?", NOT "payment
+received."** It is true for a live plan that has collected nothing and for
+an arrangement made outside the CRM. The public page therefore states four
+situations separately, and only one of them mentions money arriving:
+
+| derived state | what the buyer is told |
+|---|---|
+| `paidInFull` | **Payment received ✓** |
+| live plan, not paid in full | **Payment plan set up ✓** + what has actually been collected and what is still to come |
+| owner-confirmed elsewhere | **Payment arranged ✓** — no claim about money |
+| sold, terms known, nothing arranged | the agreed terms, and one **Pay** button |
+| sold, terms unrecorded or unchargeable | **Nothing to pay here yet** — the CRM's problem, not the buyer's |
+
+1. **Post-sale terms are fixed.** A sold client is not shopping: the catalog
+   is not consulted at all, and the only thing the page will execute is the
+   owner-confirmed agreement. Becky sees `$4,000 once`, never the real public
+   `4 × $1,000` option her Offer also has.
+2. **Non-exact division is refused, never rounded.** The STORED installment
+   amount is the agreement; it must multiply to the total to the cent.
+   $4,000 / 3 = 3 × $1,333.33 = $3,999.99 → refused, because a cent short of
+   the agreement reads "$0.01 remaining" forever. Daniel Alexander's
+   $3,998 in 6 × $583 is refused for the same reason. No remainder-installment
+   support in this slice.
+3. **Out of scope structures escalate**, they are never approximated: unequal
+   splits, deposit + balance, non-monthly cadence, delayed first payment,
+   currency mismatch.
+4. **The panel says "Send payment link", not "Create payment plan"** —
+   nothing canonical exists to create before the client goes through
+   Checkout. Actions: **Open payment page** / **Copy payment link** (the Offer
+   Page token that has existed since the sale — never a second token system)
+   / **Payment setup handled elsewhere**. Emailing the link waits for Gmail.
+5. **"Payment setup handled elsewhere"** writes only
+   `payment_setup_confirmed_at` + `payment_setup_source = 'owner_confirmed'`
+   (the pair the database enforces), after an explicit confirmation whose
+   helper text says *"This does not mark anything paid."* It touches no
+   stage, no terms, no Enrollment, and writes no ledger row.
+6. **"Payment option" was the wrong name for the sealed agreed numbers** —
+   the display now says **Agreed terms**. The editable catalog control keeps
+   its capability (it narrows the public page and cross-validates
+   `pricing_mode`) and is relabelled **Catalog plan (optional)**; post-sale
+   checkout does not use it. No new "authorized at checkout" workflow.
+7. **Scholarship stays an explicit owner fact and so does the agreed total**;
+   neither derives the other. A material disagreement between
+   `pricing_mode = 'scholarship'` and the agreed total **blocks checkout
+   server-side** until Leif has stated which number governs — it never
+   substitutes, and never blocks a historically valid custom total.
+
+   **The authority is a canonical fact, not a click:**
+   `selected_payment_total_source = 'owner_confirmed'`, written by exactly one
+   app path (Leif typing the total into the payment panel). A
+   `stripe_derived` total is a machine inference and a null one is an import;
+   neither is an assertion, so both wait for her. The block reason is
+   `scholarship-unconfirmed`, applied by **both** the page and
+   `stripe_checkout` through the shared rules — so the warning cannot be
+   bypassed by opening the Offer Page token directly, a refresh re-blocks an
+   unconfirmed conflict, and a confirmed one is never re-asked. The
+   prospect can never make this confirmation: `anon` has no grant on
+   `deals` at all (asserted in `winningASale.spec.ts`). The three historical
+   scholarships are untouched by the rule — their totals equal their
+   scholarship price, so no conflict exists.
+8. **Generic, not Becky-shaped.** Every rule above derives from canonical
+   facts and applies to any Opportunity that is Won with terms known and
+   payment setup incomplete.
+
+**The webhook defect this found.** `recordDealPaymentSucceeded` correctly
+no-ops for a Deal already Won — but the handler then RETURNED, so a payment
+from somebody sold to before paying left the ledger empty until the nightly
+sweep happened to run. The same Won=Paid assumption one layer up: the stage
+deciding whether payment truth gets recorded. The handler now reconciles that
+contact's Stripe state immediately after the sale step, inside a try/catch so
+a reconciliation failure can never fail a delivery whose sale already landed.
+
+**A third: "Scheduled payment plan" for an arrangement the CRM cannot see.**
+`payment_setup_confirmed_at` makes setup complete without any plan existing
+here, and the panel still announced a schedule — implying installments that
+may not exist, for what could be a transfer, an invoice, or a plan Leif built
+by hand in Stripe. The derived state is unchanged (it answers "offer another
+checkout?", the same answer either way); the PRESENTATION now reads the
+subfact `setupConfirmedElsewhere` and says **"Payment setup handled
+elsewhere · Arranged outside the CRM"**, with money stated as
+"$X recorded here". A real live plan still reads "Scheduled payment plan",
+and when both are true the plan the CRM can see wins. Pinned by three tests.
+
+**Two further defects this slice's own proofs found.**
+
+- **`stripe_checkout` could not boot without a Stripe key.** `new Stripe("")`
+  throws at construction, and it was constructed at module scope — so a
+  missing or mid-rotation `STRIPE_SECRET_KEY` turned every request, including
+  the refusals this function exists to answer, into an opaque `WORKER_ERROR`.
+  The client is built on first use now, after every CRM-side decision, and a
+  genuinely absent key is one clear 503. Found by trying to prove the
+  refusals happen before Stripe: without a key nothing could be proven,
+  because nothing could run.
+- **The FakeRest mirror was stricter than production on scholarship slots.**
+  `transitionScholarshipSlotToEnrollment` raised "reached Won as scholarship
+  but held no scholarship slot" whenever a Won scholarship Opportunity was
+  saved without an Enrollment — while `handle_deal_won()` only reaches that
+  raise on a genuine transition INTO Won. In demo mode that made **any** edit
+  to a Mel/Sam/Gigi-shaped record fail. A missing slot is now nothing to hand
+  over (the historical import shape); a slot held by a *different* Deal still
+  raises, which is the half worth keeping.
+
+**Where it lives.** [postSaleCheckout.ts](src/components/atomic-crm/deals/postSaleCheckout.ts)
+is the logic of record;
+[postSaleCheckoutRules.ts](supabase/functions/_shared/postSaleCheckoutRules.ts)
+is the deliberately pure Edge mirror that **both** `offer_page` and
+`stripe_checkout` share, so the page can never offer a payment the server
+refuses. The mirror is asserted equal to the logic of record over eleven real
+cases in [postWonPaymentSetup.test.ts](contracts/deals/postWonPaymentSetup.test.ts),
+which also fails if any eligibility surface goes back to reading
+`deal.stage`.
+
+## 8c. NEXT SLICE — Waitlist quick-create
 
 **Start with diagnosis, not implementation.** The seal audit found that
 inline Contact creation already exists in the code:
@@ -964,6 +1161,42 @@ Requirements to hold:
 4. **Gmail reliability / human acceptance.**
 5. **Remaining Waitlist email / batch management.**
 6. **Instagram** (§10).
+
+### SCHOLARSHIP CAPACITY MODEL REBUILD — recorded 2026-09-25, not this slice
+
+The scholarship audit found the capacity model contradicted by real data.
+Recorded here so it is not rediscovered; **deliberately not solved with the
+payment slice**, and **no historical slot events are to be fabricated.**
+
+- 3 active scholarship clients (Mel Yacovelli 75, Sam Milz 184, Gigi George
+  125) and **0 slots held**. Both `scholarship_slots` rows read free.
+- **Growing Yourself Up has two concurrent scholarship clients**, which
+  `scholarship_slots`' `offer_id primary key` + unique-holder design cannot
+  represent at all.
+- `scholarship_slot_events` is empty. Migration `20260917170000` says why
+  and means it: under migration mode the slot machinery is skipped, because
+  *"claiming it from an import would invent an operational side effect the
+  historical path exists to suppress."* That decision stands.
+- Slot 2 (The Living Example) carries a stale `reserved_at = 2026-09-10`
+  with no holder — residue of a development grant/release cycle.
+
+So today, granting the LE scholarship reports the slot as free: correct per
+the table, wrong about the world. The open questions are Leif's: how many
+scholarships per Offer, whether the historical three should enter live
+capacity at all, and whether the discount ($4,000 − $3,000) is ever a
+stored fact rather than arithmetic nobody records.
+
+Also recorded, unresolved and **not** to be auto-fixed: `deals.pricing_mode
+= 'scholarship'` currently constrains nothing about money. `dealAmount.ts`
+reads only `Offer.current_price`, so editing a scholarship Opportunity with
+no option selected would write the **standard** price into Potential Value
+(harmless today — all three have `amount = null`).
+
+### APPLICATION STATUS VS SALES OUTCOME — separate axes, by decision
+
+Becky's Application 171 is still `pending` while her sale is Won. **This is
+not to be auto-closed.** Application review history and sales outcome stay
+independent until reconciliation semantics are deliberately designed.
 
 ### PUBLIC APPLICATION RESUBMISSION / LATER-STAGE OPPORTUNITY SAFEGUARD — open debt
 

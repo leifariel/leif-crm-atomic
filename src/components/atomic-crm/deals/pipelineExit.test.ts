@@ -334,7 +334,7 @@ describe("payment status is reported, never used as a gate", () => {
     // Emma Wijns's exact shape: onboarded, and this is the one thing left.
     expect(status.state).toBe("setup_pending");
     expect(status.headline).toBe("Payment setup pending");
-    expect(status.outstanding).toBe("Create payment plan");
+    expect(status.outstanding).toBe("Send payment link");
     expect(status.stripeLinked).toBe(false);
   });
 

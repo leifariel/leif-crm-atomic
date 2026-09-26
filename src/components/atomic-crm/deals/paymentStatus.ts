@@ -7,6 +7,11 @@ import type {
 } from "../types";
 import { describeReview, presentPayment } from "./paymentPresentation";
 import { assessPaymentTruth, type PaymentTruth } from "./paymentTruth";
+import {
+  assessPostSaleCheckout,
+  scholarshipTermsConflict,
+  type PostSaleCheckoutAssessment,
+} from "./postSaleCheckout";
 
 // A thin adapter over paymentTruth.ts. It fetches and shapes; it decides
 // nothing.
@@ -28,11 +33,26 @@ export type PaymentStatus = {
   reviewReason: string | null;
   // The underlying numbers, so no caller ever recomputes them.
   truth: PaymentTruth;
+  // Whether this person can still be sent to pay, and for exactly what —
+  // the same assessment the public page and Stripe checkout run on, so the
+  // panel can never offer a link the server would refuse.
+  checkout: PostSaleCheckoutAssessment;
+  // The existing personalized Offer Page token. Null before a sale issued
+  // one; never a second token system.
+  offerPageToken: string | null;
+  // Set only when pricing_mode is scholarship AND the owner-confirmed total
+  // differs from the scholarship price. Asks; never substitutes.
+  scholarshipConflict: { total: number; scholarshipPrice: number } | null;
 };
 
 export const toPaymentStatus = (
   truth: PaymentTruth,
-  options: { nextChargeOn?: string | null } = {},
+  options: {
+    nextChargeOn?: string | null;
+    checkout?: PostSaleCheckoutAssessment;
+    offerPageToken?: string | null;
+    scholarshipConflict?: { total: number; scholarshipPrice: number } | null;
+  } = {},
 ): PaymentStatus => {
   const presentation = presentPayment(truth, options);
   return {
@@ -43,6 +63,9 @@ export const toPaymentStatus = (
     stripeLinked: truth.stripeLinked,
     reviewReason: describeReview(truth),
     truth,
+    checkout: options.checkout ?? { status: "catalog", truth },
+    offerPageToken: options.offerPageToken ?? null,
+    scholarshipConflict: options.scholarshipConflict ?? null,
   };
 };
 
@@ -50,14 +73,18 @@ export const derivePaymentStatus = (
   deal: Deal,
   items: DealPaymentScheduleItem[],
   planObjects: DealStripePlanObject[],
-): PaymentStatus =>
-  toPaymentStatus(
-    assessPaymentTruth({
-      deal,
-      scheduleItems: items ?? [],
-      planObjects: planObjects ?? [],
-    }),
-  );
+): PaymentStatus => {
+  const input = {
+    deal,
+    scheduleItems: items ?? [],
+    planObjects: planObjects ?? [],
+  };
+  return toPaymentStatus(assessPaymentTruth(input), {
+    checkout: assessPostSaleCheckout(input),
+    offerPageToken: deal.offer_page_token ?? null,
+    scholarshipConflict: scholarshipTermsConflict(deal),
+  });
+};
 
 export const assessPaymentStatus = async (
   dataProvider: DataProvider,

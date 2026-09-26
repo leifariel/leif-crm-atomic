@@ -497,3 +497,170 @@ test.describe("finishing a sale whose decision never landed", () => {
     expect(enrollments).toHaveLength(0);
   });
 });
+
+// Recording that payment is arranged somewhere else, as the role that does it.
+//
+// deals.payment_setup_confirmed_at has existed since 20260918310000 with no
+// writer anywhere: the CRM could observe an arrangement it had made itself
+// in Stripe and nothing else. The panel writes it now, through PostgREST as
+// `authenticated` — so the grant and the pair constraint are what decide
+// whether the button works in production, and a missing grant is how Leif
+// got signed out once before. Asked here by doing it.
+test.describe("payment setup handled outside the CRM", () => {
+  const seedSoldUnpaid = async (salesId: number | string, label: string) => {
+    const { admin, dealId } = await seedOpportunity(salesId, label);
+    await admin
+      .from("deals")
+      .update({
+        stage: "call_booked",
+        selected_payment_total: 4000,
+        selected_installment_count: 1,
+        selected_installment_amount: 4000,
+        selected_payment_total_source: "owner_confirmed",
+      })
+      .eq("id", dealId);
+    // Through the canonical path, so the Enrollment exists exactly as it
+    // does for a real sale.
+    await admin.rpc("record_prospect_accepted", { p_opportunity_id: dealId });
+    return { admin, dealId };
+  };
+
+  test("a signed-in user can record it, and it moves nothing else", async ({
+    createSales,
+  }) => {
+    const { sale, email, password } = await newSale(createSales, "elsewhere");
+    const { admin, dealId } = await seedSoldUnpaid(sale.id, "elsewhere");
+    const user = await asSignedInUser(email, password);
+
+    const { error } = await user
+      .from("deals")
+      .update({
+        payment_setup_confirmed_at: new Date().toISOString(),
+        payment_setup_source: "owner_confirmed",
+      })
+      .eq("id", dealId);
+    expect(error).toBeNull();
+
+    const { data: deal } = await admin
+      .from("deals")
+      .select(
+        "stage, selected_payment_total, selected_installment_count, payment_setup_confirmed_at, payment_setup_source",
+      )
+      .eq("id", dealId)
+      .single();
+    expect(deal!.payment_setup_confirmed_at).not.toBeNull();
+    expect(deal!.payment_setup_source).toBe("owner_confirmed");
+    // The sale, the terms and the Enrollment are untouched.
+    expect(deal!.stage).toBe("won");
+    expect(Number(deal!.selected_payment_total)).toBe(4000);
+    expect(Number(deal!.selected_installment_count)).toBe(1);
+
+    const { data: enrollments } = await admin
+      .from("enrollments")
+      .select("id")
+      .eq("opportunity_id", dealId);
+    expect(enrollments).toHaveLength(1);
+
+    // And no money was invented. "Setup exists" is not "paid".
+    const { data: items } = await admin
+      .from("deal_payment_schedule_items")
+      .select("id")
+      .eq("deal_id", dealId);
+    expect(items).toHaveLength(0);
+  });
+
+  test("half the pair is refused by the database", async ({ createSales }) => {
+    const { sale, email, password } = await newSale(createSales, "halfpair");
+    const { dealId } = await seedSoldUnpaid(sale.id, "halfpair");
+    const user = await asSignedInUser(email, password);
+
+    // A timestamp with no provenance, and provenance with no timestamp.
+    const { error: noSource } = await user
+      .from("deals")
+      .update({ payment_setup_confirmed_at: new Date().toISOString() })
+      .eq("id", dealId);
+    expect(noSource).not.toBeNull();
+
+    const { error: noTime } = await user
+      .from("deals")
+      .update({ payment_setup_source: "owner_confirmed" })
+      .eq("id", dealId);
+    expect(noTime).not.toBeNull();
+  });
+
+  test("an invented provenance is refused", async ({ createSales }) => {
+    const { sale, email, password } = await newSale(createSales, "badsource");
+    const { dealId } = await seedSoldUnpaid(sale.id, "badsource");
+    const user = await asSignedInUser(email, password);
+
+    const { error } = await user
+      .from("deals")
+      .update({
+        payment_setup_confirmed_at: new Date().toISOString(),
+        payment_setup_source: "vibes",
+      })
+      .eq("id", dealId);
+    expect(error).not.toBeNull();
+  });
+});
+
+// The prospect can never authorize their own price.
+//
+// The scholarship-conflict rule is enforced server-side by the provenance of
+// the agreed total (selected_payment_total_source = 'owner_confirmed'), so
+// what stops a buyer from writing that themselves is the grant table, not
+// the UI. And `payment_setup_confirmed_at` is the owner saying an
+// arrangement exists elsewhere — also never theirs to say.
+test.describe("only the owner can state the commercial facts", () => {
+  const anon = () =>
+    createClient(SUPABASE_URL, process.env.VITE_SB_PUBLISHABLE_KEY!, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+  test("anon cannot write the agreed total, its provenance, or the setup pair", async ({
+    createSales,
+  }) => {
+    const { sale } = await newSale(createSales, "anonwrite");
+    const { admin, dealId } = await seedOpportunity(sale.id, "anonwrite");
+    await admin
+      .from("deals")
+      .update({
+        selected_payment_total: 4000,
+        selected_installment_count: 1,
+        selected_installment_amount: 4000,
+        selected_payment_total_source: "stripe_derived",
+      })
+      .eq("id", dealId);
+
+    const client = anon();
+    for (const patch of [
+      { selected_payment_total_source: "owner_confirmed" },
+      { selected_payment_total: 1 },
+      {
+        payment_setup_confirmed_at: new Date().toISOString(),
+        payment_setup_source: "owner_confirmed",
+      },
+    ]) {
+      const { error, data } = await client
+        .from("deals")
+        .update(patch)
+        .eq("id", dealId)
+        .select("id");
+      // RLS gives anon no policy at all here: either an error, or a silent
+      // zero-row update. Never a write.
+      expect(data ?? []).toHaveLength(0);
+      void error;
+    }
+
+    const { data: deal } = await admin
+      .from("deals")
+      .select(
+        "selected_payment_total, selected_payment_total_source, payment_setup_confirmed_at",
+      )
+      .eq("id", dealId)
+      .single();
+    expect(Number(deal!.selected_payment_total)).toBe(4000);
+    expect(deal!.selected_payment_total_source).toBe("stripe_derived");
+    expect(deal!.payment_setup_confirmed_at).toBeNull();
+  });
+});

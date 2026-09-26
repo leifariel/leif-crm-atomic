@@ -157,13 +157,40 @@ describe("resolveAuthorizedCheckoutTerms", () => {
     expect(result.status).toBe("not-found");
   });
 
-  it("rejects a Deal that has already reached Won — nothing left to pay for", async () => {
+  // This used to assert "already-won" and call it "nothing left to pay for".
+  // That was the defect: Won means the sale was agreed, not that money
+  // arrived, so a sold client with recorded terms and no arrangement is
+  // exactly who still needs to pay. Becky Schmauch sat in this state.
+  it("authorizes a sold client with recorded terms, for exactly those terms", async () => {
+    const dataProvider = buildFixtures({
+      stage: "won",
+      selected_payment_total: 1400,
+      selected_installment_count: 1,
+      selected_installment_amount: 1400,
+    });
+    const result = await resolveAuthorizedCheckoutTerms(dataProvider, {
+      // A catalog option id the prospect might try. It is ignored: a sold
+      // client pays what was agreed.
+      token: TOKEN,
+      paymentOptionId: 2,
+    });
+    expect(result.status).toBe("authorized");
+    if (result.status === "authorized") {
+      expect(result.installments).toBe(1);
+      expect(result.unitAmountCents).toBe(140000);
+    }
+  });
+
+  it("refuses a sold client whose terms nobody recorded", async () => {
     const dataProvider = buildFixtures({ stage: "won" });
     const result = await resolveAuthorizedCheckoutTerms(dataProvider, {
       token: TOKEN,
       paymentOptionId: 1,
     });
-    expect(result.status).toBe("already-won");
+    expect(result.status).toBe("payment-not-available");
+    if (result.status === "payment-not-available") {
+      expect(result.reason).toBe("terms-unknown");
+    }
   });
 
   it("is read-only: never writes selected_payment_option_id or any other Deal field — a prospect's in-progress choice (including an abandoned attempt) must stay freely changeable until payment actually succeeds", async () => {

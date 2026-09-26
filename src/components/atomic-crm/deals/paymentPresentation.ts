@@ -128,27 +128,53 @@ export const presentPayment = (
       };
 
     case "scheduled_plan":
-      return {
-        headline: "Scheduled payment plan",
-        detail: [
-          // Said in the order that prevents the old mistake: nothing has
-          // been collected, and here is what is arranged.
-          `${formatMoney(truth.collected)} paid`,
-          ...(truth.termsKnown &&
-          truth.agreedInstallmentCount != null &&
-          truth.agreedInstallmentCount > 1 &&
-          truth.agreedInstallmentAmount != null
-            ? [
-                `${truth.agreedInstallmentCount} × ${formatMoney(truth.agreedInstallmentAmount)} scheduled`,
-              ]
-            : truth.futureScheduled > 0
-              ? [`${formatMoney(truth.futureScheduled)} scheduled`]
-              : []),
-          ...(nextCharge ? [nextCharge] : []),
-          ...(truth.stripeLinked ? ["Stripe linked"] : []),
-        ],
-        outstanding: null,
-      };
+      // One derived state, two different arrangements, and they must not
+      // borrow each other's words.
+      //
+      // payment_setup_confirmed_at makes setup complete without the CRM ever
+      // having seen a plan — it means "Leif has arranged this somewhere
+      // else", which may be a Stripe plan she built by hand, a one-time
+      // transfer, an invoice or an external processor. Announcing "Scheduled
+      // payment plan" there described a schedule nobody here has, and
+      // implied installments that may not exist. Only a plan the CRM can
+      // actually see may be called a plan.
+      //
+      // Deliberately NOT a new state: the enum answers "should another
+      // checkout be offered", which is the same answer for both. The
+      // difference is a subfact, so it is read as one.
+      return truth.setupConfirmedElsewhere && !truth.hasCurrentPlan
+        ? {
+            headline: "Payment setup handled elsewhere",
+            detail: [
+              // What is true, and nothing more: an arrangement exists, and
+              // this much money has actually arrived here.
+              `${formatMoney(truth.collected)} recorded here`,
+              ...(truth.termsKnown ? [describeAgreedTerms(truth)!] : []),
+              "Arranged outside the CRM",
+            ],
+            outstanding: null,
+          }
+        : {
+            headline: "Scheduled payment plan",
+            detail: [
+              // Said in the order that prevents the old mistake: nothing has
+              // been collected, and here is what is arranged.
+              `${formatMoney(truth.collected)} paid`,
+              ...(truth.termsKnown &&
+              truth.agreedInstallmentCount != null &&
+              truth.agreedInstallmentCount > 1 &&
+              truth.agreedInstallmentAmount != null
+                ? [
+                    `${truth.agreedInstallmentCount} × ${formatMoney(truth.agreedInstallmentAmount)} scheduled`,
+                  ]
+                : truth.futureScheduled > 0
+                  ? [`${formatMoney(truth.futureScheduled)} scheduled`]
+                  : []),
+              ...(nextCharge ? [nextCharge] : []),
+              ...(truth.stripeLinked ? ["Stripe linked"] : []),
+            ],
+            outstanding: null,
+          };
 
     case "setup_pending":
       return {
@@ -156,7 +182,13 @@ export const presentPayment = (
         detail: truth.termsKnown
           ? [describeAgreedTerms(truth)!, `${formatMoney(0)} paid`]
           : [],
-        outstanding: "Create payment plan",
+        // Not "create a payment plan". Nothing canonical is created before
+        // the client actually goes through Checkout — the CRM has no plan of
+        // its own to make, and saying so invited a button that could not
+        // exist. What Leif does next is send them their own payment page.
+        outstanding: truth.termsKnown
+          ? "Send payment link"
+          : "Record the agreed total",
       };
 
     case "needs_review":

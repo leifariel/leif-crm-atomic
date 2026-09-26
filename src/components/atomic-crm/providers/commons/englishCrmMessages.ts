@@ -206,7 +206,17 @@ export const englishCrmMessages = {
         category: "Category",
         offer_id: "Offer",
         cohort_id: "Cohort",
-        selected_payment_option_id: "Payment option",
+        // The three sealed numbers are the AGREED TERMS. This label used to
+        // say "Payment option", so an Opportunity with no catalog option at
+        // all (every one of the 163 in production) still read "Payment
+        // option: $4000 (1x $4000)" — naming a catalog reference it did not
+        // contain.
+        selected_payment_option_id: "Agreed terms",
+        // The editable catalog control, which is a different question:
+        // which pre-defined plan may be executed. Kept for the capability
+        // it still has (it narrows the public Offer Page and cross-validates
+        // pricing_mode); post-sale checkout no longer needs it.
+        selected_payment_option_catalog: "Catalog plan (optional)",
         amount: "Potential value",
         expected_closing_date: "Expected closing date",
         stage: "Stage",

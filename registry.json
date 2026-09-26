@@ -1230,6 +1230,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/deals/postSaleCheckout.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/deals/pipelineOrdering.ts",
           "type": "registry:component"
         },

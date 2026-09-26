@@ -276,8 +276,33 @@ const handleCheckoutSessionCompleted = async (
     }
   }
 
+  // The SALE. A no-op when the client was sold to before paying, which is
+  // now the ordinary order of events.
   const result = await recordDealPaymentSucceeded(deal, paymentOptionId);
-  return jsonResponse({ status: result.status });
+
+  // The MONEY, which is a different fact and must not depend on that
+  // transition having done anything. Before this, a payment from an
+  // already-Won client left the webhook after the "already-won" no-op and
+  // the ledger stayed empty until the nightly sweep happened to run — the
+  // same Won=Paid assumption one layer up: stage deciding whether payment
+  // truth gets recorded. Reconciliation is idempotent and reads Stripe as
+  // the authority, so running it here simply makes the truth land now.
+  let payments: string;
+  try {
+    const delta = await reconcileStripe(stripe, { contactId: deal.contact_id });
+    payments = `ingested:${delta.paymentsIngested} plans:${delta.planObjectsRecorded}`;
+  } catch (error) {
+    // Never fail the webhook over this: Stripe would retry a delivery whose
+    // sale and plan steps already succeeded. The sweep and the Sync Stripe
+    // button both remain, so the money is not lost — only late.
+    console.error(
+      `stripe_webhook: post-payment reconciliation failed for deal ${deal.id}:`,
+      error,
+    );
+    payments = "deferred";
+  }
+
+  return jsonResponse({ status: result.status, payments });
 };
 
 Deno.serve(async (req: Request) => {

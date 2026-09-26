@@ -75,6 +75,14 @@ export type PaymentTruth = {
 
   // --- the arrangement -------------------------------------------------
   hasCurrentPlan: boolean;
+  // Leif has stated an arrangement exists OUTSIDE this CRM — a plan she made
+  // in the Stripe dashboard, a transfer schedule, an invoice, anything. A
+  // derived subfact rather than a state of its own, because it answers a
+  // different question from "is there a live plan here": both make setup
+  // complete, and neither is money. Surfaces exist to tell them apart —
+  // saying "Scheduled payment plan" for this one describes an arrangement
+  // the CRM has never seen.
+  setupConfirmedElsewhere: boolean;
   planReplaced: boolean;
   stripeLinked: boolean;
 
@@ -234,6 +242,7 @@ export const assessPaymentTruth = ({
     installmentsSatisfied,
     installmentProgressKnown,
     hasCurrentPlan,
+    setupConfirmedElsewhere: ownerConfirmedSetup,
     planReplaced,
     stripeLinked,
     paidInFull,

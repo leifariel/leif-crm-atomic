@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 
 import type { Deal } from "../types";
 import { assessPaymentStatus, type PaymentStatus } from "./paymentStatus";
+import { describeCheckoutBlock } from "./postSaleCheckout";
 import { canMarkReviewed, reviewResolution } from "./paymentReview";
 import {
   discoverStripeCustomers,
@@ -57,6 +58,9 @@ export const PaymentPanel = ({
   const [countInput, setCountInput] = useState("");
   const [savingTerms, setSavingTerms] = useState(false);
 
+  const [confirmingSetup, setConfirmingSetup] = useState(false);
+  const [confirmingTotal, setConfirmingTotal] = useState(false);
+
   const load = useCallback(async () => {
     setStatus(await assessPaymentStatus(dataProvider, opportunityId));
   }, [dataProvider, opportunityId]);
@@ -64,6 +68,67 @@ export const PaymentPanel = ({
   useEffect(() => {
     load();
   }, [load]);
+
+  // "Payment setup handled elsewhere" — the writer this pair has waited for
+  // since 20260918310000 added it. It states that an arrangement EXISTS
+  // somewhere other than this CRM (a subscription Leif made in the Stripe
+  // dashboard, a bank transfer schedule, anything). It is emphatically not
+  // a payment: it writes no ledger row, touches no stage, no terms, no
+  // Enrollment. The column comment says the same thing — "a scheduled
+  // ledger row is terms, not an arrangement".
+  const confirmSetupElsewhere = async () => {
+    setConfirmingSetup(true);
+    try {
+      await dataProvider.update("deals", {
+        id: opportunityId,
+        data: {
+          payment_setup_confirmed_at: new Date().toISOString(),
+          // The pair is enforced by deals_payment_setup_pair_check, so both
+          // are written together or the database refuses the row.
+          payment_setup_source: "owner_confirmed",
+        },
+        previousData: { id: opportunityId },
+      });
+      notify("Recorded: payment setup is handled outside the CRM.", {
+        type: "info",
+      });
+      await load();
+    } catch {
+      notify("ra.notification.http_error", { type: "error" });
+    } finally {
+      setConfirmingSetup(false);
+    }
+  };
+
+  // Confirming a scholarship-conflicting total.
+  //
+  // The warning used to be dismissed with local React state, which
+  // authorized nothing: the Offer Page token stays executable, and the
+  // server had no way to know Leif had agreed. So the confirmation writes
+  // the canonical fact that already means exactly this — the agreed total
+  // with owner_confirmed provenance, the same field recordAgreedTerms
+  // writes. Both the Offer Page and stripe_checkout refuse a scholarship
+  // conflict whose total is not owner_confirmed, so this write IS the
+  // authority, and it survives a refresh because it is a row, not a click.
+  const confirmScholarshipTotal = async (total: number) => {
+    setConfirmingTotal(true);
+    try {
+      await dataProvider.update("deals", {
+        id: opportunityId,
+        data: {
+          selected_payment_total: total,
+          selected_payment_total_source: "owner_confirmed",
+        },
+        previousData: { id: opportunityId },
+      });
+      notify("Agreed total confirmed.", { type: "info" });
+      await load();
+    } catch {
+      notify("ra.notification.http_error", { type: "error" });
+    } finally {
+      setConfirmingTotal(false);
+    }
+  };
 
   const sync = async () => {
     if (resolvedContactId == null) return;
@@ -313,6 +378,14 @@ export const PaymentPanel = ({
           </p>
         )}
 
+        <PaymentSetupActions
+          status={status}
+          onConfirmedElsewhere={confirmSetupElsewhere}
+          confirming={confirmingSetup}
+          onConfirmScholarshipTotal={confirmScholarshipTotal}
+          confirmingTotal={confirmingTotal}
+        />
+
         {candidates.length > 0 && (
           <div className="rounded-md border p-2 flex flex-col gap-2">
             <p className="text-sm">
@@ -375,3 +448,182 @@ export const PaymentPanel = ({
     </Card>
   );
 };
+
+// What Leif can actually do about payment setup, and nothing she cannot.
+//
+// The panel used to end at the sentence "Next: Create payment plan" with no
+// action behind it — Becky Schmauch was Won, her $4,000 was recorded, and
+// there was no way in the CRM to take her money. The link below is the one
+// that has existed since the sale: her personalized Offer Page token. No
+// second token system, no second link.
+const PaymentSetupActions = ({
+  status,
+  onConfirmedElsewhere,
+  confirming,
+  onConfirmScholarshipTotal,
+  confirmingTotal,
+}: {
+  status: PaymentStatus;
+  onConfirmedElsewhere: () => void;
+  confirming: boolean;
+  onConfirmScholarshipTotal: (total: number) => void;
+  confirmingTotal: boolean;
+}) => {
+  const notify = useNotify();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+
+  // Only a sold Opportunity with nothing arranged has setup to do. Every
+  // other state is either finished or somebody else's question.
+  if (status.checkout.status === "catalog") return null;
+
+  const payable = status.checkout.status === "payable";
+  const blockReason =
+    status.checkout.status === "blocked" ? status.checkout.reason : null;
+
+  // Nothing to offer once an arrangement exists — the whole point of asking
+  // payment truth rather than the stage.
+  const arranged =
+    blockReason === "paid-in-full" ||
+    blockReason === "plan-exists" ||
+    blockReason === "setup-confirmed-elsewhere";
+
+  const url =
+    status.offerPageToken != null
+      ? `${window.location.origin}/#/offer/${status.offerPageToken}`
+      : null;
+
+  const conflict = status.scholarshipConflict;
+  // Whether the SERVER is still refusing over this, not whether the panel
+  // has been clicked. Once the total carries owner_confirmed provenance the
+  // block is gone and the warning stays only as context.
+  const needsConflictAck = blockReason === "scholarship-unconfirmed";
+
+  const copyLink = async () => {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      notify("Payment link copied.", { type: "info" });
+    } catch {
+      notify("Could not copy — open the page and copy the address instead.", {
+        type: "warning",
+      });
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md border p-2">
+      {conflict != null && (
+        <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 flex flex-col gap-2">
+          <p className="text-sm">
+            This Opportunity is on scholarship pricing (
+            {formatPanelMoney(conflict.scholarshipPrice)}), but the agreed total
+            is {formatPanelMoney(conflict.total)}. The CRM will charge the
+            agreed total — it never substitutes the scholarship price.
+          </p>
+          {needsConflictAck && (
+            <div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={confirmingTotal}
+                onClick={() => onConfirmScholarshipTotal(conflict.total)}
+              >
+                {confirmingTotal
+                  ? "Saving…"
+                  : `Yes — charge ${formatPanelMoney(conflict.total)}`}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {payable && !needsConflictAck && (
+        <div className="flex flex-wrap items-center gap-2">
+          {url ? (
+            <>
+              <Button asChild type="button" size="sm">
+                <a href={url} target="_blank" rel="noopener noreferrer">
+                  Open payment page
+                </a>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={copyLink}
+              >
+                Copy payment link
+              </Button>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              This Opportunity has no Offer Page link yet.
+            </p>
+          )}
+        </div>
+      )}
+
+      {blockReason != null && !arranged && (
+        <p className="text-sm text-muted-foreground">
+          {describeCheckoutBlock(
+            blockReason,
+            status.checkout.status === "blocked"
+              ? status.checkout.agreed
+              : null,
+          )}
+        </p>
+      )}
+
+      {!arranged &&
+        (confirmOpen ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-muted-foreground">
+              Use this when payment has already been arranged outside this CRM —
+              a plan you created in Stripe yourself, a transfer schedule,
+              anything. <strong>This does not mark anything paid.</strong> It
+              records that the arrangement exists, and stops the CRM asking for
+              one.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={onConfirmedElsewhere}
+                disabled={confirming}
+              >
+                {confirming ? "Saving…" : "Yes — setup exists elsewhere"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirmOpen(false)}
+                disabled={confirming}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="h-auto p-0 justify-start text-sm text-muted-foreground"
+              onClick={() => setConfirmOpen(true)}
+            >
+              Payment setup handled elsewhere
+            </Button>
+          </div>
+        ))}
+    </div>
+  );
+};
+
+const formatPanelMoney = (value: number) =>
+  `$${value.toLocaleString("en-US", {
+    minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  })}`;
