@@ -98,7 +98,10 @@ has not exercised is not evidence of anything, however much of it there is.
 (2) ~~tight reliability layer~~ **SEALED 2026-09-21, see §8** →
 (3) ~~Capacity + Waitlist~~ **SEALED 2026-09-24, see §8** →
 (4) ~~the sale repair~~ **SEALED 2026-09-25, see §5** →
-(5) **post-Won payment setup — CURRENT, see §8b** →
+(5) ~~post-Won payment setup~~ **COMMITTED 2026-09-26 at `b12fb3b8`,
+awaiting deployment + acceptance, see §8b** →
+(5b) **Jenna Smith cross-offer conversion, then the Dashboard sales-call
+resolution lightbox — CURRENT, see §8b-next** →
 (6) Waitlist quick-create, then Applications cleanup — see §8c →
 (7) Gmail → (8) Gmail production acceptance → (9) Instagram/Meta →
 (10) Instagram production acceptance → (11) accumulated UX + maturity
@@ -945,11 +948,36 @@ same way afterwards, leaving no synthetic data behind.
 
 ---
 
-## 8b. CURRENT SLICE — Post-Won payment setup / Offer Page truth
+## 8b. POST-WON PAYMENT SETUP / OFFER PAGE TRUTH — BUILT + TESTED + COMMITTED
 
-**Audit complete 2026-09-25, no code written.** Opened by Becky's own
-acceptance: the CRM now correctly reaches *Won → agreed total recorded →
-Payment setup pending → Next: Create payment plan*, and **there is no
+**Committed 2026-09-26 at `b12fb3b8`** (*fix(payments): separate accepted
+sales from payment setup*), 31 files. **Awaiting production deployment and
+Leif's human acceptance** — not sealed until she has taken a real payment
+through it.
+
+Proven before commit, against real Stripe TEST rather than against request
+construction: a real `cs_test_` Session with `mode=payment`,
+`amount_total=400000`, the Opportunity on `client_reference_id` and in
+metadata, no catalog substitution; the subscription-mode Session with one
+**$1,000/month line item reconstructing $4,000 exactly**; five refusals that
+created **zero** Sessions in the account. Then a real hosted TEST payment,
+its **signed `checkout.session.completed` accepted by the local webhook**,
+collected **0 → 4000** from actual payment evidence, `paid_in_full` reached,
+stage still Won, terms still `owner_confirmed`, one Enrollment — and a replay
+of the same signed event changing nothing, while a forged signature is still
+refused.
+
+**Non-blocking TEST follow-up, not a defect:** adopting the subscription and
+its Architecture B schedule needs a *second* completed hosted checkout,
+because a subscription only exists once a payment succeeds and Stripe has no
+API to pay a Session. The Session shape is proven and the metadata that path
+reads (`total_installments`, `deal_id`, `pricing_mode`) is contract-pinned in
+[postWonPaymentSetup.test.ts](contracts/deals/postWonPaymentSetup.test.ts).
+Close it with one more test-mode checkout whenever convenient.
+
+**Audit complete 2026-09-25.** Opened by Becky's own
+acceptance: the CRM reached *Won → agreed total recorded →
+Payment setup pending → Next: Create payment plan*, and **there was no
 action behind that sentence.**
 
 Two independent blocks, both dating from when Won meant paid:
@@ -1109,6 +1137,34 @@ refuses. The mirror is asserted equal to the logic of record over eleven real
 cases in [postWonPaymentSetup.test.ts](contracts/deals/postWonPaymentSetup.test.ts),
 which also fails if any eligibility surface goes back to reading
 `deal.stage`.
+
+## 8b-next. THE TWO ITEMS AFTER PRODUCTION PAYMENT ACCEPTANCE
+
+Owner-set order, 2026-09-26. Neither starts before Leif has taken a real
+payment through `b12fb3b8` in production. **The Application Form Builder stays
+parked until both are resolved.**
+
+### A. Jenna Smith — cross-offer conversion leaves the old programme behind
+
+She had a **Growing Yourself Up** sales call and bought **The Living
+Example**. The Opportunity was changed to LE, and **her GYU onboarding and
+Tasks stayed**. So the Enrollment and its checklist describe a programme she
+never joined, while the sale says otherwise.
+
+Start with the audit, not the repair: what does changing `offer_id` on a Won
+Opportunity actually do to the Enrollment, its onboarding items, its Tasks and
+its Cohort — and which of those the database reconciles versus which nobody
+touches. The repair is Enrollment + onboarding reconciliation for a genuine
+cross-offer conversion; **Jenna is the production acceptance case**, so do not
+mutate her while diagnosing.
+
+### B. Dashboard sales-call resolution should not navigate away
+
+"No matching Opportunity" currently leaves the Dashboard for
+`/sales-calls/:id/resolve`. It should open as a **lightbox/modal over the
+Dashboard** — the same pattern the Opportunity and Application lightboxes
+already use — while **preserving the underlying route** so a direct link or a
+reload still lands on a working page.
 
 ## 8c. NEXT SLICE — Waitlist quick-create
 
