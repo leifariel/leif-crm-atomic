@@ -486,6 +486,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/sales-calls/SalesCallResolutionModal.tsx",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/sales-calls/SalesCallOutcomePage.tsx",
           "type": "registry:component"
         },

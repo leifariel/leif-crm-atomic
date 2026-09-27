@@ -232,6 +232,54 @@ When using FakeRest, database views are emulated in the frontend. Test data gene
 
 List filters follow the `ra-data-postgrest` convention with operator concatenation: `field_name@operator` (e.g., `first_name@eq`). The FakeRest adapter maps these to FakeRest syntax at runtime.
 
+### Operational UX conventions
+
+Operational actions follow the CRM's established interaction language. This is
+a durable rule: apply it to new UI, and bring adjacent UI into line when you
+touch it.
+
+#### Lightbox / modal
+
+Use a modal over the current page — never navigation away — when an action:
+
+- begins from an existing Dashboard / Client / Opportunity / Application context
+- is bounded and relatively short
+- asks for a small number of choices or fields
+- confirms or performs one operational state change
+
+Resolving or matching a sales call, repairing onboarding, editing a few fields,
+choosing a programme or source, confirming an operational transition: all of
+these are modals.
+
+Keep the underlying full-page route where a direct link or a reload is useful,
+and make that route a **thin wrapper around the same modal component** — one
+implementation, two entry points, closing by going back in history. See
+`sessions/CadenceResolutionModal.tsx` with `sessions/ResolveCadenceIssuePage.tsx`,
+and `sales-calls/SalesCallResolutionModal.tsx` with
+`sales-calls/ResolveSalesCallPage.tsx`. Ordinary in-app interaction must not
+kick Leif off the page being worked on.
+
+#### In-page elements
+
+Persistent status, warnings, summaries and actions belonging to the current
+record use the CRM's rounded bordered card language (`@/components/ui/card`).
+An important operational action is not a naked text link, and not a loose block
+of explanatory prose sitting directly on the page — when a compact card fits,
+use the card.
+
+#### Full pages
+
+A dedicated page is for a workflow that genuinely deserves a destination: many
+fields, long-form content, complex navigation.
+
+#### Copy
+
+**Answer first, mechanism second.** Operator-facing UI says what is true, what
+needs attention, and what the action will do. It does not expose database or
+lifecycle implementation detail unless Leif needs it to make the decision —
+"their onboarding is still set up for Growing Yourself Up" rather than anything
+about projections, offer fields or rows.
+
 ## Development Workflows
 
 ### Path Aliases

@@ -9,17 +9,16 @@ transfer checkpoint. **The repository, the database and production are the
 authority. Where this prose disagrees with them, they win — say so rather than
 quietly picking one.**
 
-**Where things stand right now (2026-09-27).** The cross-offer transfer
-checkpoint is **pushed and live**: `origin/main` is at `3418f3b8`, production
-holds 141 migrations, and the frontend on crm.leifariel.com is that build. One
-further commit sits locally and is **not pushed** — the reconciliation
-authority Jenna actually needs (§8b-next). The Application Form Builder is
-restored to the working tree, still uncommitted.
+**Where things stand right now (2026-09-27).** Cross-offer transfer AND the
+reconciliation repair are **live and human-accepted**: `origin/main` is at
+`d4564420`, production holds 142 migrations, and **Jenna Smith was repaired in
+production through the UI** (§8b-next). One commit sits locally and is **not
+pushed** — the operational lightbox UX pass (§8b-ux). The Application Form
+Builder is restored to the working tree, still uncommitted.
 
-**The next action is Leif's: push that commit, then click the repair on Jenna's
-client page with the result in front of him.** She is untouched. Details in
-§8b-next; the Kit requirement that Applications cannot be called finished
-without is §8b-kit.
+**The next action is Leif's: push the lightbox commit.** Then the queue is the
+client start-week / capacity UX, Kit, and only then the builder. The Kit
+requirement that Applications cannot be called finished without is §8b-kit.
 
 ---
 
@@ -1167,7 +1166,34 @@ cases in [postWonPaymentSetup.test.ts](contracts/deals/postWonPaymentSetup.test.
 which also fails if any eligibility surface goes back to reading
 `deal.stage`.
 
-## 8b-next. CROSS-OFFER TRANSFER — DEPLOYED, PLUS THE REPAIR JENNA NEEDS
+## 8b-next. CROSS-OFFER TRANSFER + RECONCILIATION — ACCEPTED / SEALED 2026-09-27
+
+**Human-accepted in production, 2026-09-27.** Leif repaired Jenna Smith through
+the real UI: the dialog proposed Growing Yourself Up, he confirmed it, and the
+repair completed. Verified read-only in production afterwards, all of it:
+
+- Opportunity 188 still **The Living Example**, still **won**, **one** Enrollment
+- **4 live requirements** — Contract signed `done` (its completion timestamp
+  intact, its provenance still null), Notion access, Living Example curriculum
+  access and Meditation library access all `pending` with `source_offer_id` = LE
+- **Slack access and Google Calendar access `retired`**, both stamped
+  `retired_from_offer_id` = GYU — not deleted, not marked done
+- their Tasks (279, 280) **`cancelled` with `done_date`**; Task 281 was
+  **re-titled** to "Grant jenna smith Living Example curriculum access" rather
+  than duplicated; Task 321 added for Notion; **one pending Task per pending
+  requirement**, no duplicates, no stale Slack/Calendar Tasks
+- **one** `deal_offer_events` row (id 4): GYU → LE, `source = 'reconstructed'`,
+  **`occurred_at` null**, `recorded_at` = 2026-09-27 18:51:42Z, note present —
+  the only row in the table anywhere
+- her **Application 109 still Growing Yourself Up** (approved, submitted
+  2026-08-01) and her **sales call 189 still GYU** by its own Acuity appointment
+  type — both untouched
+- `enrollment_onboarding_matches_offer(93, 1)` now returns **true**, so the
+  repair action no longer appears for her
+
+Everything below is kept as the record of what was built and why.
+
+## 8b-next-detail. THE TWO AUTHORITIES
 
 **Deployed 2026-09-27.** `origin/main` = `3418f3b8`: `c36ba6eb` (transfer),
 `75cdfa67` (declarative schema), `f419a552` (test hygiene), `ae9a4c14` and
@@ -1208,7 +1234,7 @@ commits and **143** in the working tree while the builder sits there.
 
 **Queue after Jenna's production acceptance, owner-set 2026-09-27:**
 
-1. **Dashboard sales-call resolution modal/lightbox** — §8b-next B
+1. ~~Dashboard sales-call resolution modal/lightbox~~ — done, §8b-ux
 2. **Client start-week / capacity UX** — §8b-startweek
 3. **Kit / Applications integration** — §8b-kit, a *completion requirement* for
    Applications, not optional polish
@@ -1311,6 +1337,38 @@ honestly mean (§8, and the derived-schedule functions in §4).
 **5. It stays editable later.** Changing Start week afterwards from the Client
 page, through the same lightbox, must remain possible. Setting it during a sale
 is a prompt, not a one-way door.
+
+## 8b-ux. OPERATIONAL LIGHTBOX UX — COMMITTED LOCALLY 2026-09-27
+
+**Not pushed.** The durable rule is now in
+[AGENTS.md](AGENTS.md) → *Operational UX conventions*: a bounded operational
+action asked from a Dashboard / Client / Opportunity / Application context opens
+as a **modal over that page**, the full-page route survives as a **thin wrapper
+around the same component**, persistent status uses the **card** language, and
+copy answers first and explains mechanism second.
+
+Two workflows brought into line with it:
+
+- **Matching a sales call** no longer navigates away. `SalesCallResolutionModal`
+  is the one implementation; a Task row (Dashboard, Contact page, mobile list)
+  opens it over the page, and `/sales-calls/:id/resolve` is a 25-line wrapper
+  that closes by going back in history. The ⋮ menu's Edit opens the same modal
+  instead of navigating, which it used to do. An already-attached booking renders
+  its "attached ✓ / View the Opportunity" state inside the modal.
+- **Repairing onboarding** is a compact card — *"Onboarding needs repair / This
+  client is in X, but their onboarding is still set up for Y"* — with the
+  workflow in a modal. The mechanism language is gone; the plan lists only what
+  changes, so a requirement called the same thing in both programmes no longer
+  claims to be updated.
+
+**The Aurora audit found no invariant defect.** Her call 509 is attached to
+Opportunity 292 and its matching Task is **closed**; across all of production
+there are **8** matching Tasks and **0 open**, 0 open-while-attached, and 0 with
+a null `sales_call_id`. What Leif saw was the resolve page's already-attached
+state, which is now a modal. One latent gap is worth knowing: the
+`complete_sales_call_matching_task` trigger keys on `sales_call_id = new.id`,
+so a Task with a null `sales_call_id` would not be closed by it — there are
+none, and every creator sets the column, so it is history-only.
 
 ## 8b-kit. KIT / CONVERTKIT — APPLICATIONS ARE NOT COMPLETE WITHOUT IT
 
@@ -1632,17 +1690,14 @@ The next Claude session should, in order:
 8. **Surface disagreements rather than silently resolving them.**
 9. **STOP before implementation and report readiness.**
 
-**The exact next action as of 2026-09-27:** the transfer checkpoint is already
-live (`origin/main` = `3418f3b8`, production at 141 migrations). Push the one
-local commit that adds `reconcile_enrollment_to_current_offer()`, confirm Vercel
-actually deployed it (a green Actions run does not mean the frontend shipped —
-§3), then open Jenna's client page and click **"Repair onboarding to current
-programme"**, confirming Growing Yourself Up as the programme her setup came
-from. Check her checklist then reads **1 of 4** exactly as §8b-next states, and
-that her GYU Application and GYU sales call still say GYU. Nothing else starts
-before that acceptance passes — then the queue is the Dashboard sales-call
-lightbox, the client start-week / capacity UX, Kit, and only then the
-Application Form Builder (§8b-next).
+**The exact next action as of 2026-09-27:** Jenna is repaired and the slice is
+sealed (§8b-next). `origin/main` = `d4564420`, production at 142 migrations.
+Push the local lightbox UX commit (§8b-ux), confirm Vercel actually deployed it
+(a green Actions run does not mean the frontend shipped — §3), and try the two
+touched workflows in production: a sales-call matching Task should open over the
+Dashboard rather than navigating, and a client with aligned onboarding should
+show no repair card. Then the queue is the client start-week / capacity UX, Kit,
+and only then the Application Form Builder.
 
 And before calling anything finished, re-read §2's acceptance loop. **Leif's
 try-run is a step in the work, not a formality after it** — schedule it while

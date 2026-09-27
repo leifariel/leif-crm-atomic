@@ -1,4 +1,5 @@
 import { useGetList } from "ra-core";
+import type { Identifier } from "ra-core";
 import { isActiveOpportunity } from "../deals/dealActivity";
 
 import type { Application, Deal, SalesCall, Task } from "../types";
@@ -8,7 +9,10 @@ export type TaskActionDestination =
   | { kind: "application-review"; to: string }
   | { kind: "opportunity-context"; to: string }
   | { kind: "enrollment-context"; to: string }
-  | { kind: "sales-call-needs-matching"; to: string }
+  // Carries the id as well as the route: a Task row opens this one as a
+  // modal over the page it is already on (AGENTS.md -> Operational UX
+  // conventions), and `to` remains what a direct link or a reload uses.
+  | { kind: "sales-call-needs-matching"; to: string; salesCallId: Identifier }
   | { kind: "resolve-sales-call"; to: string }
   | { kind: "resolve-client-session-cadence"; to: string }
   // No real, resolvable destination for this Task — either its type has no
@@ -182,6 +186,7 @@ export const useTaskActionDestination = (
         destination: {
           kind: "sales-call-needs-matching",
           to: `/sales-calls/${task.sales_call_id}/resolve`,
+          salesCallId: task.sales_call_id,
         },
         isPending: false,
       };
@@ -194,6 +199,7 @@ export const useTaskActionDestination = (
         destination: {
           kind: "sales-call-needs-matching",
           to: `/sales-calls/${unresolvedSalesCalls[0].id}/resolve`,
+          salesCallId: unresolvedSalesCalls[0].id,
         },
         isPending: false,
       };

@@ -38,6 +38,7 @@ import { TASK_TYPES_WITHOUT_MEANINGFUL_DUE_DATE } from "./tasksPredicate";
 import { TaskEdit } from "./TaskEdit";
 import { TaskEditSheet } from "./TaskEditSheet";
 import { useContactLinkDestination } from "./useContactLinkDestination";
+import { SalesCallResolutionModal } from "../sales-calls/SalesCallResolutionModal";
 import type { TaskActionDestination } from "./useTaskActionDestination";
 import { useTaskActionDestination } from "./useTaskActionDestination";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -187,14 +188,38 @@ const TaskActionLabel = ({
   suffix = "",
   destination,
   onOpenTaskDetail,
+  onOpenSalesCallResolution,
 }: {
   label: string | null;
   suffix?: string;
   destination: TaskActionDestination | null;
   onOpenTaskDetail: () => void;
+  // Matching a booking is a bounded operational question asked from the page
+  // Leif is already on — the Dashboard, usually — so it opens over that page
+  // instead of navigating to it (AGENTS.md -> Operational UX conventions). The
+  // row owns that modal, because the ⋮ menu's Edit opens the same one, and
+  // /sales-calls/:id/resolve still renders the same component for a direct
+  // link or a reload.
+  onOpenSalesCallResolution: (salesCallId: Identifier) => void;
 }) => {
   if (!label) return null;
   const text = `${label}${suffix}`;
+
+  if (destination?.kind === "sales-call-needs-matching") {
+    const salesCallId = destination.salesCallId;
+    return (
+      <button
+        type="button"
+        className="hover:underline cursor-pointer text-left"
+        onClick={(event) => {
+          event.stopPropagation();
+          onOpenSalesCallResolution(salesCallId);
+        }}
+      >
+        {text}
+      </button>
+    );
+  }
 
   if (destination && destination.kind !== "task-detail") {
     return (
@@ -255,6 +280,10 @@ export const Task = ({
   );
 
   const [openEdit, setOpenEdit] = useState(false);
+  // Which booking's matching question is open over this page, if any. Both the
+  // title and the ⋮ menu open the same one.
+  const [resolvingSalesCall, setResolvingSalesCall] =
+    useState<Identifier | null>(null);
 
   const handleCloseEdit = () => {
     setOpenEdit(false);
@@ -428,6 +457,14 @@ export const Task = ({
 
   return (
     <>
+      {resolvingSalesCall != null && (
+        <SalesCallResolutionModal
+          salesCallId={resolvingSalesCall}
+          onOpenChange={(open) => {
+            if (!open) setResolvingSalesCall(null);
+          }}
+        />
+      )}
       <div className="flex items-start justify-between">
         <div
           className="flex items-start gap-2 flex-1"
@@ -496,6 +533,7 @@ export const Task = ({
                   label={task.text || typeLabel(task, taskTypes)}
                   destination={destination}
                   onOpenTaskDetail={handleEdit}
+                  onOpenSalesCallResolution={setResolvingSalesCall}
                 />
               ) : showContact &&
                 !SELF_DESCRIBING_TASK_TYPES.has(task.type ?? "") ? (
@@ -505,6 +543,7 @@ export const Task = ({
                     suffix=": "
                     destination={destination}
                     onOpenTaskDetail={handleEdit}
+                    onOpenSalesCallResolution={setResolvingSalesCall}
                   />
                   <TaskContactLink task={task} className="inline" />
                 </>
@@ -517,6 +556,7 @@ export const Task = ({
                   label={displayLabel(task, taskTypes)}
                   destination={destination}
                   onOpenTaskDetail={handleEdit}
+                  onOpenSalesCallResolution={setResolvingSalesCall}
                 />
               )}
               {/* Pending/Completed are already conveyed by the checkbox and
@@ -621,8 +661,13 @@ export const Task = ({
             <DropdownMenuItem
               className="cursor-pointer h-12 md:h-8 px-4 md:px-2 text-base md:text-sm"
               onClick={() => {
+                // Matching opens over this page, like the title does; the
+                // other two are genuine destinations of their own.
+                if (destination?.kind === "sales-call-needs-matching") {
+                  setResolvingSalesCall(destination.salesCallId);
+                  return;
+                }
                 if (
-                  destination?.kind === "sales-call-needs-matching" ||
                   destination?.kind === "resolve-sales-call" ||
                   destination?.kind === "resolve-client-session-cadence"
                 ) {
