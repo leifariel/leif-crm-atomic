@@ -1,6 +1,15 @@
 import { expect, test } from "./fixtures";
 
 test.describe("user adding a task", () => {
+  // Skipped for mobile at the DESCRIBE level, not inside the test body.
+  //
+  // In the body, Playwright still runs beforeEach first — which creates a
+  // fixed john@doe.com user, and the second project then fails with "already
+  // been registered" instead of skipping. It only surfaced once another spec
+  // grew long enough to change the interleaving, so the seam was timing-
+  // dependent rather than absent. Skipping here means the hooks never run.
+  test.skip(({ isMobile }) => isMobile, "Mobile journey needs its own pass");
+
   test.beforeEach(async ({ createSales, createContact, createCompany }) => {
     const sales = await createSales({
       first_name: "John",
@@ -55,10 +64,6 @@ test.describe("user adding a task", () => {
     // suite is green for healthy code and this is visible work rather than
     // ambient red. Restoring mobile coverage needs somebody who knows what
     // the mobile UX is meant to be now.
-    test.skip(
-      isMobile,
-      "Mobile journey needs its own pass — see comment above",
-    );
     await page.goto("/");
     await page.getByLabel("Email").fill("john@doe.com");
     await page.getByLabel("Password").fill("password");

@@ -175,7 +175,17 @@ const buildTestCrm = () => {
 };
 
 describe("Living Example program page — capacity Leif can plan around", () => {
-  // Two things this file is answering about, pinned rather than inherited.
+  // THE CLOCK ON THE TEST ITSELF. Ten renders of the whole CRM in one file,
+  // each waiting for a page that arrives in stages. On its own that is under
+  // half a second of test time; inside the full browser suite those renders
+  // compete with every other file's browser context, and three of them
+  // crossed the 15s browser-mode default — reported as a failed wait, which
+  // reads like a wrong page and is not one. This is the headroom, stated
+  // here rather than left to whatever else happens to be running, for the
+  // same reason the "claude" project sets its own in vitest.config.ts.
+  vi.setConfig({ testTimeout: 45_000 });
+
+  // Two more things this file is answering about, pinned rather than inherited.
   //
   // THE CLOCK. Every number here is a statement about "now": twelve people
   // have started and six have not, and which side of that line somebody

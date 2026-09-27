@@ -1,5 +1,12 @@
 import { execFileSync } from "node:child_process";
 
+// Both Playwright projects run this file against the SAME database, so a
+// FIXED acuity_appointment_id collides with the other project on
+// sales_calls_acuity_appointment_id_idx. It only ever surfaced when another
+// spec grew long enough for the two runs to overlap in time, which is exactly
+// the kind of shared-fixture race that should not depend on timing.
+const RUN = `${process.env.TEST_PARALLEL_INDEX ?? "0"}-${Date.now()}`;
+
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { expect, test } from "./fixtures";
@@ -157,7 +164,7 @@ for (const writer of writers.writers) {
           source: writer.runtime.startsWith("supabase edge")
             ? "acuity"
             : "manual",
-          acuity_appointment_id: `contract-${writer.id}-${scenario.id}`,
+          acuity_appointment_id: `contract-${writer.id}-${scenario.id}-${RUN}`,
           acuity_appointment_type_id: "111",
         });
 
@@ -227,7 +234,7 @@ for (const writer of writers.writers) {
         scheduled_at: "2026-10-29T17:00:00.000Z",
         reschedule_count: 0,
         source: "acuity",
-        acuity_appointment_id: `contract-unmatched-${writer.id}`,
+        acuity_appointment_id: `contract-unmatched-${writer.id}-${RUN}`,
         acuity_appointment_type_id: "111",
       });
 
