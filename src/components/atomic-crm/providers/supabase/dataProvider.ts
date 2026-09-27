@@ -334,6 +334,24 @@ const getDataProviderWithCustomMethods = () => {
       }
       return data as Record<string, unknown>;
     },
+    // The other half of the same story, and deliberately a different
+    // authority: here the Opportunity's offer is already right and only the
+    // Enrollment's projection is stale, which is what Jenna Smith's pre-guard
+    // edit left behind. The transfer above refuses her, correctly.
+    async reconcileEnrollmentToCurrentOffer(
+      opportunityId: Identifier,
+      fromOfferId: Identifier | null,
+    ) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "reconcile_enrollment_to_current_offer",
+        { p_opportunity_id: opportunityId, p_from_offer_id: fromOfferId },
+      );
+      if (error) {
+        console.error("reconcile_enrollment_to_current_offer.error", error);
+        throw new Error("Failed to repair this client's onboarding");
+      }
+      return data as Record<string, unknown>;
+    },
     // Refused here as well as in the Edge Function, so that a merge cannot
     // leave this machine even if some future caller finds the method.
     // See contacts/contactSafety.ts.

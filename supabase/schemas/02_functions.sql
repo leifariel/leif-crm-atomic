@@ -3322,7 +3322,10 @@ begin
 
   if v_deal.offer_id = p_to_offer_id then
     -- A replay, a double click, or a stale tab. Nothing to do, and saying so
-    -- is not an error.
+    -- is not an error. It is also the honest answer for a client whose
+    -- Opportunity was already edited before the guard existed: the offer is
+    -- right and only the checklist is stale, which is
+    -- reconcile_enrollment_to_current_offer()'s question, not this one.
     return jsonb_build_object('status', 'already-on-offer', 'offer_id', p_to_offer_id);
   end if;
 
@@ -3360,10 +3363,51 @@ begin
          cohort_id = case when v_offer.type = 'group' then cohort_id else null end
    where id = p_opportunity_id;
 
+  v_counts := public.apply_enrollment_onboarding_projection(
+    v_enrollment.id, v_from_offer_id, p_to_offer_id
+  );
+
+  -- ---- the history this never had ----------------------------------------
+  -- occurred_at is now(), because the change is happening now.
+  insert into deal_offer_events (opportunity_id, enrollment_id, from_offer_id, to_offer_id, source, note)
+  values (p_opportunity_id, v_enrollment.id, v_from_offer_id, p_to_offer_id, 'app', p_note);
+
+  return jsonb_build_object(
+    'status', 'transferred',
+    'opportunity_id', p_opportunity_id,
+    'enrollment_id', v_enrollment.id,
+    'from_offer_id', v_from_offer_id,
+    'to_offer_id', p_to_offer_id
+  ) || v_counts;
+end;
+$$;
+
+CREATE FUNCTION public.apply_enrollment_onboarding_projection(p_enrollment_id bigint, p_from_offer_id bigint, p_to_offer_id bigint) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare
+  v_deal deals%rowtype;
+  v_item record;
+  v_retired int := 0;
+  v_relabelled int := 0;
+  v_added int := 0;
+  v_kept int := 0;
+  v_kept_historical int := 0;
+  v_existing_status text;
+begin
+  select d.* into v_deal
+    from deals d
+    join enrollments e on e.opportunity_id = d.id
+   where e.id = p_enrollment_id;
+  if not found then
+    raise exception 'apply_enrollment_onboarding_projection: enrollment % has no Opportunity', p_enrollment_id;
+  end if;
+
   -- ---- requirements that no longer apply ---------------------------------
   for v_item in
     select i.* from enrollment_onboarding_items i
-     where i.enrollment_id = v_enrollment.id
+     where i.enrollment_id = p_enrollment_id
        and i.status <> 'retired'
        and not exists (
          select 1 from onboarding_requirement_templates t
@@ -3500,19 +3544,192 @@ begin
     'cancelled_tasks', (
       select count(*) from tasks tk
         join enrollment_onboarding_items i on i.id = tk.onboarding_item_id
-       where i.enrollment_id = v_enrollment.id
+       where i.enrollment_id = p_enrollment_id
          and i.status = 'retired'
          and tk.status = 'cancelled'
     ),
     'required_outstanding', (
       select count(*) from enrollment_onboarding_items
-       where enrollment_id = v_enrollment.id and is_required
+       where enrollment_id = p_enrollment_id and is_required
          and status not in ('done', 'retired')
     ),
     'required_total', (
       select count(*) from enrollment_onboarding_items
-       where enrollment_id = v_enrollment.id and is_required and status <> 'retired'
+       where enrollment_id = p_enrollment_id and is_required and status <> 'retired'
     )
   );
+end;
+$$;
+
+CREATE FUNCTION public.enrollment_onboarding_matches_offer(p_enrollment_id bigint, p_offer_id bigint) RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+  select not exists (
+      select 1
+        from enrollment_onboarding_items i
+       where i.enrollment_id = p_enrollment_id
+         and i.status <> 'retired'
+         and not exists (
+           select 1 from onboarding_requirement_templates t
+            where t.offer_id = p_offer_id and t.is_active and t.key = i.requirement_key
+         )
+    )
+    and not exists (
+      select 1
+        from onboarding_requirement_templates t
+       where t.offer_id = p_offer_id and t.is_active
+         and not exists (
+           select 1 from enrollment_onboarding_items i
+            where i.enrollment_id = p_enrollment_id
+              and i.status <> 'retired'
+              and i.requirement_key = t.key
+         )
+    );
+$$;
+
+CREATE FUNCTION public.reconcile_enrollment_to_current_offer(p_opportunity_id bigint, p_from_offer_id bigint DEFAULT NULL::bigint, p_note text DEFAULT NULL::text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public'
+    AS $$
+declare
+  v_deal deals%rowtype;
+  v_enrollment enrollments%rowtype;
+  v_enrollment_count int;
+  v_from_offer offers%rowtype;
+  v_foreign_keys text[];
+  v_unclaimed text[];
+  v_counts jsonb;
+begin
+  select * into v_deal from deals where id = p_opportunity_id for update;
+  if not found then
+    return jsonb_build_object('status', 'not-found');
+  end if;
+
+  if p_from_offer_id is not null then
+    select * into v_from_offer from offers where id = p_from_offer_id;
+    if not found then
+      return jsonb_build_object('status', 'invalid-offer');
+    end if;
+    if p_from_offer_id = v_deal.offer_id then
+      -- "It came from the programme it is already on" says nothing, and
+      -- deal_offer_events would refuse it too.
+      return jsonb_build_object('status', 'same-offer', 'offer_id', p_from_offer_id);
+    end if;
+  end if;
+
+  select count(*) into v_enrollment_count from enrollments where opportunity_id = p_opportunity_id;
+  if v_enrollment_count = 0 then
+    -- There is no projection to reconcile. An ordinary offer edit is still
+    -- available for an Opportunity with nothing downstream.
+    return jsonb_build_object('status', 'no-enrollment');
+  end if;
+  if v_enrollment_count > 1 then
+    return jsonb_build_object('status', 'ambiguous-enrollment', 'enrollments', v_enrollment_count);
+  end if;
+
+  select * into v_enrollment from enrollments where opportunity_id = p_opportunity_id for update;
+
+  -- A finished client's record is history. Reopening their checklist because
+  -- a template disagrees with it would rewrite what their programme was.
+  if v_enrollment.status in ('completed', 'withdrawn', 'ended') then
+    return jsonb_build_object(
+      'status', 'terminal-enrollment',
+      'enrollment_status', v_enrollment.status
+    );
+  end if;
+
+  if public.enrollment_onboarding_matches_offer(v_enrollment.id, v_deal.offer_id) then
+    -- Nothing is stale. A second click, a stale tab, or a client who was
+    -- always aligned: all three deserve the same quiet answer.
+    return jsonb_build_object(
+      'status', 'already-aligned',
+      'enrollment_id', v_enrollment.id,
+      'offer_id', v_deal.offer_id
+    );
+  end if;
+
+  -- The live requirements the current programme does not have. These are the
+  -- evidence that another programme's template is in play.
+  select coalesce(array_agg(i.requirement_key order by i.requirement_key), '{}')
+    into v_foreign_keys
+    from enrollment_onboarding_items i
+   where i.enrollment_id = v_enrollment.id
+     and i.status <> 'retired'
+     and not exists (
+       select 1 from onboarding_requirement_templates t
+        where t.offer_id = v_deal.offer_id and t.is_active and t.key = i.requirement_key
+     );
+
+  if array_length(v_foreign_keys, 1) is null then
+    -- Only missing requirements, no foreign ones: the current programme's
+    -- template gained something since this client was seeded. Reconciling that
+    -- is right; calling it a programme change is not.
+    if p_from_offer_id is not null then
+      return jsonb_build_object(
+        'status', 'source-offer-not-applicable',
+        'reason', 'nothing on this checklist belongs to another programme, so there is no programme change to record'
+      );
+    end if;
+  else
+    if p_from_offer_id is null then
+      -- Provenance is not guessed. Even where exactly one offer's template
+      -- matches, saying so is Leif's call, made in front of the evidence.
+      return jsonb_build_object(
+        'status', 'needs-source-offer',
+        'foreign_keys', to_jsonb(v_foreign_keys)
+      );
+    end if;
+
+    -- The named programme has to be able to account for what is being
+    -- retired. Anything it cannot explain means the claim is wrong, and a
+    -- wrong from_offer_id is false history that would outlive the repair.
+    select coalesce(array_agg(k order by k), '{}')
+      into v_unclaimed
+      from unnest(v_foreign_keys) as k
+     where not exists (
+       select 1 from onboarding_requirement_templates t
+        where t.offer_id = p_from_offer_id and t.is_active and t.key = k
+     );
+
+    if array_length(v_unclaimed, 1) is not null then
+      return jsonb_build_object(
+        'status', 'source-offer-mismatch',
+        'from_offer_id', p_from_offer_id,
+        'unmatched_keys', to_jsonb(v_unclaimed)
+      );
+    end if;
+  end if;
+
+  -- The Opportunity is deliberately NOT written here. Its offer is already
+  -- what it should be; that is the whole premise.
+  v_counts := public.apply_enrollment_onboarding_projection(
+    v_enrollment.id, p_from_offer_id, v_deal.offer_id
+  );
+
+  if p_from_offer_id is not null then
+    -- Recorded now, because that is when it was recorded. occurred_at stays
+    -- null: the programme change itself predates the guard and nothing
+    -- anywhere says which day it was. 'reconstructed' is what makes that
+    -- readable instead of looking like an event that happened at repair time.
+    insert into deal_offer_events
+      (opportunity_id, enrollment_id, from_offer_id, to_offer_id, occurred_at, source, note)
+    values (
+      p_opportunity_id, v_enrollment.id, p_from_offer_id, v_deal.offer_id, null, 'reconstructed',
+      coalesce(
+        p_note,
+        'Onboarding reconciled to the programme the Opportunity already carried. The programme change itself happened before transfer_enrolled_opportunity_offer() existed and its date is not recorded anywhere.'
+      )
+    );
+  end if;
+
+  return jsonb_build_object(
+    'status', 'reconciled',
+    'opportunity_id', p_opportunity_id,
+    'enrollment_id', v_enrollment.id,
+    'from_offer_id', p_from_offer_id,
+    'to_offer_id', v_deal.offer_id,
+    'event_recorded', p_from_offer_id is not null
+  ) || v_counts;
 end;
 $$;

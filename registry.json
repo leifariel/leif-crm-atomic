@@ -1114,6 +1114,14 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/enrollments/reconcileClientOnboardingMirrorEntry.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/enrollments/reconcileClientOnboarding.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/enrollments/index.ts",
           "type": "registry:component"
         },
@@ -1155,6 +1163,10 @@
         },
         {
           "path": "src/components/atomic-crm/enrollments/activateEnrollment.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/enrollments/RepairOnboardingAction.tsx",
           "type": "registry:component"
         },
         {

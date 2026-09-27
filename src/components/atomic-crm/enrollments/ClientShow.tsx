@@ -22,6 +22,7 @@ import { Avatar } from "../contacts/Avatar";
 import { PersonEmail } from "../contacts/PersonEmail";
 import { PaymentPanel } from "../deals/PaymentPanel";
 import { MoveClientProgrammeAction } from "./MoveClientProgrammeAction";
+import { RepairOnboardingAction } from "./RepairOnboardingAction";
 import {
   formatISODateString,
   formatMonthDayString,
@@ -273,6 +274,20 @@ const EnrollmentOperationalHome = () => {
           why it exists). */}
       <div className="m-4">
         <MoveClientProgrammeAction
+          deal={deal}
+          enrollment={enrollment}
+          items={items}
+        />
+      </div>
+
+      {/* And the other direction: a client whose programme is already right
+          while their setup is still the previous one's. Nothing shows here
+          unless the requirement keys deterministically disagree with the
+          programme, which is what Jenna Smith's pre-guard offer edit left
+          behind — the repair itself stays Leif's click, including which
+          programme it came from. */}
+      <div className="m-4">
+        <RepairOnboardingAction
           deal={deal}
           enrollment={enrollment}
           items={items}

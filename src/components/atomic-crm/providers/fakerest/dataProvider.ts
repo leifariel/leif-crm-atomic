@@ -36,6 +36,7 @@ import {
 import { completeAttendedSalesCallMirror } from "../../sales-calls/completeAttendedSalesCallMirror";
 import { acceptSaleMirror } from "../../deals/acceptSaleMirror";
 import { transferClientOfferMirrorEntry } from "../../enrollments/transferClientOfferMirrorEntry";
+import { reconcileClientOnboardingMirrorEntry } from "../../enrollments/reconcileClientOnboardingMirrorEntry";
 import type { ConfigurationContextValue } from "../../root/ConfigurationContext";
 import { validateOfferCohort } from "../../deals/offerCohortValidation";
 import {
@@ -868,6 +869,19 @@ export const createDataProvider = ({
       opportunityId: Identifier,
       toOfferId: Identifier,
     ) => transferClientOfferMirrorEntry(dataProvider, opportunityId, toOfferId),
+    // The repair for a projection left behind by an offer edit that happened
+    // before the guard existed. Same mirroring rule: the step ORDER is what is
+    // reproduced here, through the OUTER provider so the lifecycle hooks fire
+    // the way triggers do.
+    reconcileEnrollmentToCurrentOffer: async (
+      opportunityId: Identifier,
+      fromOfferId: Identifier | null,
+    ) =>
+      reconcileClientOnboardingMirrorEntry(
+        dataProvider,
+        opportunityId,
+        fromOfferId,
+      ),
     // FakeRest has no transactions, so only the step ORDER is mirrored
     // here — the atomicity guarantee comes from the real function. The
     // OUTER provider, so the "deals" and "sales_calls" lifecycle hooks in

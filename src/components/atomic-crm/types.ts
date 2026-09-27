@@ -1270,7 +1270,10 @@ export type DealOfferEvent = {
   enrollment_id?: Identifier | null;
   from_offer_id: Identifier;
   to_offer_id: Identifier;
-  occurred_at: string;
+  // When the programme change itself happened. Null only for a reconstructed
+  // event whose original moment nothing recorded — a repair does not borrow its
+  // own clock to fill that in. recorded_at is always when the row was written.
+  occurred_at: string | null;
   recorded_at: string;
   source: "app" | "migration" | "reconstructed";
   note?: string | null;

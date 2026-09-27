@@ -9,14 +9,17 @@ transfer checkpoint. **The repository, the database and production are the
 authority. Where this prose disagrees with them, they win — say so rather than
 quietly picking one.**
 
-**Where things stand right now (2026-09-26).** Three commits sit on
-`capacity-waitlist` and are **not pushed**: `c36ba6eb` (cross-offer
-transfer), `75cdfa67` (declarative schema), `f419a552` (test hygiene). The
-Application Form Builder is restored to the working tree, still uncommitted.
-**The next action is Leif's: push and deploy those three, then repair Jenna in
-production with him watching** — she is the acceptance case, and she is
-untouched. Details in §8b-next; the Kit requirement that Applications cannot be
-called finished without is §8b-kit.
+**Where things stand right now (2026-09-27).** The cross-offer transfer
+checkpoint is **pushed and live**: `origin/main` is at `3418f3b8`, production
+holds 141 migrations, and the frontend on crm.leifariel.com is that build. One
+further commit sits locally and is **not pushed** — the reconciliation
+authority Jenna actually needs (§8b-next). The Application Form Builder is
+restored to the working tree, still uncommitted.
+
+**The next action is Leif's: push that commit, then click the repair on Jenna's
+client page with the result in front of him.** She is untouched. Details in
+§8b-next; the Kit requirement that Applications cannot be called finished
+without is §8b-kit.
 
 ---
 
@@ -1164,20 +1167,44 @@ cases in [postWonPaymentSetup.test.ts](contracts/deals/postWonPaymentSetup.test.
 which also fails if any eligibility surface goes back to reading
 `deal.stage`.
 
-## 8b-next. CROSS-OFFER TRANSFER — COMMITTED LOCALLY, AWAITING DEPLOYMENT
+## 8b-next. CROSS-OFFER TRANSFER — DEPLOYED, PLUS THE REPAIR JENNA NEEDS
 
-**Local checkpoint, 2026-09-26. Nothing pushed. Nothing deployed.**
+**Deployed 2026-09-27.** `origin/main` = `3418f3b8`: `c36ba6eb` (transfer),
+`75cdfa67` (declarative schema), `f419a552` (test hygiene), `ae9a4c14` and
+`3418f3b8` (docs). Production holds **141 migrations**, newest
+`20260926010000`, and Vercel's production build is that commit. CI applied the
+migration itself — the `Deploy (supabase)` job's *Push supabase migrations*
+step succeeded, which it had not done for some time (§3); the only red step is
+the long-standing GitHub Pages one.
 
-| commit | subject |
-|---|---|
-| `c36ba6eb` | *fix(enrollments): transfer clients between offers atomically* — 20 files |
-| `75cdfa67` | *fix(schema): sync client transfer and restore canonical definitions* — 5 files |
-| `f419a552` | *test(crm): stabilize shared fixtures under full-suite load* — 3 files |
+**Two authorities, because there are two different facts.** Deploying the first
+one exposed the gap:
 
-Migration ordering, deliberately leaving the builder's slot free:
-`20260925120000` → **`20260926010000`** (transfer) → `20260926090000`
-(builder, still parked). `replay-manifest.json` is at **141** in these
-commits and must become **142** once the builder's migration lands.
+| | when | what moves |
+|---|---|---|
+| `transfer_enrolled_opportunity_offer()` | the programme itself changes, A → B | the Opportunity's offer **and** everything downstream, in one transaction |
+| `reconcile_enrollment_to_current_offer()` | the Opportunity **already** carries the intended offer and the projection does not | only the projection — the Opportunity is not written |
+
+**Jenna needs the second one, and the first correctly refuses her.** Her
+Opportunity 188 already says The Living Example (it was edited three minutes
+after the sale, before the guard existed), so
+`transfer_enrolled_opportunity_offer(188, LE)` answers `already-on-offer` and
+writes nothing. Routing her through GYU is refused too, by design: GYU is a
+group programme and nothing here picks somebody's cohort. **An earlier version
+of this section said the normal transfer would repair her. It would not.**
+
+Both share one body — `apply_enrollment_onboarding_projection()` — so a later
+change to how a shared key is re-pointed, or how an obsolete pending
+requirement retires, cannot make them disagree.
+
+**Committed locally 2026-09-27, not pushed:** `fix(enrollments): reconcile a
+client's onboarding to the programme they are on`, with migration
+`20260926020000_onboarding_can_be_reconciled_to_its_programme.sql`.
+
+Migration ordering, still leaving the builder's slot free: `20260925120000` →
+`20260926010000` (transfer, live) → **`20260926020000`** (reconcile) →
+`20260926090000` (builder, parked). `replay-manifest.json` is **142** in the
+commits and **143** in the working tree while the builder sits there.
 
 **Queue after Jenna's production acceptance, owner-set 2026-09-27:**
 
@@ -1190,10 +1217,21 @@ commits and must become **142** once the builder's migration lands.
 ### A. Jenna Smith — the production acceptance case
 
 **Her production records are untouched.** No production writes were made while
-building or proving this; every case ran against the disposable clean room on
-its own fixture rows. **Do not repair her locally — she is the acceptance
-case, and the repair happens in production after deployment, with Leif
-watching.**
+building or proving either half; every case ran against the disposable clean
+room on its own fixture rows. **Do not repair her locally, and do not repair
+her by migration** — she is the acceptance case, and the repair is a click Leif
+makes in production with the result in front of him.
+
+**What he clicks:** her client page now offers **"Repair onboarding to current
+programme"**, and only when the requirement keys deterministically disagree with
+the programme. It asks which programme the setup came from before it does
+anything. Growing Yourself Up will be proposed, because GYU's template is the
+one her checklist matches — but it is a proposal he confirms, not an inference,
+because the answer becomes her history. The repair records one
+`deal_offer_events` row, GYU → LE, `source = 'reconstructed'` with
+**`occurred_at` null**: the change itself predates the guard and nothing
+anywhere records which day it was, so the repair does not lend it its own
+clock.
 
 Moving her with the canonical transfer should leave exactly this:
 
@@ -1321,6 +1359,15 @@ Still **uncommitted**, parked in a stash while the three commits above were
 made, and **restored to the working tree afterwards**. Its migration is
 `20260926090000_a_form_leif_can_edit.sql`, and with it the local
 `replay-manifest.json` total is **142**.
+
+**One thing it needs on resumption, found 2026-09-27:** its own
+`src/test/StoryWrapper.tsx` edit was separated out when it was parked, so the
+restored tree has no `application_form_versions` collection and **25 of its
+tests fail with `Undefined collection "application_form_versions"`**. Nothing
+else is wrong with them. The two lines it needs — the
+`liveApplicationFormSeed` import and the `...liveApplicationFormSeed(),`
+spread in `createCrmDb` — are in `storywrapper-both.patch` in the parking
+backup. Put them back first, before reading anything into a red builder suite.
 
 **Do not resume it** until everything ahead of it in the queue is done:
 Jenna's production acceptance, the Dashboard sales-call lightbox, the client
@@ -1585,13 +1632,17 @@ The next Claude session should, in order:
 8. **Surface disagreements rather than silently resolving them.**
 9. **STOP before implementation and report readiness.**
 
-**The exact next action as of 2026-09-26:** push `c36ba6eb`, `75cdfa67` and
-`f419a552`, confirm Vercel actually deployed (a green Actions run does not
-mean the frontend shipped — §3), then move Jenna to The Living Example in
-production **with Leif watching**, and check her onboarding reads 1/4 exactly as
-§8b-next states. Nothing else starts before that acceptance passes — then the
-queue is the Dashboard sales-call lightbox, the client start-week / capacity UX,
-Kit, and only then the Application Form Builder (§8b-next).
+**The exact next action as of 2026-09-27:** the transfer checkpoint is already
+live (`origin/main` = `3418f3b8`, production at 141 migrations). Push the one
+local commit that adds `reconcile_enrollment_to_current_offer()`, confirm Vercel
+actually deployed it (a green Actions run does not mean the frontend shipped —
+§3), then open Jenna's client page and click **"Repair onboarding to current
+programme"**, confirming Growing Yourself Up as the programme her setup came
+from. Check her checklist then reads **1 of 4** exactly as §8b-next states, and
+that her GYU Application and GYU sales call still say GYU. Nothing else starts
+before that acceptance passes — then the queue is the Dashboard sales-call
+lightbox, the client start-week / capacity UX, Kit, and only then the
+Application Form Builder (§8b-next).
 
 And before calling anything finished, re-read §2's acceptance loop. **Leif's
 try-run is a step in the work, not a formality after it** — schedule it while

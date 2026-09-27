@@ -2257,12 +2257,18 @@ create table if not exists public.deal_offer_events (
     enrollment_id bigint,
     from_offer_id bigint not null,
     to_offer_id bigint not null,
-    occurred_at timestamptz not null default now(),
+    -- Nullable, and only ever null for a 'reconstructed' event: a programme
+    -- change that happened before anything recorded it has no date to give,
+    -- and the repair's own clock is not that date. recorded_at always says
+    -- when the row was written.
+    occurred_at timestamptz default now(),
     recorded_at timestamptz not null default now(),
     source text not null default 'app',
     note text,
     constraint deal_offer_events_offers_differ_check check (from_offer_id <> to_offer_id),
-    constraint deal_offer_events_source_check check (source in ('app', 'migration', 'reconstructed'))
+    constraint deal_offer_events_source_check check (source in ('app', 'migration', 'reconstructed')),
+    constraint deal_offer_events_occurred_at_known_check
+      check (occurred_at is not null or source = 'reconstructed')
 );
 
 alter table public.deal_offer_events

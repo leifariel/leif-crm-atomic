@@ -735,3 +735,24 @@ revoke all on function public.transfer_enrolled_opportunity_offer(bigint, bigint
 revoke all on function public.transfer_enrolled_opportunity_offer(bigint, bigint, text) from anon;
 grant execute on function public.transfer_enrolled_opportunity_offer(bigint, bigint, text) to authenticated;
 grant execute on function public.transfer_enrolled_opportunity_offer(bigint, bigint, text) to service_role;
+
+-- The repair for a projection an offer edit left behind, before the guard
+-- existed. Callable by the owner, like the transfer.
+revoke all on function public.reconcile_enrollment_to_current_offer(bigint, bigint, text) from public;
+revoke all on function public.reconcile_enrollment_to_current_offer(bigint, bigint, text) from anon;
+grant execute on function public.reconcile_enrollment_to_current_offer(bigint, bigint, text) to authenticated;
+grant execute on function public.reconcile_enrollment_to_current_offer(bigint, bigint, text) to service_role;
+
+-- Read-only, and the same question the dialog asks before offering a repair.
+revoke all on function public.enrollment_onboarding_matches_offer(bigint, bigint) from public;
+revoke all on function public.enrollment_onboarding_matches_offer(bigint, bigint) from anon;
+grant execute on function public.enrollment_onboarding_matches_offer(bigint, bigint) to authenticated;
+grant execute on function public.enrollment_onboarding_matches_offer(bigint, bigint) to service_role;
+
+-- The shared projection both authorities run. Nobody else, not even
+-- service_role: on its own it would move a checklist with neither the offer
+-- change nor the decision that justifies one.
+revoke all on function public.apply_enrollment_onboarding_projection(bigint, bigint, bigint) from public;
+revoke all on function public.apply_enrollment_onboarding_projection(bigint, bigint, bigint) from anon;
+revoke all on function public.apply_enrollment_onboarding_projection(bigint, bigint, bigint) from authenticated;
+revoke all on function public.apply_enrollment_onboarding_projection(bigint, bigint, bigint) from service_role;
