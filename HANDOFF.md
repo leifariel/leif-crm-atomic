@@ -4,9 +4,19 @@
 ledger — why each sealed slice decided what it decided. This file is the other
 half: what is true today, where the rules live in code, and what is waiting.
 
-Written 2026-09-20 at `451f0af0`, updated 2026-09-21 at `7bb47194`. **The repository, the database and production
-are the authority. Where this prose disagrees with them, they win — say so
-rather than quietly picking one.**
+Written 2026-09-20 at `451f0af0`, updated 2026-09-26 at the cross-offer
+transfer checkpoint. **The repository, the database and production are the
+authority. Where this prose disagrees with them, they win — say so rather than
+quietly picking one.**
+
+**Where things stand right now (2026-09-26).** Three commits sit on
+`capacity-waitlist` and are **not pushed**: `c36ba6eb` (cross-offer
+transfer), `75cdfa67` (declarative schema), `f419a552` (test hygiene). The
+Application Form Builder is restored to the working tree, still uncommitted.
+**The next action is Leif's: push and deploy those three, then repair Jenna in
+production with him watching** — she is the acceptance case, and she is
+untouched. Details in §8b-next; the Kit requirement that Applications cannot be
+called finished without is §8b-kit.
 
 ---
 
@@ -229,6 +239,10 @@ Display name: [contactDisplayName.ts](src/components/atomic-crm/contacts/contact
 — returns `null` rather than inventing a name (33 people have only one name).
 
 ### Applications
+**Applications are not complete work yet — see §8b-kit.** Everything below
+stops at the CRM's boundary; the applicant's email still reaches them because
+Leif syncs them into Kit and tags them by hand.
+
 One Application links to an Opportunity **only when deterministic**. Exact
 question wording and exact answer are preserved per response
 (`application_responses`, 832 rows, immutable). Review queue is
@@ -948,12 +962,24 @@ same way afterwards, leaving no synthetic data behind.
 
 ---
 
-## 8b. POST-WON PAYMENT SETUP / OFFER PAGE TRUTH — BUILT + TESTED + COMMITTED
+## 8b. POST-WON PAYMENT SETUP / OFFER PAGE TRUTH — DEPLOYED, NOT YET ACCEPTED
 
 **Committed 2026-09-26 at `b12fb3b8`** (*fix(payments): separate accepted
-sales from payment setup*), 31 files. **Awaiting production deployment and
-Leif's human acceptance** — not sealed until she has taken a real payment
-through it.
+sales from payment setup*), 31 files, **deployed to production and verified
+healthy there**.
+
+**Still unaccepted by a human — and that now waits on a sale, not on
+engineering.** The owner-facing path this slice built, *Send payment link →
+agreed terms → Stripe Checkout*, has not been walked end to end by Leif with a
+real client.
+
+**Becky is no longer the acceptance candidate.** A legitimate Stripe
+reconciliation found the plan she already had and moved her to
+`paid_in_full`, so there is nothing left for her to set up. That is the
+correct answer about her, not a regression: **do not treat it as an open
+engineering defect and do not go looking for a way to put her back into
+`setup_pending`.** The next clean candidate will most likely arrive on its
+own, out of the next real sale that needs payment arranged.
 
 Proven before commit, against real Stripe TEST rather than against request
 construction: a real `cs_test_` Session with `mode=payment`,
@@ -1138,33 +1164,162 @@ cases in [postWonPaymentSetup.test.ts](contracts/deals/postWonPaymentSetup.test.
 which also fails if any eligibility surface goes back to reading
 `deal.stage`.
 
-## 8b-next. THE TWO ITEMS AFTER PRODUCTION PAYMENT ACCEPTANCE
+## 8b-next. CROSS-OFFER TRANSFER — COMMITTED LOCALLY, AWAITING DEPLOYMENT
 
-Owner-set order, 2026-09-26. Neither starts before Leif has taken a real
-payment through `b12fb3b8` in production. **The Application Form Builder stays
-parked until both are resolved.**
+**Local checkpoint, 2026-09-26. Nothing pushed. Nothing deployed.**
 
-### A. Jenna Smith — cross-offer conversion leaves the old programme behind
+| commit | subject |
+|---|---|
+| `c36ba6eb` | *fix(enrollments): transfer clients between offers atomically* — 20 files |
+| `75cdfa67` | *fix(schema): sync client transfer and restore canonical definitions* — 5 files |
+| `f419a552` | *test(crm): stabilize shared fixtures under full-suite load* — 3 files |
 
-She had a **Growing Yourself Up** sales call and bought **The Living
-Example**. The Opportunity was changed to LE, and **her GYU onboarding and
-Tasks stayed**. So the Enrollment and its checklist describe a programme she
-never joined, while the sale says otherwise.
+Migration ordering, deliberately leaving the builder's slot free:
+`20260925120000` → **`20260926010000`** (transfer) → `20260926090000`
+(builder, still parked). `replay-manifest.json` is at **141** in these
+commits and must become **142** once the builder's migration lands.
 
-Start with the audit, not the repair: what does changing `offer_id` on a Won
-Opportunity actually do to the Enrollment, its onboarding items, its Tasks and
-its Cohort — and which of those the database reconciles versus which nobody
-touches. The repair is Enrollment + onboarding reconciliation for a genuine
-cross-offer conversion; **Jenna is the production acceptance case**, so do not
-mutate her while diagnosing.
+### A. Jenna Smith — the production acceptance case
 
-### B. Dashboard sales-call resolution should not navigate away
+**Her production records are untouched.** No production writes were made while
+building or proving this; every case ran against the disposable clean room on
+its own fixture rows. **Do not repair her locally — she is the acceptance
+case, and the repair happens in production after deployment, with Leif
+watching.**
+
+Moving her with the canonical transfer should leave exactly this:
+
+| Requirement | State after the move |
+|---|---|
+| Contract signed | ✓ done — and it keeps the unknown provenance it already has |
+| Notion access | pending |
+| Living Example curriculum access | pending |
+| Meditation library | pending |
+| | **1 / 4** |
+
+- Her GYU-only pending items (**Slack**, **Calendar**) **retire**, and their
+  Tasks **cancel**. Nothing is deleted, and nothing is quietly marked *done*.
+- Her **GYU Application stays historical**, and stays writable: the
+  Application-agreement guard accepts an offer a transfer moved away from.
+- Her **GYU sales call stays historical**. A booking is a fact about a meeting
+  that happened; buying something else later does not restate it.
+- Her current Opportunity and client record read **The Living Example**.
+- **Ordinary offer edits are unavailable once an Enrollment exists.** The
+  database refuses that edit and names
+  `transfer_enrolled_opportunity_offer()`, so the mismatch this repairs
+  cannot be recreated through the form that created it.
+
+### B. Dashboard sales-call resolution should not navigate away — NEXT AFTER JENNA
 
 "No matching Opportunity" currently leaves the Dashboard for
-`/sales-calls/:id/resolve`. It should open as a **lightbox/modal over the
-Dashboard** — the same pattern the Opportunity and Application lightboxes
-already use — while **preserving the underlying route** so a direct link or a
-reload still lands on a working page.
+`/sales-calls/:id/resolve`. Normal Dashboard interaction should instead open a
+**lightbox/modal over the Dashboard** — the pattern the Opportunity and
+Application lightboxes already use — while **preserving the underlying route**
+so a direct link or a reload still lands on a working page.
+
+Automatic matching stays automatic wherever it is unambiguous. The exception UI
+exists only for genuine ambiguity or for no matching Opportunity at all; it is
+not a step to put in front of Leif on the ordinary path.
+
+## 8b-kit. KIT / CONVERTKIT — APPLICATIONS ARE NOT COMPLETE WITHOUT IT
+
+**This must not be lost.** Applications are **not** finished work until Kit
+integration exists. Everything built so far (native forms, responses, the
+review queue, the decisions) stops at the CRM's own boundary, and the person on
+the other end still gets their email because **Leif is doing that part by
+hand**.
+
+**On application receipt:**
+
+- upsert/sync the applicant into Leif's Kit account **by email**
+- make sure they are on his list
+- apply the programme / application tag as designed
+
+**On application decision:**
+
+- the **CRM stays the source of truth** for Approved / Needs Higher Care / Not
+  Fit / Do Not Engage and the rest — Kit is never asked what somebody's status
+  is
+- sync the matching programme/outcome tags to Kit
+- Leif's **existing Kit automations** already send today's emails off those
+  tags; the integration feeds them rather than replacing them
+
+**Kit is not Gmail, and the two must not be collapsed.** Kit is email-list and
+marketing-automation infrastructure: subscribers, lists, tags, automations. The
+future Gmail integration is individualized operational follow-up with one
+person. They are separate integrations with separate jobs.
+
+**Required properties:**
+
+- **idempotent** subscriber upsert and tagging — no duplicate subscribers, and
+  re-running a sync changes nothing
+- a **failed sync is visible and retryable**. It must never silently drop the
+  person; somebody who applied and was never added to the list is invisible
+  work, which is the failure mode this is meant to end.
+
+**Interim state, today:** Leif reviews the application, records the decision in
+the CRM, adds or syncs the person into Kit himself, applies the right existing
+Kit tag, and lets the current emails go out. Anything built here has to replace
+that sequence, not sit beside it.
+
+## 8b-builder. APPLICATION FORM BUILDER — PARKED
+
+Still **uncommitted**, parked in a stash while the three commits above were
+made, and **restored to the working tree afterwards**. Its migration is
+`20260926090000_a_form_leif_can_edit.sql`, and with it the local
+`replay-manifest.json` total is **142**.
+
+**Do not resume it** until Jenna's production acceptance and the Dashboard
+lightbox are both done. And when Applications are eventually called finished,
+**the Kit requirement above is part of that judgement** — a form Leif can edit
+does not complete Applications on its own.
+
+## 8b-schema. DECLARATIVE SCHEMA DEBT — MEASURED, RECORDED, NOT REPAIRED
+
+`75cdfa67` repaired everything that stopped `supabase/schemas/` from
+building a database at all, and everything the transfer needed. What is left is
+**measured, not guessed**, and each piece needs a decision about *which side is
+right* — so none of it was touched:
+
+- `deal_payment_schedule_items_deal_id_fkey` — a **foreign key** the database
+  has and the declaration does not
+- stale/missing check constraints: `deals_prospect_decision_check` missing
+  `'ghosted'`; `client_session_cadence_issue_events_kind_check` missing
+  `'retired'`; two cadence `classification_check`s missing their
+  `is null or` allowance; `deal_payment_schedule_items_stripe_provenance_check`
+  **stricter** in the declaration than in reality;
+  `enrollment_expected_sessions_ordinal_check` says `1..12` where the
+  database says `>= 1`
+- **15 indexes** absent (contacts ×4, deal_payment_schedule_items ×3, tasks ×2,
+  and one each on applications, deals, enrollment_offboarding_items,
+  enrollment_status_events, offboarding_requirement_templates, sales_calls)
+- **3 functions + 1 trigger** of the derived-session-schedule family absent
+- **4 stale function bodies**: `handle_enrollment_offboarding_started`,
+  `reconcile_sales_call_tasks`, `record_sales_call_cancelled`,
+  `record_sales_call_no_show`
+- **RLS / policy discrepancies**: the declaration never enables RLS on
+  `contact_external_identities` or `contact_merges` (and lacks their two read
+  policies); it *does* enable it on `deal_outcome_events`, where the database
+  has it off
+- **function privilege / ACL drift**: `06_grants.sql` models only the 4
+  callable RPCs, so from the declaration alone **7 functions would end up
+  PUBLIC-executable** — including `merge_contacts_safely` and
+  `record_external_identity` — and **44** lack the role grants the database
+  has. The `proacl = NULL` trap again.
+- **`comment on` is not modelled at all**
+
+**Production is unaffected.** MAIN and every clean room are rebuilt from
+**migrations**, which stay the authority; `supabase/schemas/` is authoring and
+reference material, and this CLI does not even read it (`db diff` excludes it,
+and `config.toml` sets no `schema_paths`). Two contract tests do read it as
+authority, which is where the gap has teeth.
+
+**Backlog — DECLARATIVE SCHEMA PARITY GUARD.** Turn the throwaway proof used
+for `75cdfa67` into a durable gate: build a database from
+`supabase/schemas/` alone and compare it catalog-by-catalog against one built
+from the migration chain, failing on any difference. Migrations remain
+production authority; the declaration gets continuously checked against them
+instead of drifting for four slices at a time. Not built — recorded on purpose.
 
 ## 8c. NEXT SLICE — Waitlist quick-create
 
@@ -1374,6 +1529,13 @@ The next Claude session should, in order:
    than this prose.**
 8. **Surface disagreements rather than silently resolving them.**
 9. **STOP before implementation and report readiness.**
+
+**The exact next action as of 2026-09-26:** push `c36ba6eb`, `75cdfa67` and
+`f419a552`, confirm Vercel actually deployed (a green Actions run does not
+mean the frontend shipped — §3), then move Jenna to The Living Example in
+production **with Leif watching**, and check her onboarding reads 1/4 exactly as
+§8b-next states. Do not start the Dashboard lightbox, and do not resume the
+Application Form Builder, until that acceptance passes.
 
 And before calling anything finished, re-read §2's acceptance loop. **Leif's
 try-run is a step in the work, not a formality after it** — schedule it while
