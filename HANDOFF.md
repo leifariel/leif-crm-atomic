@@ -1179,6 +1179,14 @@ Migration ordering, deliberately leaving the builder's slot free:
 (builder, still parked). `replay-manifest.json` is at **141** in these
 commits and must become **142** once the builder's migration lands.
 
+**Queue after Jenna's production acceptance, owner-set 2026-09-27:**
+
+1. **Dashboard sales-call resolution modal/lightbox** — §8b-next B
+2. **Client start-week / capacity UX** — §8b-startweek
+3. **Kit / Applications integration** — §8b-kit, a *completion requirement* for
+   Applications, not optional polish
+4. **Resume the Application Form Builder** — §8b-builder
+
 ### A. Jenna Smith — the production acceptance case
 
 **Her production records are untouched.** No production writes were made while
@@ -1220,6 +1228,51 @@ so a direct link or a reload still lands on a working page.
 Automatic matching stays automatic wherever it is unambiguous. The exception UI
 exists only for genuine ambiguity or for no matching Opportunity at all; it is
 not a step to put in front of Leif on the ordinary path.
+
+## 8b-startweek. CLIENT START-WEEK / CAPACITY UX — QUEUE POSITION 2
+
+**Found in production, 2026-09-27.** From a Client page, **Edit navigates away
+to a separate full page**, and that page currently looks like the only obvious
+place to set an LE client's **Start week**. Start week materially drives LE
+capacity and openings — so a newly sold LE client with no start week can leave
+**the openings count wrong until Leif happens to find that edit page and set it
+by hand**. The number is not lying on purpose; nothing ever asked him for the
+fact it needs.
+
+**1. Client Edit should be a lightbox.** Normal interaction from the Client page
+opens a **modal/lightbox over it**, the same pattern the Opportunity,
+Application and (queued) sales-call resolution use, while **preserving the
+underlying route** so a direct link or a reload still lands on a working page.
+Status / Start week / End may stay editable there.
+
+**2. Start week belongs in sale acceptance.** For The Living Example, when a
+person moves out of Decision into an accepted sale — Won, operationally
+committed — **surface Start week as part of that workflow**, with an obvious
+place to set it before or while completing the transition. Leif should not have
+to go hunting for the Client edit page afterwards to make capacity correct.
+
+**3. An unknown start week is a state, not a blank.** When it genuinely is not
+known yet, allow an explicit **"Set later" / "Start week needed"**, and surface
+it **visibly as unresolved operational work**. Capacity and openings must not
+present confident-looking certainty that rests on a missing fact.
+
+**Audit before choosing the arithmetic:** read the existing openings/capacity
+semantics first and decide deliberately how an unset start week affects the
+counts. This area has already been wrong twice in ways that looked right (§8's
+"18 / 12 active", and the "Can't calculate" versus "0 openings" distinction),
+and the honest answers there were about *naming what is not known* rather than
+picking a number.
+
+**4. End date is an open product question.** Audit whether LE End should
+**derive from Start week + programme duration** or **stay independently
+editable/overrideable**. Do not decide it from the outside: inspect the existing
+duration, session-cadence and capacity semantics first — the twelve-session
+model and the Year Tracking week rules already constrain what an "end" can
+honestly mean (§8, and the derived-schedule functions in §4).
+
+**5. It stays editable later.** Changing Start week afterwards from the Client
+page, through the same lightbox, must remain possible. Setting it during a sale
+is a prompt, not a one-way door.
 
 ## 8b-kit. KIT / CONVERTKIT — APPLICATIONS ARE NOT COMPLETE WITHOUT IT
 
@@ -1269,8 +1322,10 @@ made, and **restored to the working tree afterwards**. Its migration is
 `20260926090000_a_form_leif_can_edit.sql`, and with it the local
 `replay-manifest.json` total is **142**.
 
-**Do not resume it** until Jenna's production acceptance and the Dashboard
-lightbox are both done. And when Applications are eventually called finished,
+**Do not resume it** until everything ahead of it in the queue is done:
+Jenna's production acceptance, the Dashboard sales-call lightbox, the client
+start-week / capacity UX, and the Kit integration. And when Applications are
+eventually called finished,
 **the Kit requirement above is part of that judgement** — a form Leif can edit
 does not complete Applications on its own.
 
@@ -1534,8 +1589,9 @@ The next Claude session should, in order:
 `f419a552`, confirm Vercel actually deployed (a green Actions run does not
 mean the frontend shipped — §3), then move Jenna to The Living Example in
 production **with Leif watching**, and check her onboarding reads 1/4 exactly as
-§8b-next states. Do not start the Dashboard lightbox, and do not resume the
-Application Form Builder, until that acceptance passes.
+§8b-next states. Nothing else starts before that acceptance passes — then the
+queue is the Dashboard sales-call lightbox, the client start-week / capacity UX,
+Kit, and only then the Application Form Builder (§8b-next).
 
 And before calling anything finished, re-read §2's acceptance loop. **Leif's
 try-run is a step in the work, not a formality after it** — schedule it while
