@@ -61,6 +61,9 @@ create table public.contacts (
     -- new one per payment attempt. Never raw card/bank data — an
     -- identifier only.
     stripe_customer_id text,
+    -- Human memory cues, free text, e.g. "nurse · Florida · 50s · anxious".
+    -- Nothing computes on it, nothing validates it, nothing requires it.
+    identifiers text,
     constraint contacts_sales_eligibility_check check (sales_eligibility in ('normal', 'do_not_engage'))
 );
 
@@ -888,11 +891,12 @@ create table public.sales_calls (
     contact_id bigint not null,
     status text not null default 'booked',
     -- Set once at creation, never updated by a reschedule.
-    original_scheduled_at timestamp with time zone not null,
+    -- Nullable: a date-only historical call has no time to set once.
+    original_scheduled_at timestamp with time zone,
     -- The current/latest scheduled time. Mirrored onto the owning
     -- Opportunity's sales_call_at (a denormalized convenience field, kept
     -- exactly as it already was) by sync_deal_sales_call_at() below.
-    scheduled_at timestamp with time zone not null,
+    scheduled_at timestamp with time zone,
     reschedule_count smallint not null default 0,
     last_rescheduled_at timestamp with time zone,
     cancelled_at timestamp with time zone,
@@ -914,6 +918,14 @@ create table public.sales_calls (
     -- booking's alert.
     dismissed_at timestamp with time zone,
     dismissal_reason text,
+    -- The day the call sits on, which every call has — including an
+    -- imported historical one whose time nobody recorded.
+    scheduled_on date not null,
+    -- Whether this row knows a time ('exact') or only a day ('date_only');
+    -- sales_calls_schedule_shape_check below keeps the two time columns
+    -- agreeing with it.
+    schedule_precision text not null default 'exact',
+    resolution_requested_at timestamp with time zone,
     created_at timestamp with time zone not null default now(),
     updated_at timestamp with time zone not null default now(),
     -- 'completed' added (Go-Live Blocker: Sales-Call No-Show/Rebooking
@@ -1147,13 +1159,18 @@ create table public.enrollment_expected_sessions (
     window_end date not null,
     raw_title text not null,
     created_at timestamp with time zone not null default now(),
+    -- A derived row the current schedule no longer produces. Kept rather
+    -- than deleted, so a schedule that shrank stays readable as history.
+    retired_at timestamp with time zone,
     constraint enrollment_expected_sessions_ordinal_check check (ordinal between 1 and 12)
 );
 
 -- One slot per position per Enrollment (the assignment pass's own
 -- append-only idempotency boundary), and a given shared calendar window
 -- is assigned to a specific Enrollment's cadence at most once.
-create unique index enrollment_expected_sessions_enrollment_ordinal_idx on public.enrollment_expected_sessions (enrollment_id, ordinal);
+-- Partial, because a retired row keeps the ordinal it was derived with:
+-- only the live schedule has to have one row per ordinal.
+create unique index enrollment_expected_sessions_enrollment_ordinal_idx on public.enrollment_expected_sessions (enrollment_id, ordinal) where (retired_at is null);
 create unique index enrollment_expected_sessions_enrollment_window_idx on public.enrollment_expected_sessions (enrollment_id, source_window_id);
 
 -- Client + Session Operations cadence correction: the resolvable
@@ -2184,3 +2201,92 @@ create table if not exists public.contact_merges (
 create index if not exists contact_merges_source_idx on public.contact_merges (source_contact_id);
 create index if not exists contact_merges_destination_idx on public.contact_merges (destination_contact_id);
 
+
+-- Cross-offer client transfer (20260926010000).
+--
+-- A requirement can be WITHDRAWN. Jenna Smith's Opportunity moved from Growing
+-- Yourself Up to The Living Example and her checklist did not, leaving "Invite
+-- her to GYU Slack" against a programme she never joined. Retiring is how that
+-- stops applying: not deleted (a checklist that loses rows cannot be audited)
+-- and not 'done' (that would claim somebody did the work).
+alter table public.enrollment_onboarding_items
+  add column if not exists retired_at timestamptz;
+alter table public.enrollment_onboarding_items
+  add column if not exists retired_from_offer_id bigint;
+-- Which offer's template this row came from. Null on every row seeded before
+-- transfers existed: their provenance is genuinely unknown, and inferring it
+-- from the Opportunity's CURRENT offer is the mistake that made Jenna's state.
+-- Filled only where a transfer knows it for certain.
+alter table public.enrollment_onboarding_items
+  add column if not exists source_offer_id bigint;
+
+alter table public.enrollment_onboarding_items
+  drop constraint if exists enrollment_onboarding_items_retired_from_offer_id_fkey;
+alter table public.enrollment_onboarding_items
+  add constraint enrollment_onboarding_items_retired_from_offer_id_fkey
+  foreign key (retired_from_offer_id) references public.offers(id) on update cascade;
+alter table public.enrollment_onboarding_items
+  drop constraint if exists enrollment_onboarding_items_source_offer_id_fkey;
+alter table public.enrollment_onboarding_items
+  add constraint enrollment_onboarding_items_source_offer_id_fkey
+  foreign key (source_offer_id) references public.offers(id) on update cascade;
+
+alter table public.enrollment_onboarding_items
+  drop constraint if exists enrollment_onboarding_items_status_check;
+alter table public.enrollment_onboarding_items
+  add constraint enrollment_onboarding_items_status_check
+  check (status in ('pending', 'sent', 'done', 'retired'));
+
+alter table public.enrollment_onboarding_items
+  drop constraint if exists enrollment_onboarding_items_retired_pair_check;
+alter table public.enrollment_onboarding_items
+  add constraint enrollment_onboarding_items_retired_pair_check
+  check ((status = 'retired') = (retired_at is not null));
+
+-- The append-only history of a client changing programmes, which did not exist
+-- at all: Jenna's move left no trace but a stale checklist. Narrow and
+-- per-fact, the same shape as deal_stage_events and deal_outcome_events —
+-- reusing the latter would have meant writing an offer id into a column called
+-- old_outcome. Written only by transfer_enrolled_opportunity_offer(), which
+-- runs as the owner; no client INSERT grant.
+create table if not exists public.deal_offer_events (
+    id bigint generated by default as identity primary key,
+    opportunity_id bigint not null,
+    -- The Enrollment this moved, when there was one. A pre-Enrollment offer
+    -- change stays an ordinary edit and writes no event.
+    enrollment_id bigint,
+    from_offer_id bigint not null,
+    to_offer_id bigint not null,
+    occurred_at timestamptz not null default now(),
+    recorded_at timestamptz not null default now(),
+    source text not null default 'app',
+    note text,
+    constraint deal_offer_events_offers_differ_check check (from_offer_id <> to_offer_id),
+    constraint deal_offer_events_source_check check (source in ('app', 'migration', 'reconstructed'))
+);
+
+alter table public.deal_offer_events
+  drop constraint if exists deal_offer_events_opportunity_id_fkey;
+alter table public.deal_offer_events
+  add constraint deal_offer_events_opportunity_id_fkey
+  foreign key (opportunity_id) references public.deals(id) on update cascade on delete cascade;
+alter table public.deal_offer_events
+  drop constraint if exists deal_offer_events_enrollment_id_fkey;
+alter table public.deal_offer_events
+  add constraint deal_offer_events_enrollment_id_fkey
+  foreign key (enrollment_id) references public.enrollments(id) on update cascade on delete set null;
+alter table public.deal_offer_events
+  drop constraint if exists deal_offer_events_from_offer_id_fkey;
+alter table public.deal_offer_events
+  add constraint deal_offer_events_from_offer_id_fkey
+  foreign key (from_offer_id) references public.offers(id) on update cascade;
+alter table public.deal_offer_events
+  drop constraint if exists deal_offer_events_to_offer_id_fkey;
+alter table public.deal_offer_events
+  add constraint deal_offer_events_to_offer_id_fkey
+  foreign key (to_offer_id) references public.offers(id) on update cascade;
+
+create index if not exists deal_offer_events_opportunity_idx
+  on public.deal_offer_events using btree (opportunity_id);
+
+alter table public.deal_offer_events enable row level security;

@@ -720,3 +720,18 @@ revoke all on function public.record_prospect_accepted(bigint) from public;
 revoke all on function public.record_prospect_accepted(bigint) from anon;
 grant execute on function public.record_prospect_accepted(bigint) to authenticated;
 grant execute on function public.record_prospect_accepted(bigint) to service_role;
+
+-- Cross-offer client transfer (20260926010000).
+grant select on public.deal_offer_events to authenticated;
+grant select on public.deal_offer_events to service_role;
+revoke insert, update, delete on public.deal_offer_events from authenticated;
+revoke insert, update, delete on public.deal_offer_events from anon;
+grant usage, select on sequence public.deal_offer_events_id_seq to service_role;
+
+-- The one authority that may move an enrolled client between programmes. The
+-- offer field itself is refused for anyone with an Enrollment
+-- (handle_deal_saved), so this is the only route.
+revoke all on function public.transfer_enrolled_opportunity_offer(bigint, bigint, text) from public;
+revoke all on function public.transfer_enrolled_opportunity_offer(bigint, bigint, text) from anon;
+grant execute on function public.transfer_enrolled_opportunity_offer(bigint, bigint, text) to authenticated;
+grant execute on function public.transfer_enrolled_opportunity_offer(bigint, bigint, text) to service_role;

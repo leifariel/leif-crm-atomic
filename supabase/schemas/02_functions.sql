@@ -285,6 +285,18 @@ begin
       raise exception 'Cannot change pricing_mode on deal % once it has reached Won', new.id;
     end if;
 
+    -- An enrolled client's programme is not a form field. Changing it leaves
+    -- an Enrollment, an onboarding checklist and its Tasks describing a
+    -- programme nobody bought — which is what happened to Jenna Smith, three
+    -- minutes after her sale.
+    if tg_op = 'UPDATE'
+       and new.offer_id is distinct from old.offer_id
+       and current_user in ('anon', 'authenticated')
+       and exists (select 1 from enrollments where opportunity_id = new.id)
+    then
+      raise exception 'Opportunity % has an Enrollment: move the client with transfer_enrolled_opportunity_offer() rather than editing the offer, so their onboarding and Tasks follow', new.id;
+    end if;
+
     if tg_op = 'INSERT' and new.pricing_mode = 'scholarship' then
       raise exception 'A new Opportunity cannot be created directly as scholarship — grant scholarship pricing via Deal edit after creation';
     end if;
@@ -628,11 +640,13 @@ begin
     return new;
   end if;
 
-  if new.done_date is not null and old.done_date is null then
+  if new.done_date is not null and old.done_date is null and new.status = 'completed' then
     update enrollment_onboarding_items
       set status = 'done', completed_at = coalesce(completed_at, new.done_date), updated_at = now()
-      where id = new.onboarding_item_id and status <> 'done';
+      where id = new.onboarding_item_id and status not in ('done', 'retired');
   elsif new.done_date is null and old.done_date is not null then
+    -- Reopened. A retired requirement is not reopened by its Task coming
+    -- back: only another transfer brings it back.
     update enrollment_onboarding_items
       set status = 'pending', completed_at = null, updated_at = now()
       where id = new.onboarding_item_id and status = 'done';
@@ -697,11 +711,10 @@ $$;
 -- every future write path to remember the invariant. Only guards the
 -- onboarding -> active direction; a manual correction back to onboarding
 -- stays ungated.
-CREATE OR REPLACE FUNCTION public.enforce_enrollment_activation_requirements()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public'
-AS $function$
+CREATE OR REPLACE FUNCTION "public"."enforce_enrollment_activation_requirements"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO 'public'
+    AS $$
 declare
   v_required int;
   v_outstanding int;
@@ -710,10 +723,6 @@ begin
     return new;
   end if;
 
-  -- The historical importer writes truthful final states directly and must
-  -- not be forced through a live checklist it is not describing. Only
-  -- set_historical_migration_mode() can set this, and only for one
-  -- transaction.
   if current_setting('app.migration_mode', true) = 'true' then
     return new;
   end if;
@@ -726,7 +735,8 @@ begin
          count(*) filter (where is_required and status <> 'done')
     into v_required, v_outstanding
     from enrollment_onboarding_items
-   where enrollment_id = new.id;
+   where enrollment_id = new.id
+     and status <> 'retired';
 
   if v_required = 0 then
     raise exception 'Cannot activate enrollment %: it is tracked but has no required onboarding items. Either its Offer has no active onboarding templates, or seeding did not run. An empty checklist is not a finished one.', new.id
@@ -739,8 +749,7 @@ begin
 
   return new;
 end;
-$function$
-;
+$$;
 
 -- Client Offboarding slice: mirrors handle_deal_won()'s own checklist +
 -- Task seeding exactly, but fires on the Enrollment's own active ->
@@ -2046,12 +2055,10 @@ AS $function$
 $function$
 ;
 
-CREATE OR REPLACE FUNCTION public.seed_enrollment_onboarding(p_enrollment_id bigint, p_due_at timestamp with time zone DEFAULT (now() + '3 days'::interval))
- RETURNS integer
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
+CREATE OR REPLACE FUNCTION "public"."seed_enrollment_onboarding"("p_enrollment_id" bigint, "p_due_at" timestamp with time zone DEFAULT ("now"() + '3 days'::interval)) RETURNS integer
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
 declare
   v_deal deals%rowtype;
   v_contact_name text;
@@ -2073,25 +2080,20 @@ begin
 
   for v_item in
     insert into enrollment_onboarding_items
-      (enrollment_id, requirement_key, label, task_text_template, is_required, sort_order)
-    select p_enrollment_id, t.key, t.label, t.task_text_template, t.is_required, t.sort_order
+      (enrollment_id, requirement_key, label, task_text_template, is_required, sort_order, source_offer_id)
+    select p_enrollment_id, t.key, t.label, t.task_text_template, t.is_required, t.sort_order, v_deal.offer_id
       from onboarding_requirement_templates t
      where t.offer_id = v_deal.offer_id and t.is_active
     on conflict (enrollment_id, requirement_key) do nothing
     returning id, is_required
   loop
     v_seeded := v_seeded + 1;
-    -- Optional items deliberately get no Task: an auto-task for something
-    -- nobody has to do is noise on Leif's dashboard.
     if v_item.is_required and not exists (
       select 1 from tasks where onboarding_item_id = v_item.id
     ) then
       insert into tasks (contact_id, type, text, due_date, status, enrollment_id, onboarding_item_id)
       select v_deal.contact_id, 'onboarding_item',
              replace(i.task_text_template, '{name}', v_contact_name),
-             -- Not now(): every required item due the instant somebody
-             -- pays reads as instantly overdue, which is noise rather
-             -- than urgency.
              p_due_at, 'pending', p_enrollment_id, i.id
         from enrollment_onboarding_items i
        where i.id = v_item.id;
@@ -2100,26 +2102,34 @@ begin
 
   return v_seeded;
 end;
-$function$
-;
+$$;
 
 
-CREATE OR REPLACE FUNCTION public.close_tasks_for_terminal_enrollment()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public'
-AS $function$
+CREATE OR REPLACE FUNCTION "public"."close_tasks_for_terminal_enrollment"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO 'public'
+    AS $$
 begin
   if new.status not in ('completed', 'withdrawn', 'ended')
      or old.status in ('completed', 'withdrawn', 'ended') then
     return new;
   end if;
 
-CREATE OR REPLACE FUNCTION public.close_tasks_for_terminal_opportunity()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public'
-AS $function$
+  update tasks
+     set done_date = now(), status = 'cancelled'
+   where enrollment_id = new.id
+     and done_date is null
+     and type in ('onboarding_item', 'offboarding_item',
+                  'resolve_client_session_cadence');
+
+  return new;
+end;
+$$;
+
+CREATE OR REPLACE FUNCTION "public"."close_tasks_for_terminal_opportunity"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO 'public'
+    AS $$
 begin
   if public.deal_is_active(new.archived_at, new.stage, new.outcome)
      or (tg_op = 'UPDATE'
@@ -2127,17 +2137,43 @@ begin
     return new;
   end if;
 
-CREATE OR REPLACE FUNCTION public.sync_task_from_onboarding_item()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
+  update tasks
+     set done_date = now(), status = 'cancelled'
+   where opportunity_id = new.id
+     and done_date is null
+     -- Only the families whose premise was an ACTIVE sales attempt.
+     -- 'other' is Leif's own note and is never closed by machinery.
+     and type in ('sales_call', 'follow_up', 'nurture_follow_up',
+                  'sales_call_cancelled', 'sales_call_no_show',
+                  'review_application');
+
+  return new;
+end;
+$$;
+
+CREATE OR REPLACE FUNCTION "public"."sync_task_from_onboarding_item"() RETURNS "trigger"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
 declare
   v_enrollment enrollments%rowtype;
   v_deal deals%rowtype;
   v_contact_name text;
 begin
+  -- Withdrawn: its Task is withdrawn too, and stays that way.
+  --
+  -- done_date moves with it because tasks_completion_agreement_check reads it
+  -- as "closed at", not "finished at": only pending and waiting Tasks may
+  -- have none. Cancelling without it is refused by the database, which is how
+  -- this was found.
+  if new.status = 'retired' then
+    update tasks
+       set status = 'cancelled',
+           done_date = coalesce(done_date, now())
+     where onboarding_item_id = new.id and status <> 'completed';
+    return new;
+  end if;
+
   -- Item finished: close its open Task, if it still has one.
   if new.status = 'done' then
     update tasks
@@ -2147,12 +2183,64 @@ begin
     return new;
   end if;
 
+  -- Item is outstanding again (or still). One open Task, no more. A
+  -- cancelled Task does not count as open: a requirement that comes back
+  -- from retirement needs its request back.
+  if exists (
+    select 1 from tasks
+     where onboarding_item_id = new.id
+       and done_date is null
+       and status <> 'cancelled'
+  ) then
+    return new;
+  end if;
 
-CREATE OR REPLACE FUNCTION public.enforce_application_opportunity_agreement()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'public'
-AS $function$
+  select * into v_enrollment from enrollments where id = new.enrollment_id;
+  if not found then
+    return new;
+  end if;
+  -- A finished client has no outstanding setup work.
+  if v_enrollment.status in ('completed', 'withdrawn', 'ended') then
+    return new;
+  end if;
+
+  select * into v_deal from deals where id = v_enrollment.opportunity_id;
+
+  -- Prefer reopening the Task that already exists over creating a second
+  -- record of the same request.
+  update tasks
+     set done_date = null, status = 'pending'
+   where id = (
+     select id from tasks
+      where onboarding_item_id = new.id
+      order by done_date desc nulls first, id desc
+      limit 1);
+  if found then
+    return new;
+  end if;
+
+  select nullif(trim(both ' ' from coalesce(first_name, '') || ' ' || coalesce(last_name, '')), '')
+    into v_contact_name from contacts where id = v_deal.contact_id;
+
+  insert into tasks (contact_id, type, text, due_date, status, enrollment_id, onboarding_item_id)
+  values (
+    v_deal.contact_id,
+    'onboarding_item',
+    replace(new.task_text_template, '{name}', coalesce(v_contact_name, v_deal.name)),
+    now() + interval '3 days',
+    'pending',
+    new.enrollment_id,
+    new.id
+  );
+
+  return new;
+end;
+$$;
+
+CREATE OR REPLACE FUNCTION "public"."enforce_application_opportunity_agreement"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO 'public'
+    AS $$
 declare
   v_deal deals%rowtype;
 begin
@@ -2171,15 +2259,21 @@ begin
       coalesce(new.id::text, 'new'), new.contact_id, v_deal.id, v_deal.contact_id;
   end if;
 
-  if v_deal.offer_id is distinct from new.offer_id then
+  if v_deal.offer_id is distinct from new.offer_id
+     and not exists (
+       select 1 from deal_offer_events ev
+        where ev.opportunity_id = v_deal.id
+          and ev.from_offer_id = new.offer_id
+     )
+  then
     raise exception 'Application % is for Offer % but Opportunity % is for Offer %; an application cannot belong to a sales attempt for a different programme',
-      coalesce(new.id::text, 'new'), new.offer_id, v_deal.id, v_deal.offer_id;
+      coalesce(new.id::text, 'new'), new.offer_id, v_deal.id, v_deal.offer_id
+      using hint = 'If this client genuinely changed programmes, move them with transfer_enrolled_opportunity_offer() — that records the change and makes the original application legal history.';
   end if;
 
   return new;
 end;
-$function$
-;
+$$;
 
 CREATE OR REPLACE FUNCTION public.materialize_application_responses(p_snapshot_id bigint)
  RETURNS integer
@@ -3195,5 +3289,230 @@ CREATE OR REPLACE FUNCTION "public"."record_prospect_accepted"("p_opportunity_id
     AS $$
 begin
   return public.accept_sale(p_opportunity_id);
+end;
+$$;
+
+CREATE OR REPLACE FUNCTION "public"."transfer_enrolled_opportunity_offer"("p_opportunity_id" bigint, "p_to_offer_id" bigint, "p_note" "text" DEFAULT NULL::"text") RETURNS "jsonb"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+declare
+  v_deal deals%rowtype;
+  v_offer offers%rowtype;
+  v_enrollment enrollments%rowtype;
+  v_enrollment_count int;
+  v_item record;
+  v_retired int := 0;
+  v_relabelled int := 0;
+  v_added int := 0;
+  v_kept int := 0;
+  v_kept_historical int := 0;
+  v_from_offer_id bigint;
+  v_existing_status text;
+begin
+  select * into v_deal from deals where id = p_opportunity_id for update;
+  if not found then
+    return jsonb_build_object('status', 'not-found');
+  end if;
+
+  select * into v_offer from offers where id = p_to_offer_id;
+  if not found then
+    return jsonb_build_object('status', 'invalid-offer');
+  end if;
+
+  if v_deal.offer_id = p_to_offer_id then
+    -- A replay, a double click, or a stale tab. Nothing to do, and saying so
+    -- is not an error.
+    return jsonb_build_object('status', 'already-on-offer', 'offer_id', p_to_offer_id);
+  end if;
+
+  select count(*) into v_enrollment_count from enrollments where opportunity_id = p_opportunity_id;
+  if v_enrollment_count = 0 then
+    -- Nothing downstream exists yet, so an ordinary edit is the right tool and
+    -- is still allowed. Refusing here keeps this function honest about what it
+    -- is for.
+    return jsonb_build_object('status', 'no-enrollment');
+  end if;
+  if v_enrollment_count > 1 then
+    -- Structurally impossible today (enrollments.opportunity_id is unique),
+    -- and if it ever becomes possible this must not guess which one moves.
+    return jsonb_build_object('status', 'ambiguous-enrollment', 'enrollments', v_enrollment_count);
+  end if;
+
+  select * into v_enrollment from enrollments where opportunity_id = p_opportunity_id for update;
+
+  -- A group programme needs a round, and this function does not pick one.
+  if v_offer.type = 'group' then
+    return jsonb_build_object(
+      'status', 'needs-cohort',
+      'reason', format('%s is a group programme: choose the round before moving a client into it', v_offer.name)
+    );
+  end if;
+  -- Leaving a group programme means leaving its round behind.
+  v_from_offer_id := v_deal.offer_id;
+
+  -- ---- the Opportunity itself --------------------------------------------
+  -- handle_deal_saved() refreshes the commercial snapshot and revalidates the
+  -- pairing; its enrolled-client guard lets this through because this function
+  -- runs as the owner, not as the caller.
+  update deals
+     set offer_id = p_to_offer_id,
+         cohort_id = case when v_offer.type = 'group' then cohort_id else null end
+   where id = p_opportunity_id;
+
+  -- ---- requirements that no longer apply ---------------------------------
+  for v_item in
+    select i.* from enrollment_onboarding_items i
+     where i.enrollment_id = v_enrollment.id
+       and i.status <> 'retired'
+       and not exists (
+         select 1 from onboarding_requirement_templates t
+          where t.offer_id = p_to_offer_id and t.is_active and t.key = i.requirement_key
+       )
+  loop
+    if v_item.status = 'done' then
+      -- Completed work under the old programme is history, not a requirement
+      -- of the new one. Kept as it is, with its provenance made explicit.
+      -- Completed work that belongs only to the old programme. Provenance is
+      -- known here too — it is not a requirement of the new one — and saying
+      -- so is what keeps it readable as history rather than as a stray row.
+      update enrollment_onboarding_items
+         set source_offer_id = coalesce(source_offer_id, v_from_offer_id),
+             updated_at = now()
+       where id = v_item.id;
+      v_kept_historical := v_kept_historical + 1;
+    else
+      -- Retiring one IS a moment where provenance is known: the requirement
+      -- exists on the programme being left and not on the one being joined, so
+      -- the offer it came from is the offer we are leaving. Filled only when
+      -- the row does not already say.
+      update enrollment_onboarding_items
+         set status = 'retired',
+             retired_at = now(),
+             retired_from_offer_id = v_from_offer_id,
+             source_offer_id = coalesce(source_offer_id, v_from_offer_id),
+             updated_at = now()
+       where id = v_item.id;
+      v_retired := v_retired + 1;
+    end if;
+  end loop;
+
+  -- ---- requirements the target programme shares or adds -------------------
+  for v_item in
+    select t.* from onboarding_requirement_templates t
+     where t.offer_id = p_to_offer_id and t.is_active
+  loop
+    select status into v_existing_status
+      from enrollment_onboarding_items
+     where enrollment_id = v_enrollment.id and requirement_key = v_item.key;
+
+    if v_existing_status is not null then
+      -- Shared key. A done item keeps everything, including its wording: it
+      -- describes what was actually done. A pending one is only a request, so
+      -- it becomes the target's request.
+      update enrollment_onboarding_items
+         set label = case when v_existing_status = 'done' then label else v_item.label end,
+             task_text_template = case when v_existing_status = 'done' then task_text_template else v_item.task_text_template end,
+             is_required = v_item.is_required,
+             sort_order = v_item.sort_order,
+             -- A requirement coming back from retirement (a move back to the
+             -- programme it belonged to) becomes real work again.
+             status = case when v_existing_status = 'retired' then 'pending' else status end,
+             retired_at = case when v_existing_status = 'retired' then null else retired_at end,
+             retired_from_offer_id = case when v_existing_status = 'retired' then null else retired_from_offer_id end,
+             -- Provenance, said only where it is known:
+             --
+             --   done      LEFT ALONE, including null. A shared requirement
+             --             that is already finished is the same requirement in
+             --             both programmes — "contract" is contract — so the
+             --             Opportunity having once been GYU says nothing about
+             --             where THIS row came from. Stamping it would invent a
+             --             fact about completed work.
+             --   otherwise the target template, which is now genuinely where
+             --             this requirement comes from. Re-pointing a pending
+             --             row is a change of request, not a claim about
+             --             history; the transfer event carries the history.
+             source_offer_id = case when v_existing_status = 'done' then source_offer_id else p_to_offer_id end,
+             updated_at = now()
+       where enrollment_id = v_enrollment.id
+         and requirement_key = v_item.key;
+
+      if v_existing_status = 'done' then
+        v_kept := v_kept + 1;
+      else
+        v_relabelled := v_relabelled + 1;
+      end if;
+    else
+      insert into enrollment_onboarding_items
+        (enrollment_id, requirement_key, label, task_text_template, is_required, sort_order, source_offer_id)
+      values (v_enrollment.id, v_item.key, v_item.label, v_item.task_text_template,
+              v_item.is_required, v_item.sort_order, p_to_offer_id);
+      v_added := v_added + 1;
+    end if;
+  end loop;
+
+  -- ---- every outstanding requirement has exactly one open Task -----------
+  -- The relabelled ones need their wording corrected; the added ones need a
+  -- Task at all. sync_task_from_onboarding_item() creates on insert, so this
+  -- only repairs text and fills genuine gaps.
+  update tasks t
+     set text = replace(i.task_text_template, '{name}',
+                        coalesce(nullif(trim(both ' ' from coalesce(c.first_name, '') || ' ' || coalesce(c.last_name, '')), ''), v_deal.name))
+    from enrollment_onboarding_items i
+    join contacts c on c.id = v_deal.contact_id
+   where t.onboarding_item_id = i.id
+     and i.enrollment_id = v_enrollment.id
+     and i.status not in ('done', 'retired')
+     and t.status = 'pending';
+
+  insert into tasks (contact_id, type, text, due_date, status, enrollment_id, onboarding_item_id)
+  select v_deal.contact_id, 'onboarding_item',
+         replace(i.task_text_template, '{name}',
+                 coalesce(nullif(trim(both ' ' from coalesce(c.first_name, '') || ' ' || coalesce(c.last_name, '')), ''), v_deal.name)),
+         now() + interval '3 days', 'pending', v_enrollment.id, i.id
+    from enrollment_onboarding_items i
+    join contacts c on c.id = v_deal.contact_id
+   where i.enrollment_id = v_enrollment.id
+     and i.is_required
+     and i.status not in ('done', 'retired')
+     and not exists (
+       select 1 from tasks tk
+        where tk.onboarding_item_id = i.id
+          and tk.status not in ('completed', 'cancelled')
+     );
+
+  -- ---- the history this never had ----------------------------------------
+  insert into deal_offer_events (opportunity_id, enrollment_id, from_offer_id, to_offer_id, source, note)
+  values (p_opportunity_id, v_enrollment.id, v_from_offer_id, p_to_offer_id, 'app', p_note);
+
+  return jsonb_build_object(
+    'status', 'transferred',
+    'opportunity_id', p_opportunity_id,
+    'enrollment_id', v_enrollment.id,
+    'from_offer_id', v_from_offer_id,
+    'to_offer_id', p_to_offer_id,
+    'retired', v_retired,
+    'relabelled', v_relabelled,
+    'added', v_added,
+    'kept_done', v_kept,
+    'kept_historical', v_kept_historical,
+    -- sync_task_from_onboarding_item() cancelled these as each item retired.
+    'cancelled_tasks', (
+      select count(*) from tasks tk
+        join enrollment_onboarding_items i on i.id = tk.onboarding_item_id
+       where i.enrollment_id = v_enrollment.id
+         and i.status = 'retired'
+         and tk.status = 'cancelled'
+    ),
+    'required_outstanding', (
+      select count(*) from enrollment_onboarding_items
+       where enrollment_id = v_enrollment.id and is_required
+         and status not in ('done', 'retired')
+    ),
+    'required_total', (
+      select count(*) from enrollment_onboarding_items
+       where enrollment_id = v_enrollment.id and is_required and status <> 'retired'
+    )
+  );
 end;
 $$;

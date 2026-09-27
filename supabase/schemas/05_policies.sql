@@ -303,3 +303,8 @@ drop policy if exists "Form questions are readable" on public.application_form_q
 create policy "Form questions are readable" on public.application_form_questions
   for select to authenticated using (true);
 
+
+-- Cross-offer client transfer (20260926010000): readable by the app, written
+-- only by transfer_enrolled_opportunity_offer(), which runs as the owner.
+drop policy if exists "Enable read for authenticated users" on public.deal_offer_events;
+create policy "Enable read for authenticated users" on public.deal_offer_events for select to authenticated using (true);

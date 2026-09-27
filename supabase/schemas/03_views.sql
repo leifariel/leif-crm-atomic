@@ -173,6 +173,20 @@ from public.contacts co
     left join public.waitlist_entries w on w.contact_id = co.id
 group by co.id, c.name;
 
+-- The addresses a Contact is reachable at, as rows rather than jsonb, so
+-- "who owns this address" is one query. The placeholder addresses the
+-- historical import minted for emailless applicants are page ids, not
+-- addresses, and are excluded.
+create or replace view public.contact_email_addresses as
+select c.id as contact_id,
+       public.normalize_email(e->>'email') as normalized_email,
+       e->>'email' as email,
+       e->>'type' as email_type
+  from public.contacts c,
+       lateral jsonb_array_elements(coalesce(c.email_jsonb, '[]'::jsonb)) e
+ where public.normalize_email(e->>'email') is not null
+   and (e->>'email') not like 'le-standalone:%';
+
 create or replace view public.init_state with (security_invoker = off) as
 select count(sub.id) as is_initialized
 from (
@@ -196,7 +210,7 @@ CREATE OR REPLACE VIEW public.enrollments_missing_onboarding AS
      JOIN deals d ON d.id = e.opportunity_id
   WHERE e.onboarding_tracking = 'tracked'::text AND NOT (EXISTS ( SELECT 1
            FROM enrollment_onboarding_items i
-          WHERE i.enrollment_id = e.id AND i.is_required));
+          WHERE i.enrollment_id = e.id AND i.is_required AND i.status <> 'retired'::text));
 
 -- Applications that are current review work: pending, on a live sales
 -- attempt still at Application Received. Never merely status = pending.
