@@ -13,12 +13,13 @@ import {
   prospectDecisions,
 } from "../deals/opportunityConstants";
 import { formatISODateString } from "../deals/dealUtils";
-import type { Deal, SalesCall } from "../types";
+import type { Deal, Offer, SalesCall } from "../types";
 import { salesCallAttendances } from "./salesCallConstants";
 import { formatSalesCallScheduleWithPrecision } from "./salesCallSchedule";
 import { CompleteSalesCallDialog } from "./CompleteSalesCallDialog";
 import { LogSalesCallDialog } from "./LogSalesCallDialog";
 import { salesCallDecisionOwed } from "./salesCallDecisionOwed";
+import { describeBookedVsSold } from "./salesCallBookedProgramme";
 
 const findLabel = (
   choices: { value: string; label: string }[],
@@ -99,6 +100,31 @@ export const DealSalesCallSection = () => {
   );
   const { current: salesCall, history: priorSalesCalls } =
     selectCurrentSalesCall(salesCalls);
+
+  // A call booked for one programme and sold as another — Jenna Smith's GYU
+  // call against her Living Example sale. Derived from the Acuity appointment
+  // type the booking came through, never a second stored field, and shown only
+  // when the two genuinely differ.
+  // Asked for ONLY when there is a booking to resolve. An unguarded list query
+  // here reaches every Opportunity surface in the app, including harnesses that
+  // seed no offers at all — where it retried until the render timed out. A
+  // derived nicety must not be able to hang the page it decorates.
+  const { data: offers } = useGetList<Offer>(
+    "offers",
+    {
+      pagination: { page: 1, perPage: 50 },
+      sort: { field: "id", order: "ASC" },
+    },
+    {
+      enabled: salesCall?.acuity_appointment_type_id != null,
+      retry: false,
+    },
+  );
+  const bookedVsSold = describeBookedVsSold(
+    salesCall,
+    record?.offer_id,
+    offers ?? [],
+  );
 
   if (!record || isPending) return null;
 
@@ -219,6 +245,15 @@ export const DealSalesCallSection = () => {
               _: "Sales Call · Completed",
             })}
           </span>
+          {bookedVsSold && (
+            <span className="text-xs text-muted-foreground">
+              {translate("resources.deals.sales_call.booked_vs_sold", {
+                _: "Booked for %{bookedFor} · Sold %{sold}",
+                bookedFor: bookedVsSold.bookedFor,
+                sold: bookedVsSold.sold,
+              })}
+            </span>
+          )}
           <div className="flex items-center gap-2 text-sm">
             {salesCall.attendance === "attended" ? (
               <CheckCircle2 className="size-4 text-primary" />

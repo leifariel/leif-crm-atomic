@@ -55,6 +55,10 @@ export default (): Db => {
   db.client_session_cadence_issues = [];
   db.client_session_cadence_issue_events = [];
   db.deal_stage_events = [];
+  // Declared on Db and created here for the same reason the payment
+  // collections are: FakeRest throws "Undefined collection" the moment
+  // anything asks whether this client ever changed programmes.
+  db.deal_offer_events = [];
   // Declared on Db but never created, so FakeRest threw "Undefined
   // collection" the moment anything asked what had been paid — which meant
   // the demo could not show payment truth at all, and no provider-level

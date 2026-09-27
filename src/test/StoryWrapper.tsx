@@ -48,6 +48,7 @@ export const createCrmDb = (overrides: Partial<Db> = {}): Db =>
     deal_notes: [],
     deals: [],
     deal_stage_events: [],
+    deal_offer_events: [],
     // The Won -> Enrollment mirror (ensureEnrollmentForWonDeal) reads this
     // collection, so it has to exist by default or marking a Deal Won
     // throws UndefinedResourceError instead of creating the client.

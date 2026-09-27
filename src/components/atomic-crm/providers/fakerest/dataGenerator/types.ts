@@ -15,6 +15,7 @@ import type {
   Deal,
   DealNote,
   DealStageEvent,
+  DealOfferEvent,
   Enrollment,
   EnrollmentExpectedSession,
   EnrollmentOffboardingItem,
@@ -48,6 +49,7 @@ export interface Db {
   deals: Deal[];
   deal_notes: DealNote[];
   deal_stage_events: DealStageEvent[];
+  deal_offer_events: DealOfferEvent[];
   applications: Application[];
   application_responses: ApplicationResponse[];
   enrollments: Enrollment[];

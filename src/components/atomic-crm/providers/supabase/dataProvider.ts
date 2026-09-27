@@ -314,6 +314,26 @@ const getDataProviderWithCustomMethods = () => {
       }
       return data as Record<string, unknown>;
     },
+    // Moving an enrolled client between programmes, in ONE transaction: the
+    // Opportunity, the onboarding checklist, the Tasks and the history move
+    // together or not at all. The offer field itself is refused for anyone
+    // with an Enrollment (handle_deal_saved), so this is the only way —
+    // Jenna Smith spent a week with a GYU checklist under an LE sale because
+    // the field was the way.
+    async transferEnrolledOpportunityOffer(
+      opportunityId: Identifier,
+      toOfferId: Identifier,
+    ) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "transfer_enrolled_opportunity_offer",
+        { p_opportunity_id: opportunityId, p_to_offer_id: toOfferId },
+      );
+      if (error) {
+        console.error("transfer_enrolled_opportunity_offer.error", error);
+        throw new Error("Failed to move this client to the other programme");
+      }
+      return data as Record<string, unknown>;
+    },
     // Refused here as well as in the Edge Function, so that a merge cannot
     // leave this machine even if some future caller finds the method.
     // See contacts/contactSafety.ts.

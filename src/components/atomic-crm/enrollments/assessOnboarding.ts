@@ -51,7 +51,13 @@ export const assessOnboarding = ({
   tracking: OnboardingTracking | null | undefined;
   items: EnrollmentOnboardingItem[];
 }): OnboardingAssessment => {
-  const optionalItems = items.filter((item) => !item.is_required);
+  // A retired requirement stopped applying when the client changed programmes
+  // (20260926010000). It is history — never progress, never work, and never a
+  // missing checklist. Filtered once, here, so every consumer inherits it: the
+  // panel, the Kanban card, the client page and the activation rule all read
+  // this module rather than the rows.
+  const live = items.filter((item) => item.status !== "retired");
+  const optionalItems = live.filter((item) => !item.is_required);
 
   if (tracking === "legacy_untracked") {
     return { mode: "legacy_untracked", requiredItems: [], optionalItems };
@@ -61,7 +67,7 @@ export const assessOnboarding = ({
   // Enrollment that has not loaded one — is treated as tracked. Tracked is
   // the safe default: it can surface a missing checklist, whereas
   // defaulting to legacy would hide one.
-  const requiredItems = items.filter((item) => item.is_required);
+  const requiredItems = live.filter((item) => item.is_required);
   const outstandingRequired = requiredItems.filter(
     (item) => item.status !== "done",
   );

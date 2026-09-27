@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar } from "../contacts/Avatar";
 import { PersonEmail } from "../contacts/PersonEmail";
 import { PaymentPanel } from "../deals/PaymentPanel";
+import { MoveClientProgrammeAction } from "./MoveClientProgrammeAction";
 import {
   formatISODateString,
   formatMonthDayString,
@@ -264,6 +265,19 @@ const EnrollmentOperationalHome = () => {
           collapsed={false}
         />
       )}
+
+      {/* Programme changes belong to the client, not to the Opportunity's
+          offer field — which the database now refuses for anyone with an
+          Enrollment. The action states what it will do to their onboarding
+          before it does it (Jenna Smith's GYU checklist under an LE sale is
+          why it exists). */}
+      <div className="m-4">
+        <MoveClientProgrammeAction
+          deal={deal}
+          enrollment={enrollment}
+          items={items}
+        />
+      </div>
 
       {/* ClientShow onboarding-hierarchy repair: while onboarding still
           needs Leif's attention, the checklist stays expanded up here —

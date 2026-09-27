@@ -426,6 +426,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/sales-calls/salesCallBookedProgramme.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/sales-calls/resolveUnmatchedSalesCall.ts",
           "type": "registry:component"
         },
@@ -1090,6 +1094,14 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/enrollments/transferClientOfferMirrorEntry.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/enrollments/transferClientOffer.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/enrollments/startOffboarding.ts",
           "type": "registry:component"
         },
@@ -1143,6 +1155,10 @@
         },
         {
           "path": "src/components/atomic-crm/enrollments/activateEnrollment.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/enrollments/MoveClientProgrammeAction.tsx",
           "type": "registry:component"
         },
         {

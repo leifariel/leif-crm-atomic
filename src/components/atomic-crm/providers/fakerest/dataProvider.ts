@@ -35,6 +35,7 @@ import {
 } from "../../applications/createManualApplication";
 import { completeAttendedSalesCallMirror } from "../../sales-calls/completeAttendedSalesCallMirror";
 import { acceptSaleMirror } from "../../deals/acceptSaleMirror";
+import { transferClientOfferMirrorEntry } from "../../enrollments/transferClientOfferMirrorEntry";
 import type { ConfigurationContextValue } from "../../root/ConfigurationContext";
 import { validateOfferCohort } from "../../deals/offerCohortValidation";
 import {
@@ -859,6 +860,14 @@ export const createDataProvider = ({
     // tiny local stand-in that keeps the same contract.
     recordProspectAccepted: async (opportunityId) =>
       acceptSaleMirror(dataProvider, opportunityId),
+    // Moving an enrolled client between programmes. Production does it in one
+    // transaction (transfer_enrolled_opportunity_offer); FakeRest mirrors the
+    // step order through the OUTER provider, so the deals and onboarding
+    // lifecycle hooks fire the way triggers do.
+    transferEnrolledOpportunityOffer: async (
+      opportunityId: Identifier,
+      toOfferId: Identifier,
+    ) => transferClientOfferMirrorEntry(dataProvider, opportunityId, toOfferId),
     // FakeRest has no transactions, so only the step ORDER is mirrored
     // here — the atomicity guarantee comes from the real function. The
     // OUTER provider, so the "deals" and "sales_calls" lifecycle hooks in
@@ -1079,14 +1088,19 @@ export const createDataProvider = ({
               ? TASK_MARKED_AS_DONE
               : TASK_MARKED_AS_UNDONE;
             // Keep status in sync with the done_date checkbox: completing a
-            // task marks it Completed; unchecking returns it to Pending
-            // (Waiting/Cancelled are set explicitly via the task form, not
-            // by this checkbox, so they're only touched here on the way
-            // back to Pending).
-            nextData = {
-              ...nextData,
-              status: data.done_date ? "completed" : "pending",
-            };
+            // task marks it Completed; unchecking returns it to Pending.
+            //
+            // Only when the caller did not say otherwise. A cancellation sets
+            // BOTH — status cancelled and done_date, because done_date is when
+            // a Task closed and tasks_completion_agreement_check refuses a
+            // closed Task without one — and this used to overwrite that with
+            // "completed", turning a withdrawn requirement into finished work.
+            if (data.status == null) {
+              nextData = {
+                ...nextData,
+                status: data.done_date ? "completed" : "pending",
+              };
+            }
           } else {
             taskUpdateType = TASK_DONE_NOT_CHANGED;
           }
@@ -1113,10 +1127,16 @@ export const createDataProvider = ({
             // Contracts + Onboarding slice: mirrors
             // sync_onboarding_item_from_task() exactly — a Task pointing
             // at a specific checklist item has its done-ness mirrored onto
-            // that item. Only fires on a genuine done_date change (the
-            // outer `if` above), so a cancelled Task (status changes,
-            // done_date does not) never touches the checklist — the
-            // checklist stays the durable source of truth.
+            // that item.
+            //
+            // This used to assume a cancelled Task leaves done_date alone.
+            // It cannot: tasks_completion_agreement_check reads done_date as
+            // "closed at", so cancelling sets it — and retiring a
+            // requirement cancels its Task. Without the status check below,
+            // withdrawing the GYU Slack requirement came straight back as
+            // COMPLETED work. Only a completed Task means the work happened,
+            // and nothing resurrects a retired requirement but another
+            // transfer.
             if (result.data.onboarding_item_id != null) {
               const { data: item } = await dataProvider.getOne(
                 "enrollment_onboarding_items",
@@ -1124,7 +1144,9 @@ export const createDataProvider = ({
               );
               if (
                 taskUpdateType === TASK_MARKED_AS_DONE &&
-                item.status !== "done"
+                result.data.status === "completed" &&
+                item.status !== "done" &&
+                item.status !== "retired"
               ) {
                 await dataProvider.update("enrollment_onboarding_items", {
                   id: item.id,

@@ -17,7 +17,7 @@ import { Separator } from "@/components/ui/separator";
 import { useIsMobile } from "@/hooks/use-mobile";
 
 import { useConfigurationContext } from "../root/ConfigurationContext";
-import type { Deal, Offer, OfferPaymentOption } from "../types";
+import type { Deal, Enrollment, Offer, OfferPaymentOption } from "../types";
 import { resolveOpportunityAmount } from "./dealAmount";
 import { OpportunityPersonInput } from "./OpportunityPersonInput";
 import {
@@ -48,6 +48,21 @@ const paymentOptionText = (option: OfferPaymentOption) =>
 
 const DealInfoInputs = () => {
   const { control, setValue, getValues } = useFormContext();
+  const record = useRecordContext<Deal>();
+  const translate = useTranslate();
+  // ENROLLMENT EXISTS is the boundary, not stage Won: an Enrollment is what
+  // has a checklist and Tasks to go stale. Mirrors handle_deal_saved()'s own
+  // guard exactly.
+  const { total: clientCount } = useGetList<Enrollment>(
+    "enrollments",
+    {
+      filter: { opportunity_id: record?.id },
+      pagination: { page: 1, perPage: 1 },
+      sort: { field: "id", order: "ASC" },
+    },
+    { enabled: record?.id != null },
+  );
+  const hasClient = (clientCount ?? 0) > 0;
   const offerId = useWatch({ control, name: "offer_id" });
   const paymentOptionId = useWatch({
     control,
@@ -120,18 +135,42 @@ const DealInfoInputs = () => {
   return (
     <div className="flex flex-col gap-4 flex-1">
       <div className="flex flex-col sm:flex-row gap-4 [&>div]:flex-1 [&_button]:w-full">
-        <ReferenceInput
-          source="offer_id"
-          reference="offers"
-          filter={NEW_BUSINESS_OFFERS_FILTER}
-        >
-          <AutocompleteInput
-            label="resources.deals.fields.offer_id"
-            optionText="name"
-            helperText={false}
-            validate={required()}
-          />
-        </ReferenceInput>
+        {hasClient ? (
+          // The programme of an enrolled client is not a field.
+          //
+          // Jenna Smith's was changed here, from Growing Yourself Up to The
+          // Living Example, and her onboarding stayed GYU: nothing reconciles
+          // an Enrollment, its checklist or its Tasks when this value moves.
+          // The database refuses the edit now
+          // (20260926010000), so offering it would only produce an error —
+          // moving a client is an explicit action on their client page.
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground tracking-wide">
+              {translate("resources.deals.fields.offer_id")}
+            </span>
+            <span className="text-sm">
+              {selectedOffer?.name ?? record?.offer_name_snapshot ?? ""}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {translate("resources.deals.offer_locked_by_client", {
+                _: "This client is enrolled — move them from their client page so their onboarding follows.",
+              })}
+            </span>
+          </div>
+        ) : (
+          <ReferenceInput
+            source="offer_id"
+            reference="offers"
+            filter={NEW_BUSINESS_OFFERS_FILTER}
+          >
+            <AutocompleteInput
+              label="resources.deals.fields.offer_id"
+              optionText="name"
+              helperText={false}
+              validate={required()}
+            />
+          </ReferenceInput>
+        )}
         {isGroupOffer && (
           <ReferenceInput
             source="cohort_id"

@@ -456,7 +456,14 @@ export type OnboardingRequirementTemplate = {
 // straight pending -> done. See enrollment_onboarding_items' own schema
 // comment for why this is one shared enum rather than a per-requirement
 // column.
-export type EnrollmentOnboardingItemStatus = "pending" | "sent" | "done";
+// "retired" is a requirement that stopped applying when the client changed
+// programmes (20260926010000). It is history: it never counts toward
+// completion and never surfaces as work, and it is never deleted.
+export type EnrollmentOnboardingItemStatus =
+  | "pending"
+  | "sent"
+  | "done"
+  | "retired";
 
 // One row per (Enrollment x applicable requirement) — Contracts +
 // Onboarding slice. label/is_required are snapshotted at creation time
@@ -476,6 +483,14 @@ export type EnrollmentOnboardingItem = {
   status: EnrollmentOnboardingItemStatus;
   completed_at?: string | null;
   external_ref?: string | null;
+  // Withdrawn when the client changed programmes: kept as history, never
+  // counted as work and never deleted (20260926010000).
+  retired_at?: string | null;
+  retired_from_offer_id?: Identifier | null;
+  // Which offer template this row came from. Null on rows created before
+  // programme transfers existed — never inferred from the Opportunity's
+  // current offer, which is the mistake that produced Jenna Smith's state.
+  source_offer_id?: Identifier | null;
   created_at: string;
   updated_at: string;
 } & Pick<RaRecord, "id">;
@@ -1241,4 +1256,22 @@ export type ApplicationResponse = {
   answered: boolean;
   source_snapshot_id?: Identifier | null;
   materialized_at: string;
+} & Pick<RaRecord, "id">;
+
+// The append-only history of a client changing programmes (20260926010000).
+// Narrow and per-fact, the same shape as DealStageEvent and the outcome
+// events — before this there was no record of an offer change at all, which
+// is why Jenna Smith's move from Growing Yourself Up to The Living Example
+// left no trace but a stale checklist.
+export type DealOfferEvent = {
+  opportunity_id: Identifier;
+  // The Enrollment that moved. Null for a pre-Enrollment change, which stays
+  // an ordinary edit and writes no event.
+  enrollment_id?: Identifier | null;
+  from_offer_id: Identifier;
+  to_offer_id: Identifier;
+  occurred_at: string;
+  recorded_at: string;
+  source: "app" | "migration" | "reconstructed";
+  note?: string | null;
 } & Pick<RaRecord, "id">;
