@@ -23,6 +23,9 @@ const code = (source: string) =>
 const MIGRATION = read(
   "supabase/migrations/20260926020000_onboarding_can_be_reconciled_to_its_programme.sql",
 );
+const TRACKING_GUARD = read(
+  "supabase/migrations/20260926030000_onboarding_outside_tracking_is_not_a_repair.sql",
+);
 const RECONCILE = read(
   "src/components/atomic-crm/enrollments/reconcileClientOnboarding.ts",
 );
@@ -191,7 +194,10 @@ describe("staleness is one question, asked the same way twice", () => {
   });
 
   test("the action does not offer a repair to a client who needs none", () => {
-    expect(code(ACTION)).toMatch(/if \(onboardingMatchesOffer\(/);
+    // Through the eligibility layer, which asks about tracking first — the
+    // narrow match predicate alone would call a legacy client stale.
+    expect(code(ACTION)).toMatch(/onboardingRepairState\(\{/);
+    expect(code(ACTION)).toMatch(/!== "stale"/);
     expect(code(ACTION)).toMatch(/TERMINAL\.includes\(enrollment\.status\)/);
   });
 });
@@ -271,5 +277,77 @@ describe("migration ordering", () => {
       "20260926010000_a_client_can_change_programme.sql",
     );
     expect(mine < "20260926090000").toBe(true);
+  });
+});
+
+describe("onboarding outside tracking is never a repair candidate", () => {
+  test("the authority refuses it, before it asks about alignment", () => {
+    const fn = code(
+      sqlFunction(TRACKING_GUARD, "reconcile_enrollment_to_current_offer"),
+    );
+    expect(fn).toMatch(
+      /onboarding_tracking is distinct from 'tracked'[\s\S]*?'status', 'onboarding-not-tracked'/,
+    );
+    // Checked BEFORE the alignment question, so a legacy client is never
+    // described as aligned — their checklist genuinely does not match.
+    const guardAt = fn.indexOf(
+      "onboarding_tracking is distinct from 'tracked'",
+    );
+    const alignedAt = fn.indexOf("enrollment_onboarding_matches_offer(");
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(alignedAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(alignedAt);
+  });
+
+  test("the refusal returns before anything can be written", () => {
+    const fn = code(
+      sqlFunction(TRACKING_GUARD, "reconcile_enrollment_to_current_offer"),
+    );
+    const guardAt = fn.indexOf(
+      "onboarding_tracking is distinct from 'tracked'",
+    );
+    const head = fn.slice(0, guardAt);
+    // Nothing above the guard writes: the projection call and the event insert
+    // both come later.
+    expect(head).not.toMatch(/apply_enrollment_onboarding_projection/);
+    expect(head).not.toMatch(/insert into deal_offer_events/);
+  });
+
+  test("the match predicate keeps its narrow meaning", () => {
+    // Deliberately NOT taught about tracking: it answers "do these keys equal
+    // that template's?", so nothing downstream can read "untracked" as
+    // "aligned tracked onboarding".
+    const matches = code(
+      TRACKING_GUARD.slice(
+        TRACKING_GUARD.indexOf(
+          "function public.enrollment_onboarding_matches_offer(",
+        ),
+      ),
+    );
+    expect(matches).not.toMatch(/onboarding_tracking/);
+    const ts = code(RECONCILE);
+    const predicate = ts.slice(
+      ts.indexOf("export const onboardingMatchesOffer"),
+      ts.indexOf("export const onboardingRepairState"),
+    );
+    expect(predicate).not.toMatch(/tracking/);
+    // Eligibility is its own layer, and it is what the card asks.
+    expect(ts).toMatch(/export const onboardingRepairState/);
+    expect(ts).toMatch(/if \(tracking !== "tracked"\) return "not-tracked";/);
+    expect(code(ACTION)).toMatch(/onboardingRepairState\(/);
+    expect(code(ACTION)).not.toMatch(/onboardingMatchesOffer\(/);
+  });
+
+  test("the mirror refuses in the same order as the function", () => {
+    const ts = code(RECONCILE);
+    const trackingAt = ts.indexOf(
+      'enrollment.onboarding_tracking !== "tracked"',
+    );
+    const alignedAt = ts.indexOf(
+      "if (onboardingMatchesOffer(items, templates))",
+    );
+    expect(trackingAt).toBeGreaterThan(-1);
+    expect(alignedAt).toBeGreaterThan(-1);
+    expect(trackingAt).toBeLessThan(alignedAt);
   });
 });

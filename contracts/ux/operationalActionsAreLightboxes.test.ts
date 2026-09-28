@@ -105,8 +105,10 @@ describe("a stale onboarding says so in a card, and asks in a modal", () => {
 
   test("it renders nothing at all for an aligned or finished client", () => {
     const repair = code(REPAIR);
+    // Eligibility, not bare equivalence: a client whose onboarding is
+    // deliberately untracked is not a repair candidate.
     expect(repair).toMatch(
-      /if \(onboardingMatchesOffer\([\s\S]{0,60}\)\) return null;/,
+      /onboardingRepairState\(\{[\s\S]{0,160}\}\) !== "stale"/,
     );
     expect(repair).toMatch(
       /TERMINAL\.includes\(enrollment\.status\)\) return null;/,

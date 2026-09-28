@@ -9,16 +9,18 @@ transfer checkpoint. **The repository, the database and production are the
 authority. Where this prose disagrees with them, they win — say so rather than
 quietly picking one.**
 
-**Where things stand right now (2026-09-27).** Cross-offer transfer AND the
-reconciliation repair are **live and human-accepted**: `origin/main` is at
-`d4564420`, production holds 142 migrations, and **Jenna Smith was repaired in
-production through the UI** (§8b-next). One commit sits locally and is **not
-pushed** — the operational lightbox UX pass (§8b-ux). The Application Form
-Builder is restored to the working tree, still uncommitted.
+**Where things stand right now (2026-09-27).** `origin/main` is at
+`1c1ef676`, production holds 142 migrations, and **Jenna Smith's repair is
+human-accepted** (§8b-next). The lightbox UX pass is deployed, with **one
+branch human-accepted and two still open** (§8b-ux). One commit sits locally and
+is **not pushed**: the `legacy_untracked` fix that deployment verification
+found (§8b-ux-fix). The Application Form Builder is restored to the working
+tree, still uncommitted.
 
-**The next action is Leif's: push the lightbox commit.** Then the queue is the
-client start-week / capacity UX, Kit, and only then the builder. The Kit
-requirement that Applications cannot be called finished without is §8b-kit.
+**The next action is Leif's: push the legacy_untracked fix — and until it is
+deployed, do not click Repair on any client.** Then the queue is the client
+start-week / capacity UX, Kit, and only then the builder. The Kit requirement
+that Applications cannot be called finished without is §8b-kit.
 
 ---
 
@@ -1234,7 +1236,8 @@ commits and **143** in the working tree while the builder sits there.
 
 **Queue after Jenna's production acceptance, owner-set 2026-09-27:**
 
-1. ~~Dashboard sales-call resolution modal/lightbox~~ — done, §8b-ux
+1. **Finish the operational UX acceptance** — the `legacy_untracked` fix
+   (§8b-ux-fix) plus the two open acceptances in §8b-ux
 2. **Client start-week / capacity UX** — §8b-startweek
 3. **Kit / Applications integration** — §8b-kit, a *completion requirement* for
    Applications, not optional polish
@@ -1338,9 +1341,9 @@ honestly mean (§8, and the derived-schedule functions in §4).
 page, through the same lightbox, must remain possible. Setting it during a sale
 is a prompt, not a one-way door.
 
-## 8b-ux. OPERATIONAL LIGHTBOX UX — COMMITTED LOCALLY 2026-09-27
+## 8b-ux. OPERATIONAL LIGHTBOX UX — DEPLOYED, PARTLY ACCEPTED
 
-**Not pushed.** The durable rule is now in
+**Deployed 2026-09-27 at `1c1ef676`.** The durable rule is now in
 [AGENTS.md](AGENTS.md) → *Operational UX conventions*: a bounded operational
 action asked from a Dashboard / Client / Opportunity / Application context opens
 as a **modal over that page**, the full-page route survives as a **thin wrapper
@@ -1361,6 +1364,22 @@ Two workflows brought into line with it:
   changes, so a requirement called the same thing in both programmes no longer
   claims to be updated.
 
+**Human acceptance, 2026-09-27 — one branch accepted, two open.**
+
+- **ACCEPTED: the modal over the page, and the already-attached state.** Leif
+  clicked Aurora Basso's completed matching Task; the modal opened over the
+  Dashboard, the Dashboard stayed put, and it read "This booking is already
+  attached to an Opportunity." with **View the Opportunity**. No navigation, no
+  write.
+- **OPEN: resolving a genuinely unmatched booking from the Dashboard.**
+  Production has **no open matching Task** (8 exist, all closed; 28 unmatched
+  bookings are historical and surface nothing). This waits on the next real
+  Acuity booking that cannot be matched to exactly one active Opportunity.
+- **OPEN: the repair-onboarding card and modal.** Deployed, but there is no
+  legitimately stale tracked client in production to try it on, and the
+  `legacy_untracked` defect (§8b-ux-fix) must ship first. **Do not click Repair
+  on any client until that is deployed.**
+
 **The Aurora audit found no invariant defect.** Her call 509 is attached to
 Opportunity 292 and its matching Task is **closed**; across all of production
 there are **8** matching Tasks and **0 open**, 0 open-while-attached, and 0 with
@@ -1369,6 +1388,45 @@ state, which is now a modal. One latent gap is worth knowing: the
 `complete_sales_call_matching_task` trigger keys on `sales_call_id = new.id`,
 so a Task with a null `sales_call_id` would not be closed by it — there are
 none, and every creator sets the column, so it is history-only.
+
+## 8b-ux-fix. ONBOARDING OUTSIDE TRACKING IS NOT A REPAIR — COMMITTED LOCALLY 2026-09-27
+
+**Not pushed.** Found by verifying the deployed repair UI against real
+production data rather than by a test: it offered **"Onboarding needs repair" to
+20 real clients** — Daniel Alexander, Sarah Monast, Pete Bassett, Gina
+McNamara, Heidi Elias and 15 more — whose `onboarding_tracking` is
+`legacy_untracked`. Clicking it would have seeded four requirements and four
+pending Tasks for people who finished onboarding before the CRM modelled it.
+
+**The invariant.** `legacy_untracked` is a statement, not a gap: this client's
+onboarding was deliberately never tracked here, so the absence of a checklist is
+the recorded fact. Every other consumer already said so —
+`computeOnboardingProgress` returns `isLegacyUntracked` with
+**`isMissingChecklist: false`**, "legacy onboarding makes no claim either
+way". Repair eligibility now says the same thing: **a repair requires
+`onboarding_tracking = 'tracked'`**, and the database refuses anything else
+independently of the UI (`onboarding-not-tracked`, writing nothing).
+
+**The semantic boundary, chosen deliberately.** `enrollment_onboarding_matches_offer()`
+and `onboardingMatchesOffer()` keep their narrow meaning — do the live
+requirement keys equal the programme's active template keys? For a legacy client
+the honest answer is **no**, and teaching them to answer *yes* would leave every
+future caller reading "untracked" as "aligned tracked onboarding". Eligibility is
+therefore a separate layer, `onboardingRepairState()` →
+`not-tracked | aligned | stale`, and tracking is checked **first**, in both the
+SQL and the mirror, so a legacy client is never described as aligned.
+
+Migration `20260926030000_onboarding_outside_tracking_is_not_a_repair.sql`
+(deterministic; the builder's `20260926090000` slot untouched). Its self-proof
+covers: tracked+stale still repairs to 1 of 4 · tracked+aligned still answers
+`already-aligned` · legacy with no checklist refused · legacy with a partial
+historical checklist refused · both refusals byte-compared to **zero writes** ·
+the transfer unchanged · the ordinary offer-edit guard unchanged.
+
+**Read-only production proof:** under the new rule **0 of 28** live clients are
+repair candidates — 20 legacy that would have been offered it before, now 0, and
+all 7 tracked clients aligned. Jenna stays `tracked` + aligned, her accepted
+repair untouched.
 
 ## 8b-kit. KIT / CONVERTKIT — APPLICATIONS ARE NOT COMPLETE WITHOUT IT
 
@@ -1690,14 +1748,15 @@ The next Claude session should, in order:
 8. **Surface disagreements rather than silently resolving them.**
 9. **STOP before implementation and report readiness.**
 
-**The exact next action as of 2026-09-27:** Jenna is repaired and the slice is
-sealed (§8b-next). `origin/main` = `d4564420`, production at 142 migrations.
-Push the local lightbox UX commit (§8b-ux), confirm Vercel actually deployed it
-(a green Actions run does not mean the frontend shipped — §3), and try the two
-touched workflows in production: a sales-call matching Task should open over the
-Dashboard rather than navigating, and a client with aligned onboarding should
-show no repair card. Then the queue is the client start-week / capacity UX, Kit,
-and only then the Application Form Builder.
+**The exact next action as of 2026-09-27:** `origin/main` = `1c1ef676`,
+production at 142 migrations, Jenna sealed, the sales-call modal accepted for the
+already-attached branch. Push the local `legacy_untracked` fix (§8b-ux-fix) and
+confirm production reaches **143** migrations; **until then do not click Repair
+on any client**, because 20 legacy clients are currently offered it wrongly.
+Two acceptances stay open and neither can be forced: an unmatched Acuity booking
+for the Dashboard resolution branch, and a genuinely stale tracked client for the
+repair card. Then the queue is the client start-week / capacity UX, Kit, and only
+then the Application Form Builder.
 
 And before calling anything finished, re-read §2's acceptance loop. **Leif's
 try-run is a step in the work, not a formality after it** — schedule it while

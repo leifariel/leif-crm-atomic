@@ -53,6 +53,9 @@ export type ReconcileClientOnboardingResult =
   | { status: "ambiguous-enrollment" }
   // A finished client's record is history and is not reopened.
   | { status: "terminal-enrollment"; enrollmentStatus: string }
+  // This client's onboarding is deliberately outside tracking, so there is
+  // nothing for it to be reconciled to.
+  | { status: "onboarding-not-tracked"; tracking: string }
   // "It came from the programme it is already on" says nothing.
   | { status: "same-offer" }
   // Requirements from another programme are present and nobody has named it.
@@ -85,6 +88,40 @@ export const onboardingMatchesOffer = (
     if (!templateKeys.has(key)) return false;
   }
   return true;
+};
+
+// Whether a repair is even a question for this client, which is not the same
+// question as whether their checklist matches the template.
+//
+// 'legacy_untracked' means their onboarding was deliberately not modelled here
+// (Slice 2): they were already working with Leif before the CRM tracked it, and
+// the absence of a checklist is the recorded fact rather than a gap.
+// computeOnboardingProgress already says so — isLegacyUntracked true,
+// isMissingChecklist FALSE — and this says the same thing about repairing.
+//
+// onboardingMatchesOffer() keeps its own narrow meaning on purpose: for a
+// legacy client the honest answer to "do these keys equal that template's?" is
+// no, and making it answer yes would leave every future caller reading
+// "untracked" as "aligned tracked onboarding". So eligibility is a separate
+// layer, and it is checked FIRST — a legacy client is never described as
+// aligned, only as not tracked.
+export type OnboardingRepairState = "not-tracked" | "aligned" | "stale";
+
+export const onboardingRepairState = ({
+  tracking,
+  items,
+  templates,
+}: {
+  tracking: string | null | undefined;
+  items: EnrollmentOnboardingItem[];
+  templates: OnboardingRequirementTemplate[];
+}): OnboardingRepairState => {
+  // Anything that is not explicitly 'tracked' is not repaired by this path. A
+  // write authority refuses what it cannot be sure about; assessOnboarding's
+  // opposite default (unknown reads as tracked) is right for SHOWING a missing
+  // checklist and wrong for seeding one.
+  if (tracking !== "tracked") return "not-tracked";
+  return onboardingMatchesOffer(items, templates) ? "aligned" : "stale";
 };
 
 // The live requirements this programme does not have. These are the evidence
@@ -157,6 +194,9 @@ const readResult = (
       enrollmentStatus: String(result.enrollment_status ?? ""),
     };
   }
+  if (status === "onboarding-not-tracked") {
+    return { status, tracking: String(result.onboarding_tracking ?? "") };
+  }
   if (status === "needs-source-offer") {
     return { status, foreignKeys: asKeys(result.foreign_keys) };
   }
@@ -220,6 +260,13 @@ const reconcileMirror = async (
     return {
       status: "terminal-enrollment",
       enrollmentStatus: enrollment.status,
+    };
+  }
+
+  if (enrollment.onboarding_tracking !== "tracked") {
+    return {
+      status: "onboarding-not-tracked",
+      tracking: String(enrollment.onboarding_tracking ?? ""),
     };
   }
 

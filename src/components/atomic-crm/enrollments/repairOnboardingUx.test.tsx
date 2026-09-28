@@ -144,8 +144,16 @@ const tasksFor = (items: EnrollmentOnboardingItem[]): Task[] =>
       }) as unknown as Task,
   );
 
-const buildCrm = ({ stale }: { stale: boolean }) => {
-  const items = itemsFor(stale ? 2 : 1);
+const buildCrm = ({
+  stale,
+  tracking = "tracked",
+  items: itemsOverride,
+}: {
+  stale: boolean;
+  tracking?: string;
+  items?: EnrollmentOnboardingItem[];
+}) => {
+  const items = itemsOverride ?? itemsFor(stale ? 2 : 1);
   const dataProvider = createDataProvider({
     db: createCrmDb({
       contacts: [
@@ -178,7 +186,7 @@ const buildCrm = ({ stale }: { stale: boolean }) => {
           id: 93,
           opportunity_id: 188,
           status: "onboarding",
-          onboarding_tracking: "tracked",
+          onboarding_tracking: tracking,
           created_at: "2026-09-26T18:53:34.000Z",
           updated_at: "2026-09-26T18:53:34.000Z",
         } as unknown as Enrollment,
@@ -330,5 +338,64 @@ describe("a client whose onboarding is already their programme's", () => {
     const text = document.body.textContent ?? "";
     expect(text).not.toContain("Onboarding needs repair");
     expect(text).not.toContain("Repair onboarding");
+  });
+});
+
+describe("a client whose onboarding was never tracked here", () => {
+  // The twenty real clients this protects: onboarded before the CRM modelled
+  // onboarding, no checklist because there is nothing to track. Telling them
+  // their onboarding needs repair would be a false alarm on every one of them,
+  // and repairing it would invent four requirements and four Tasks for work
+  // that finished years ago.
+  it("shows no card when they have no checklist at all", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm({
+      stale: true,
+      tracking: "legacy_untracked",
+      items: [],
+    });
+    const screen = await render(element);
+
+    await expect
+      .element(screen.getByText("jenna smith", { exact: false }).first())
+      .toBeVisible();
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain("Onboarding needs repair");
+    expect(text).not.toContain("Repair onboarding");
+  });
+
+  it("shows no card when the import left a partial checklist behind", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm({
+      stale: true,
+      tracking: "legacy_untracked",
+      // Whatever happened to survive: one finished requirement, GYU's wording.
+      items: itemsFor(2).filter((item) => item.requirement_key === "contract"),
+    });
+    const screen = await render(element);
+
+    await expect
+      .element(screen.getByText("jenna smith", { exact: false }).first())
+      .toBeVisible();
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain("Onboarding needs repair");
+    expect(text).not.toContain("Repair onboarding");
+  });
+
+  it("keeps saying their onboarding was not tracked, rather than offering a checklist", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm({
+      stale: true,
+      tracking: "legacy_untracked",
+      items: [],
+    });
+    const screen = await render(element);
+
+    // The existing historical treatment, unchanged by this fix.
+    await expect
+      .element(screen.getByText(/not tracked/i).first())
+      .toBeVisible();
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain("Onboarding needs repair");
   });
 });

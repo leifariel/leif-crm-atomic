@@ -13,7 +13,7 @@ import {
 import { describePlan } from "./transferClientOffer";
 import {
   foreignRequirementKeys,
-  onboardingMatchesOffer,
+  onboardingRepairState,
   proposePreviousOffer,
   reconcileClientOnboarding,
 } from "./reconcileClientOnboarding";
@@ -88,7 +88,20 @@ export const RepairOnboardingAction = ({
   // loaded yet" look identical, and only one of them is a mismatch.
   if (currentTemplates.length === 0) return null;
   if (TERMINAL.includes(enrollment.status)) return null;
-  if (onboardingMatchesOffer(items, currentTemplates)) return null;
+  // Not every unmatched checklist is a repair. A client whose onboarding is
+  // deliberately outside tracking ('legacy_untracked' — they were working with
+  // Leif before the CRM modelled onboarding) has no checklist because there is
+  // nothing to track, and telling them their onboarding "needs repair" would be
+  // a false alarm on every historical client. The database refuses it too.
+  if (
+    onboardingRepairState({
+      tracking: enrollment.onboarding_tracking,
+      items,
+      templates: currentTemplates,
+    }) !== "stale"
+  ) {
+    return null;
+  }
 
   const currentName =
     (offers ?? []).find((offer) => String(offer.id) === String(deal.offer_id))
@@ -174,6 +187,10 @@ export const RepairOnboardingAction = ({
           `That programme does not include ${result.unmatchedKeys.join(", ")}, so the setup did not come from it.`,
           { type: "warning" },
         );
+      } else if (result.status === "onboarding-not-tracked") {
+        notify("This client's onboarding is not tracked in the CRM.", {
+          type: "warning",
+        });
       } else if (result.status === "terminal-enrollment") {
         notify("This client has finished — their record stays as it is.", {
           type: "warning",

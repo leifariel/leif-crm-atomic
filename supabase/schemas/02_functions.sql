@@ -3639,6 +3639,23 @@ begin
     );
   end if;
 
+  -- Onboarding this client's programme does not track. 'legacy_untracked' is a
+  -- deliberate statement about a client who was onboarded before the CRM
+  -- modelled it (Slice 2): the absence of a checklist is the recorded fact, not
+  -- a defect, and seeding one now would invent four requirements and four Tasks
+  -- for work that finished long ago. Refused here as well as in the UI, because
+  -- an authority that depends on a screen not offering a button is not an
+  -- authority. Checked BEFORE alignment, so this never answers
+  -- 'already-aligned': their checklist genuinely does not match the template,
+  -- and that is not the question being asked about them.
+  if v_enrollment.onboarding_tracking is distinct from 'tracked' then
+    return jsonb_build_object(
+      'status', 'onboarding-not-tracked',
+      'enrollment_id', v_enrollment.id,
+      'onboarding_tracking', v_enrollment.onboarding_tracking
+    );
+  end if;
+
   if public.enrollment_onboarding_matches_offer(v_enrollment.id, v_deal.offer_id) then
     -- Nothing is stale. A second click, a stale tab, or a client who was
     -- always aligned: all three deserve the same quiet answer.

@@ -5,6 +5,7 @@ import { buildContact, createCrmDb } from "@/test/StoryWrapper";
 import {
   foreignRequirementKeys,
   onboardingMatchesOffer,
+  onboardingRepairState,
   proposePreviousOffer,
   reconcileClientOnboarding,
 } from "./reconcileClientOnboarding";
@@ -193,8 +194,8 @@ const staleItems = (): EnrollmentOnboardingItem[] =>
     updated_at: "2026-09-26T18:53:34.000Z",
   })) as unknown as EnrollmentOnboardingItem[];
 
-const staleTasks = (): Task[] =>
-  staleItems().map(
+const tasksForItems = (items: EnrollmentOnboardingItem[]): Task[] =>
+  items.map(
     (item, i) =>
       ({
         id: 278 + i,
@@ -214,10 +215,12 @@ const buildJenna = ({
   enrollmentStatus = "onboarding",
   items = staleItems(),
   withEnrollment = true,
+  tracking = "tracked",
 }: {
   enrollmentStatus?: string;
   items?: EnrollmentOnboardingItem[];
   withEnrollment?: boolean;
+  tracking?: string;
 } = {}) =>
   createDataProvider({
     db: createCrmDb({
@@ -255,14 +258,14 @@ const buildJenna = ({
               id: 93,
               opportunity_id: 188,
               status: enrollmentStatus,
-              onboarding_tracking: "tracked",
+              onboarding_tracking: tracking,
               created_at: "2026-09-26T18:53:34.000Z",
               updated_at: "2026-09-26T18:53:34.000Z",
             } as unknown as Enrollment,
           ]
         : [],
       enrollment_onboarding_items: withEnrollment ? items : [],
-      tasks: withEnrollment ? staleTasks() : [],
+      tasks: withEnrollment ? tasksForItems(items) : [],
     } as never),
     silent: true,
     latency: 0,
@@ -648,5 +651,104 @@ describe("a template that merely gained a requirement", () => {
       fromOfferId: 2,
     });
     expect(result.status).toBe("source-offer-not-applicable");
+  });
+});
+
+describe("onboarding that was never tracked here", () => {
+  // Twenty real clients: working with Leif before the CRM modelled onboarding,
+  // so no checklist, deliberately. "Does this match the template?" and "should
+  // this be repaired?" are different questions, and only the second one is
+  // about them.
+  it("keeps the match predicate about the checklist, and answers eligibility separately", () => {
+    // Strictly about equivalence: an empty checklist does NOT match a
+    // four-requirement template, and saying otherwise would leave every future
+    // caller reading "untracked" as "aligned".
+    expect(onboardingMatchesOffer([], templatesFor(1))).toBe(false);
+
+    // Eligibility is its own answer, and it is not "aligned".
+    expect(
+      onboardingRepairState({
+        tracking: "legacy_untracked",
+        items: [],
+        templates: templatesFor(1),
+      }),
+    ).toBe("not-tracked");
+    expect(
+      onboardingRepairState({
+        tracking: "tracked",
+        items: staleItems(),
+        templates: templatesFor(1),
+      }),
+    ).toBe("stale");
+    expect(
+      onboardingRepairState({
+        tracking: "tracked",
+        items: [],
+        templates: templatesFor(1),
+      }),
+    ).toBe("stale");
+  });
+
+  it("treats an unknown tracking value as not repairable", () => {
+    // A write authority refuses what it cannot be sure of; assessOnboarding's
+    // opposite default is right for SHOWING a missing checklist.
+    expect(
+      onboardingRepairState({
+        tracking: null,
+        items: staleItems(),
+        templates: templatesFor(1),
+      }),
+    ).toBe("not-tracked");
+  });
+
+  it("refuses to reconcile one, and writes nothing", async () => {
+    const dp = buildJenna({ tracking: "legacy_untracked", items: [] });
+    const before = await itemsOf(dp);
+    const result = await reconcileClientOnboarding(dp, {
+      opportunityId: 188,
+      fromOfferId: 2,
+    });
+    expect(result.status).toBe("onboarding-not-tracked");
+
+    expect(await itemsOf(dp)).toHaveLength(before.length);
+    expect(await eventsOf(dp)).toHaveLength(0);
+    const { data: deal } = await dp.getOne<Deal>("deals", { id: 188 });
+    expect(deal.offer_id).toBe(1);
+  });
+
+  it("refuses one with a partial historical checklist too", async () => {
+    const dp = buildJenna({
+      tracking: "legacy_untracked",
+      items: staleItems().filter((item) => item.requirement_key === "contract"),
+    });
+    const result = await reconcileClientOnboarding(dp, {
+      opportunityId: 188,
+      fromOfferId: 2,
+    });
+    expect(result.status).toBe("onboarding-not-tracked");
+    expect(await itemsOf(dp)).toHaveLength(1);
+    expect(await eventsOf(dp)).toHaveLength(0);
+  });
+
+  it("stays a refusal when asked twice, still with no writes", async () => {
+    const dp = buildJenna({ tracking: "legacy_untracked", items: [] });
+    await reconcileClientOnboarding(dp, { opportunityId: 188, fromOfferId: 2 });
+    const second = await reconcileClientOnboarding(dp, {
+      opportunityId: 188,
+      fromOfferId: null,
+    });
+    expect(second.status).toBe("onboarding-not-tracked");
+    expect(await itemsOf(dp)).toHaveLength(0);
+    expect(await eventsOf(dp)).toHaveLength(0);
+    expect(await tasksOf(dp)).toHaveLength(0);
+  });
+
+  it("still repairs a tracked client, unchanged", async () => {
+    const dp = buildJenna();
+    const result = await reconcileClientOnboarding(dp, {
+      opportunityId: 188,
+      fromOfferId: 2,
+    });
+    expect(result.status).toBe("reconciled");
   });
 });
