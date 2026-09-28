@@ -238,3 +238,100 @@ describe("a committed client gives their slot back", () => {
     expect(capacity.needsCalendar).toHaveLength(1);
   });
 });
+
+describe("a client nobody has given a start week", () => {
+  // Two questions that used to be one. "Year Tracking cannot reach their
+  // twelfth week" and "nobody said when they begin" both left the end
+  // unknown, so the page blamed the calendar for a missing decision and sent
+  // Leif to sync a calendar that was already long enough.
+  test("is its own answer, not a calendar problem", () => {
+    const capacity = computeIndividualCapacity(
+      [
+        enrollment({ name: "Has a week" }),
+        enrollment({
+          name: "No week",
+          start_date: null,
+          start_date_source: null,
+        }),
+      ],
+      MAX,
+      CALENDAR,
+      NOW,
+    );
+
+    expect(capacity.missingStartWeek.map((h) => h.name)).toEqual(["No week"]);
+    // Still unknown-ended, because it is — but no longer described as a
+    // calendar that runs out.
+    expect(capacity.unknownEnd.map((h) => h.name)).toContain("No week");
+    expect(capacity.needsCalendar.map((h) => h.name)).not.toContain("No week");
+    // And not confused with a date Leif has not confirmed: they have no
+    // date at all.
+    expect(capacity.unconfirmedStartWeek.map((h) => h.name)).not.toContain(
+      "No week",
+    );
+  });
+
+  test("still holds a place, because not knowing cannot free capacity", () => {
+    const withWeek = computeIndividualCapacity(
+      [enrollment({ name: "Has a week" })],
+      MAX,
+      CALENDAR,
+      NOW,
+    );
+    const withoutWeek = computeIndividualCapacity(
+      [
+        enrollment({ name: "Has a week" }),
+        enrollment({
+          name: "No week",
+          start_date: null,
+          start_date_source: null,
+        }),
+      ],
+      MAX,
+      CALENDAR,
+      NOW,
+    );
+
+    // They count as occupying today, exactly as classifyEnrollment says.
+    expect(withoutWeek.active).toBe(withWeek.active + 1);
+    // And their container never ends, so any openings number is a floor.
+    const holder = withoutWeek.missingStartWeek[0]!;
+    expect(holder.end).toBeNull();
+  });
+
+  test("a date Leif has not confirmed stays a different question", () => {
+    const capacity = computeIndividualCapacity(
+      [
+        enrollment({
+          name: "Inferred",
+          start_date: "2026-09-07",
+          start_date_source: "session_derived",
+        }),
+      ],
+      MAX,
+      CALENDAR,
+      NOW,
+    );
+    expect(capacity.unconfirmedStartWeek.map((h) => h.name)).toEqual([
+      "Inferred",
+    ]);
+    expect(capacity.missingStartWeek).toHaveLength(0);
+  });
+
+  test("the future-openings view carries the same distinction", () => {
+    const capacity = computeIndividualCapacity(
+      [
+        enrollment({
+          name: "No week",
+          start_date: null,
+          start_date_source: null,
+        }),
+      ],
+      MAX,
+      CALENDAR,
+      NOW,
+    );
+    const future = computeFutureOpenings(capacity, NOW);
+    expect(future.missingStartWeek.map((h) => h.name)).toEqual(["No week"]);
+  });
+});

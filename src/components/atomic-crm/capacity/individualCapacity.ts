@@ -46,8 +46,20 @@ export type IndividualCapacity = {
   // The subset whose end is unknown specifically because the calendar runs
   // out — the ones a few more `1:1s` weeks would answer.
   needsCalendar: SlotHolder[];
-  // Holders whose Start Week Leif has not stated.
+  // Holders with a Start Week that Leif did not state — a date inferred
+  // from a booked session, or one with no traceable basis. They have a
+  // date; it is the date that is in question.
   unconfirmedStartWeek: SlotHolder[];
+  // Holders with NO Start Week at all, which is a different question with a
+  // different fix: not "is this date right?" but "when does this person
+  // begin?". They were previously indistinguishable inside unknownEnd,
+  // whose copy blames the calendar — so a client nobody had given a start
+  // date was reported as a client Year Tracking could not reach, which sent
+  // Leif to sync a calendar that was already long enough.
+  //
+  // They still hold a slot for the whole horizon, exactly as before: not
+  // knowing when somebody starts cannot free capacity.
+  missingStartWeek: SlotHolder[];
   events: SlotEvent[];
   // The last day Year Tracking reaches. Beyond it the CRM knows nothing,
   // and says so rather than projecting into an empty calendar.
@@ -151,8 +163,9 @@ export const computeIndividualCapacity = (
       (holder) => holder.end?.status === "incomplete",
     ),
     unconfirmedStartWeek: everyone.filter(
-      (holder) => !holder.startWeekConfirmed,
+      (holder) => holder.startDate != null && !holder.startWeekConfirmed,
     ),
+    missingStartWeek: everyone.filter((holder) => holder.startDate == null),
     events,
     calendarHorizon: sorted.length ? sorted[sorted.length - 1]!.end : null,
     today,
@@ -229,6 +242,9 @@ export type FutureOpenings = {
   unknownEnd: SlotHolder[];
   needsCalendar: SlotHolder[];
   unconfirmedStartWeek: SlotHolder[];
+  // Holders with no Start Week at all — the numbers above are a floor
+  // until Leif says when they begin.
+  missingStartWeek: SlotHolder[];
   calendarHorizon: string | null;
 };
 
@@ -248,6 +264,7 @@ export const computeFutureOpenings = (
     unknownEnd: capacity.unknownEnd,
     needsCalendar: capacity.needsCalendar,
     unconfirmedStartWeek: capacity.unconfirmedStartWeek,
+    missingStartWeek: capacity.missingStartWeek,
     calendarHorizon: capacity.calendarHorizon,
   };
   if (capacity.max == null) {

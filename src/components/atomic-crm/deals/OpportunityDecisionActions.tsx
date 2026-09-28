@@ -18,6 +18,8 @@ import {
 import type { Deal } from "../types";
 import { isAtDecision } from "./recordOpportunityDecision";
 import { recordYes } from "./recordSalesDecision";
+import { setStartWeekOnAcceptance } from "./setStartWeekOnAcceptance";
+import { useIndividualOffer } from "./useIndividualOffer";
 import { removeFromPipeline } from "./removeFromPipeline";
 import {
   canRemoveFromPipeline,
@@ -99,8 +101,14 @@ const YesNoActions = ({ deal }: { deal: Deal }) => {
   const [busy, setBusy] = useState(false);
   const [noOpen, setNoOpen] = useState(false);
   const [ghostedOpen, setGhostedOpen] = useState(false);
+  // An individual programme has no published start to inherit — a group
+  // round does, from the Cohort Leif created — so this is the only case
+  // where accepting a sale leaves a question nobody has answered.
+  const individualOffer = useIndividualOffer(deal);
+  const [startWeekOpen, setStartWeekOpen] = useState(false);
+  const [startWeek, setStartWeek] = useState("");
 
-  const yes = async () => {
+  const yes = async (startWeekToSet: string | null) => {
     setBusy(true);
     try {
       const result = await recordYes(dataProvider, { opportunityId: deal.id });
@@ -120,13 +128,23 @@ const YesNoActions = ({ deal }: { deal: Deal }) => {
       } else {
         // Won is a sales fact. Payment and onboarding are their own
         // dimensions and are shown separately, never implied by this.
+        // The sale is recorded first and on its own. The Start Week is a
+        // separate statement about the Enrollment the database has just
+        // created; if it fails, the sale still stands and the client's page
+        // says the week is not set.
+        const started = await setStartWeekOnAcceptance(dataProvider, {
+          opportunityId: deal.id,
+          startWeek: startWeekToSet,
+        });
         notify(
-          "Recorded as Won. Payment and onboarding are tracked separately.",
-          {
-            type: "info",
-          },
+          started.status === "set"
+            ? "Recorded as Won, with their start week. Payment and onboarding are tracked separately."
+            : "Recorded as Won. Payment and onboarding are tracked separately.",
+          { type: "info" },
         );
       }
+      setStartWeekOpen(false);
+      setStartWeek("");
       refresh();
     } catch {
       notify("ra.notification.http_error", { type: "error" });
@@ -137,6 +155,56 @@ const YesNoActions = ({ deal }: { deal: Deal }) => {
 
   return (
     <>
+      <Dialog
+        open={startWeekOpen}
+        onOpenChange={(open) => {
+          if (!open && !busy) setStartWeekOpen(false);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>When do they start?</DialogTitle>
+            <DialogDescription>
+              {`${individualOffer?.name ?? "This programme"} counts their place
+              from the week they begin. Nothing works this out on its own — a
+              booking is not a start week.`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <label
+              className="text-sm text-muted-foreground"
+              htmlFor="start-week"
+            >
+              Start week
+            </label>
+            <input
+              id="start-week"
+              type="date"
+              className="border rounded-md px-2 py-1 text-sm"
+              value={startWeek}
+              onChange={(event) => setStartWeek(event.target.value)}
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:justify-start">
+            <Button
+              type="button"
+              onClick={() => yes(startWeek || null)}
+              disabled={busy || !startWeek}
+            >
+              {busy ? "Recording…" : "Record Yes with this start week"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => yes(null)}
+              disabled={busy}
+            >
+              Set later
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Card>
         <CardContent className="flex flex-col gap-3">
           <div>
@@ -144,7 +212,13 @@ const YesNoActions = ({ deal }: { deal: Deal }) => {
             <p className="text-xs text-muted-foreground">What did they say?</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={yes} disabled={busy}>
+            <Button
+              type="button"
+              onClick={() =>
+                individualOffer ? setStartWeekOpen(true) : yes(null)
+              }
+              disabled={busy}
+            >
               Yes
             </Button>
             <Button

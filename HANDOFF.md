@@ -1391,8 +1391,15 @@ none, and every creator sets the column, so it is history-only.
 
 ## 8b-ux-fix. ONBOARDING OUTSIDE TRACKING IS NOT A REPAIR — COMMITTED LOCALLY 2026-09-27
 
-**Not pushed.** Found by verifying the deployed repair UI against real
-production data rather than by a test: it offered **"Onboarding needs repair" to
+**Deployed and HUMAN ACCEPTED 2026-09-27.** Leif checked Daniel Alexander
+and Sarah Monast in production: no "Onboarding needs repair" card, the
+historical onboarding still presented as not tracked, and no checklist or
+Tasks created. Read-only re-check after deployment: **0 of 28** live clients
+are repair candidates (20 legacy that would have been offered it before, and
+all 7 tracked clients aligned).
+
+Found by verifying the deployed repair UI against real production data rather
+than by a test: it offered **"Onboarding needs repair" to
 20 real clients** — Daniel Alexander, Sarah Monast, Pete Bassett, Gina
 McNamara, Heidi Elias and 15 more — whose `onboarding_tracking` is
 `legacy_untracked`. Clicking it would have seeded four requirements and four
@@ -1427,6 +1434,79 @@ the transfer unchanged · the ordinary offer-edit guard unchanged.
 repair candidates — 20 legacy that would have been offered it before, now 0, and
 all 7 tracked clients aligned. Jenna stays `tracked` + aligned, her accepted
 repair untouched.
+
+## 8b-startweek-built. CLIENT START WEEK / CAPACITY UX — COMMITTED LOCALLY 2026-09-28
+
+**Not pushed. Human acceptance still required after deployment.**
+
+### What the audit found, before anything was designed
+
+- **Start Week already has a source of truth**, and it is good:
+  `enrollments.start_date` with `start_date_source` ∈ `owner |
+  session_derived | unknown`, both-or-neither by constraint, where **only
+  `owner` is canonical for capacity** (20260921130000, which found 19 of 22
+  LE start dates back-filled from a booked session and stopped trusting all of
+  them). `ClientEdit`'s transform was already the owner-statement path. This
+  slice adds no column and no second field.
+- **End is an ACTUAL end, not a projection.** The capacity engine says a
+  recorded `end_date` "is somebody's decision and outranks the calendar
+  arithmetic entirely"; `endEnrollment` deliberately does **not** set one
+  ("the date somebody stopped is not the date the CRM was told"); the
+  *projected* end is `computeExpectedEnd()`, derived at read time from Year
+  Tracking and **never stored**. `accept_sale` copies only a Cohort's
+  published `program_end_at`. Production agrees: of 24 LE Enrollments exactly
+  **one** has an end date, and it is `ended`. **No ambiguity, so nothing was
+  changed here** — and nothing derives an end into the column.
+- **A missing Start Week was already conservative, and already mis-labelled.**
+  `slotOccupancy` counts an Enrollment with no start date as **occupied**,
+  and `computeExpectedEnd(null)` returns null, so they hold a slot for the
+  whole horizon — openings can only be a floor, never overstated. But they were
+  folded into `unknownEnd`, whose copy blames the calendar ("Year Tracking
+  doesn't reach their 12th session week"), and `isStartWeekConfirmed` returns
+  **true** for a null date, so they were absent from `unconfirmedStartWeek`
+  too. A client nobody had given a start week to was reported as a calendar
+  problem, sending Leif to sync a calendar that was already long enough.
+
+### What changed
+
+- **`missingStartWeek`** is now its own list on the capacity result, beside
+  `needsCalendar` (the calendar-runs-out subset) and `unconfirmedStartWeek`
+  (a date Leif did not state). The Program page names them separately: *"No
+  start week yet for X — they hold a place until you set one, so these numbers
+  are a minimum."* The arithmetic is unchanged; only the honesty about it is.
+- **Client Edit is a lightbox** (`ClientEditModal`) over the client's own
+  page, with `/enrollments/:id/edit` reduced to a thin wrapper around the same
+  component. Status, Start Week and End, and nothing else.
+- **Sale acceptance asks for the Start Week**, for an individual programme
+  only — a group round already publishes one when Leif creates the Cohort. Yes
+  opens *"When do they start?"* with a date and a **Set later**. The sale is
+  recorded first and on its own; the Start Week is a separate statement about
+  the Enrollment the database has just created, so a failure there leaves the
+  sale standing and the client's page saying the week is unset.
+- **"Set later" writes nothing** — no date, no source, no placeholder. An
+  Enrollment with no `start_date` already says exactly that, and a second
+  field would be a second source of truth for the same fact.
+- **The unresolved work is a card on the client's page**: *"Start week not set
+  — The Living Example openings count this client as taking a place from now
+  on, and can only be a minimum until you set the week they start"*, with **Set
+  start week** opening the same edit modal. A second card, *"Start week needs
+  confirming"*, covers a date the CRM inferred.
+
+**A Needs Attention Task was considered and deliberately not added.**
+`tasks.type` is constrained in SQL, so a new kind needs a migration and an
+entry in the Needs Attention inventory, whose rule is that a system Task means
+a business condition exists elsewhere. The condition here is already visible
+where the decision is made (the acceptance dialog) and where the consequence
+lands (the client page and the Program page). If Leif finds he still misses it,
+a `set_start_week` system Task is the natural next step — recorded here rather
+than guessed at now.
+
+### Production, read-only
+
+Every **live** LE client already has an **owner-stated** Start Week: 19 active
++ 1 onboarding (Jenna, 2026-12-06), all `owner`. The three `session_derived`
+rows and the one with no date are all completed/ended. So **no live capacity
+number changes**, and there is no client to try the unset-week card on today.
 
 ## 8b-kit. KIT / CONVERTKIT — APPLICATIONS ARE NOT COMPLETE WITHOUT IT
 

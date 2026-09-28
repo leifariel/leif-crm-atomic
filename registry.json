@@ -1170,6 +1170,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/enrollments/StartWeekCard.tsx",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/enrollments/RepairOnboardingAction.tsx",
           "type": "registry:component"
         },
@@ -1186,6 +1190,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/enrollments/ClientEditModal.tsx",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/enrollments/ClientEdit.tsx",
           "type": "registry:component"
         },
@@ -1198,11 +1206,19 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/deals/useIndividualOffer.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/deals/syncStripe.ts",
           "type": "registry:component"
         },
         {
           "path": "src/components/atomic-crm/deals/stages.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/deals/setStartWeekOnAcceptance.ts",
           "type": "registry:component"
         },
         {

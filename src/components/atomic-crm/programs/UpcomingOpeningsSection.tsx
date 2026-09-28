@@ -63,7 +63,15 @@ export const UpcomingOpeningsSection = ({
 }) => {
   const translate = useTranslate();
   const [openMonth, setOpenMonth] = useState<MonthAvailability | null>(null);
-  const { unknownEnd, unconfirmedStartWeek, needsCalendar } = futureOpenings;
+  const { unknownEnd, unconfirmedStartWeek, needsCalendar, missingStartWeek } =
+    futureOpenings;
+  // A client nobody has given a start week to is a different question from
+  // one whose twelfth week the calendar cannot reach, and it has a different
+  // fix. Saying "Year Tracking doesn't reach their 12th session week" about
+  // them sends Leif to sync a calendar that is already long enough.
+  const calendarUnknownEnd = unknownEnd.filter(
+    (holder) => holder.startDate != null,
+  );
 
   const weeks = weekCapacities(capacity, now);
   // The calendar's own end, not the end of whatever slice is on screen.
@@ -197,7 +205,19 @@ export const UpcomingOpeningsSection = ({
         </div>
       )}
 
-      {unknownEnd.length > 0 && (
+      {missingStartWeek.length > 0 && (
+        // They hold a slot for the whole horizon, because not knowing when
+        // somebody starts cannot free capacity — so every number above is a
+        // floor until Leif says when they begin.
+        <p className="mt-2 text-xs text-muted-foreground">
+          {translate("crm.programs.openings_missing_start_week", {
+            _: "No start week yet for %{names} — they hold a place until you set one, so these numbers are a minimum.",
+            names: names(missingStartWeek),
+          })}
+        </p>
+      )}
+
+      {calendarUnknownEnd.length > 0 && (
         // Not "no programme length to work one out from" — the 1:1
         // programme has a canonical length and it is twelve sessions. What
         // is missing is calendar, which is a different problem with a
@@ -206,7 +226,7 @@ export const UpcomingOpeningsSection = ({
         <p className="mt-2 text-xs text-muted-foreground">
           {translate("crm.programs.openings_unknown_end", {
             _: "No finish date yet for %{names} — Year Tracking doesn't reach their 12th session week.",
-            names: names(unknownEnd),
+            names: names(calendarUnknownEnd),
           })}
         </p>
       )}

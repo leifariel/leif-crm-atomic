@@ -1011,6 +1011,8 @@ export const englishCrmMessages = {
       // has a canonical length and it is twelve sessions. What is missing
       // is calendar, and the old wording sent Leif looking for the wrong
       // problem.
+      openings_missing_start_week:
+        "No start week yet for %{names} — they hold a place until you set one, so these numbers are a minimum.",
       openings_unknown_end:
         "No finish date yet for %{names} — Year Tracking doesn't reach their 12th session week.",
       unnamed_client: "an unnamed client",

@@ -984,6 +984,8 @@ export const frenchCrmMessages = {
       start_week_unconfirmed: "Semaine de début non confirmée",
       start_week_not_set: "Semaine de début non renseignée",
       opening_starts: "%{names} déjà prévus au démarrage",
+      openings_missing_start_week:
+        "Pas encore de semaine de début pour %{names} — ils occupent une place tant que vous ne l'avez pas définie, donc ces chiffres sont un minimum.",
       openings_unknown_end:
         "Pas encore de date de fin pour %{names} — le suivi annuel n'atteint pas leur 12e semaine de séance.",
       unnamed_client: "un client sans nom",

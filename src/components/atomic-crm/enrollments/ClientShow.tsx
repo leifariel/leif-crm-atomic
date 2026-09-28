@@ -10,7 +10,8 @@ import {
 import type { Identifier } from "ra-core";
 import { Link } from "react-router";
 
-import { EditButton } from "@/components/admin/edit-button";
+import { ClientEditModal } from "./ClientEditModal";
+import { StartWeekCard } from "./StartWeekCard";
 import { Show } from "@/components/admin/show";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,13 +86,14 @@ export const ClientShow = () => (
   //
   // The body's version is the one worth keeping: it is the one that goes
   // somewhere. This drops the plain copy rather than the linked one.
-  <Show actions={<EditButton />} title={false}>
+  <Show actions={false} title={false}>
     <EnrollmentOperationalHome />
   </Show>
 );
 
 const EnrollmentOperationalHome = () => {
   const enrollment = useRecordContext<Enrollment>();
+  const [editing, setEditing] = useState(false);
   const {
     isPending,
     deal,
@@ -223,6 +225,18 @@ const EnrollmentOperationalHome = () => {
             contact_id for a Task to point at. */}
         <div className="ml-auto flex items-center gap-1">
           {contact && <AddTask display="icon" contact={contact} />}
+          {/* Status, start week and end, over this page rather than on a
+              screen of their own (AGENTS.md -> Operational UX conventions).
+              /enrollments/:id/edit still renders the same form for a direct
+              link. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setEditing(true)}
+          >
+            Edit
+          </Button>
           {/* Client Offboarding slice (§5): a consequential lifecycle
               change, so it's a clear, explicit human action — never
               inferred from dates or session counts. Only ever shown for
@@ -264,6 +278,23 @@ const EnrollmentOperationalHome = () => {
           tasks={tasks}
           progress={offboardingProgress}
           collapsed={false}
+        />
+      )}
+
+      {/* The start week, when it is still a question. It sits above the
+          programme actions because it is the one that blocks a capacity
+          answer, and because a client sold today with no start week is
+          exactly the case this card exists to stop from going unnoticed. */}
+      <div className="m-4 flex flex-col gap-3">
+        <StartWeekCard enrollment={enrollment} offer={offer} />
+      </div>
+
+      {editing && (
+        <ClientEditModal
+          enrollmentId={enrollment.id}
+          onOpenChange={(open) => {
+            if (!open) setEditing(false);
+          }}
         />
       )}
 
