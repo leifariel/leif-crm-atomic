@@ -270,3 +270,16 @@ drop trigger if exists on_application_materialize_responses on public.applicatio
 create trigger on_application_materialize_responses
   after insert on public.applications
   for each row execute function public.materialize_native_application_responses();
+
+
+drop trigger if exists on_application_kit_receipt on public.applications;
+create trigger on_application_kit_receipt
+  after insert on public.applications
+  for each row execute function public.enqueue_kit_application_receipt();
+
+drop trigger if exists on_application_kit_decision on public.applications;
+create trigger on_application_kit_decision
+  after update of status on public.applications
+  for each row
+  when (old.status is distinct from new.status)
+  execute function public.enqueue_kit_application_decision();

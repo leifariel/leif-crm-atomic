@@ -522,16 +522,13 @@ classes. **Full record, and the tooling debt carried forward, in §8.**
 
 ## 6. Waiting on Leif — do not guess these
 
-**KIT INTEGRATION IS BLOCKED ON SIX ANSWERS — top of this list, 2026-09-28.**
-The audit is done and the architecture is largely settled (§8b-kit), but
-nothing in the repository, the database, the environment or the deployed
-secrets names a single Kit tag, list, form or credential. Applying a guessed
-tag fires a real automation and emails a real applicant, and **five real
-applicants are pending right now**. The exact inputs needed — the API
-credential, the two receipt tags, the four decision tags, whether Do Not
-Engage should be subscribed at all, whether a decision tag supersedes the
-application tag, and whether the automations key on tags or on a form —
-are written out in full in §8b-kit.
+**KIT — ANSWERED AND BUILT 2026-09-28.** All six questions were answered and
+the integration is built, proved and committed locally (§8b-kit). **One thing
+is still Leif's alone:** the two Needs Higher Care tags exist and the CRM will
+apply them, but **no Kit automation is attached to either yet**, so nothing is
+emailed when they land. Until he writes and attaches those in Kit, Needs
+Higher Care email delivery cannot be accepted — and nothing in this repository
+changes when he does.
 
 
 **Historical payment totals** (each has collected money and no agreed figure;
@@ -1254,11 +1251,16 @@ commits and **143** in the working tree while the builder sits there.
 2. ~~**Client start-week / capacity UX**~~ — **deployed 2026-09-28, edit
    lightbox accepted** (§8b-startweek-built); three branches wait on real
    production events
-3. **Kit / Applications integration** — §8b-kit. **Audited 2026-09-28 and
-   BLOCKED on six answers from Leif** (§6). A *completion requirement* for
-   Applications, not optional polish.
-4. **Resume the Application Form Builder** — §8b-builder
-5. **Gmail** — §9, after the above
+3. ~~**Kit / Applications integration**~~ — §8b-kit. **Built 2026-09-28,
+   committed locally, not pushed.** Acceptance is the next genuine
+   application; Needs Higher Care email delivery stays separately pending on
+   Leif attaching those automations in Kit.
+4. **Adopting a pre-integration applicant into Kit** — not built. The five
+   real applicants who predate the boundary stay outside Kit by design, and
+   the deliberate owner action that would bring one in is the natural next
+   Kit slice.
+5. **Resume the Application Form Builder** — §8b-builder
+6. **Gmail** — §9, after the above
 
 ### A. Jenna Smith — the production acceptance case
 
@@ -1563,173 +1565,255 @@ Every **live** LE client already has an **owner-stated** Start Week: 19 active
 rows and the one with no date are all completed/ended. So **no live capacity
 number changes**, and there is no client to try the unset-week card on today.
 
-## 8b-kit. KIT / CONVERTKIT — AUDITED 2026-09-28, BLOCKED ON LEIF
+## 8b-kit. KIT / CONVERTKIT — BUILT 2026-09-28, NOT PUSHED
 
-**This must not be lost.** Applications are **not** finished work until Kit
-integration exists. Everything built so far (native forms, responses, the
-review queue, the decisions) stops at the CRM's own boundary, and the person
-on the other end still gets their email because **Leif is doing that part by
-hand**: he reviews the application, records the decision in the CRM, adds or
-syncs the person into Kit himself, applies the right existing Kit tag, and
-lets the current emails go out. Anything built here has to replace that
-sequence, not sit beside it.
+**Applications are not finished work until the person reaches Kit.** Until
+now the CRM stopped at its own boundary and Leif did the rest by hand: find or
+add the applicant in Kit, apply the right tag, let his existing automations
+send the email. This slice is that hand-work, made durable.
 
-**Kit is not Gmail, and the two must not be collapsed.** Kit is email-list and
-marketing-automation infrastructure: subscribers, lists, tags, automations.
-The future Gmail integration is individualized operational follow-up with one
-person. Separate integrations, separate jobs.
+**Migration `20260928200000_an_application_reaches_kit.sql`.** Not pushed, not
+deployed, no production row touched.
 
-**The CRM stays the source of truth** for Approved / Needs Higher Care / Not
-Fit / Do Not Engage. Kit is never asked what somebody's status is.
+### The three rules everything else follows from
 
-### AUDIT — what actually exists today (2026-09-28, read-only)
+1. **Kit never holds CRM truth.** The application, the decision, the
+   Opportunity and the review Task commit exactly as they did before. What is
+   added is a row saying "Kit still owes us one tag", written inside the same
+   transaction as the fact that caused it. Kit being down delays an email; it
+   cannot make the CRM look undecided and it cannot fail a submission.
+2. **The CRM applies tags and nothing else.** Subscriber upsert, tag add. It
+   never adds anybody to a Kit form, sequence or automation and never
+   recreates an email. Which tag triggers which email is decided in Kit, by
+   Leif, with no code change here.
+3. **Nothing is backfilled.** The boundary is stamped with `now()` as the
+   migration runs, and the enqueue refuses anything older. The 161
+   `historical_import` rows and the five real `public_form` applicants already
+   in MAIN predate it by construction.
 
-Done before designing anything, as the slice required.
+### Tag mapping — Leif's real tags, and the only ones
 
-**1. How an Application enters the CRM — three origins, and `source` already
-separates them.** `applications.source` is constrained to `public_form |
-historical_import | manual`, and its column comment already states exactly why
-it exists: *"the durable distinction between a live submission that represents
-outstanding work and an imported historical record that represents what
-already happened"*. That is the discriminator a Kit sync must key on, and it
-is already there — no new column is needed to keep history out.
+| Programme | Event | Tag | Id |
+|---|---|---|---|
+| The Living Example (offer 1) | applicant | `MiniDD_Applicant` | 24082722 |
+| | approved | `MiniDD_Approved` | 21784073 |
+| | needs higher care | `MiniDD_NeedsHigherCare` | 24082725 |
+| | not fit | `MiniDD_Denied` | 21784076 |
+| Growing Yourself Up (offer 2) | applicant | `GYU-Applicant` | 24082724 |
+| | approved | `GYU-Approved` | 21481248 |
+| | needs higher care | `GYU-NeedsHigherCare` | 24082732 |
+| | not fit | `GYU-Denied` | 21481382 |
 
-- **`public_form`** — the public `/apply/...` pages POST to the
-  `public_application` Edge Function (no auth; an applicant has no CRM
-  account), which validates and then makes **one** call to
-  `submit_public_application()`. That function is a single Postgres
-  transaction over Contact / Deal / waitlist conversion / Application, taking
-  `pg_advisory_xact_lock(hashtext('submit_public_application:' || email))`
-  first, and it **normalizes the email itself** (`lower(trim(...))`). **This is
-  the one honest transactional boundary a durable Kit intent can be written
-  in.**
-- **`manual`** — `create_manual_application()`, also one transaction, also
-  advisory-locked, called from the Applications page dialog. It writes
-  `entry_path = 'other'`, never `'application_form'`, precisely so it does not
-  claim a submission that never happened.
-- **`historical_import`** — **161 rows in production**, of which **98 are
-  still `status = 'pending'`**. These are exactly the rows that must never be
-  subscribed or tagged by deploying this feature. Their pending status is
-  historical truth, not outstanding work.
-- **Do Not Engage is decided AT RECEIPT.** If the matched Contact is
-  `do_not_engage`, `submit_public_application()` writes the Application
-  straight to `status = 'do_not_engage'`, `reviewed_at = now()`, and the Deal
-  to lost — with deliberately no differentiated response to the submitter. So
-  "receipt" and "decision" are not always two moments, and a receipt sync must
-  not subscribe somebody the CRM has just refused.
+Seeded by the migration into `kit_tag_mappings`, keyed on the literal offer ids
+the chain itself creates (`20260830130000` seeds offers 1 and 2) — the same
+shape and posture as `onboarding_requirement_templates`' own seed. **A
+programme with no row is simply not Kit-managed and nothing is guessed on its
+behalf**, which is how the third offer, 1:1 Coaching (Legacy), stays out of
+Kit. `contracts/applications/kitIntegration.test.ts` pins all eight ids.
 
-**2. How a decision is recorded — and the boundary problem it creates.** All
-four live outcomes go through **one** domain action,
-`applications/reviewApplication.ts` (`ApplicationReviewOutcome = approved |
-needs_higher_care | not_fit | do_not_engage`; `denied` and `waitlist` are
-historical-import-only and deliberately excluded from the live type). It
-re-fetches the Application, refuses if it is no longer `pending`, then writes
-Application status, the Opportunity update, the Contact's DNE flag where
-relevant, and completes the review Task.
+**Do Not Engage has no tag, and that is structural.** `do_not_engage` is not
+a permitted `event` value, so a mapping for it cannot exist. No subscriber is
+created, no tag applied, nothing existing in Kit removed, no email triggered.
+The submitter still receives the same undifferentiated response.
 
-**The finding that matters: that is four separate PostgREST writes from the
-browser, not one transaction.** There is no existing server-side boundary a
-decision-time Kit intent could be enqueued in atomically. A trigger on
-`applications` status change is the obvious durable enqueue point — it runs
-inside the same single-statement transaction as the write that caused it —
-but that is a design choice to confirm, not a fact the repo already states.
+### The model
 
-**3. Existing Kit setup: NONE.** Exhaustively searched and confirmed empty:
+- **`kit_integration_settings`** — one row, `not_before`.
+- **`kit_tag_mappings`** — `(offer_id, event) -> (kit_tag_id, kit_tag_name)`.
+- **`kit_sync_operations`** — the outbox, shaped after `waitlist_invitations`:
+  per-item status, real evidence required before a row may call itself done,
+  one person's failure never marking anyone else finished. `unique
+  (application_id, kind)` is the idempotency anchor — one applicant operation
+  and one decision operation per application, forever, so every replay
+  collides and writes nothing.
+- **`contact_external_identities`** gains `provider = 'kit'`, the deliberate
+  one-line extension its own comment describes. That is the canonical
+  person-to-Kit link; `kit_sync_operations.kit_subscriber_id` is evidence of
+  one operation, not a second identity system.
 
-- no Kit / ConvertKit client, module, webhook, type or helper anywhere in the
-  repo (tracked or untracked), and no Zapier-era remnant
-- **no `KIT_*` secret exists in the production Supabase project** (names
-  listed, values never read)
-- nothing in `.env.example`, `.env.development`, `.env.e2e`
-- the `configuration` singleton row is **empty (`{}`)**
-- the CRM's own `tags` table holds exactly two rows, *Ghosted* and *No-show*,
-  both sales-pipeline tags with nothing to do with Kit
+**Enqueue points.** Two triggers on `applications`:
 
-**4. What the repo DOES already have, and what should be reused.** The
-patterns exist; they just have never been pointed at Kit.
+- **receipt** — `after insert`, when `source in ('public_form','manual')` and
+  `status = 'pending'`. It therefore fires inside
+  `submit_public_application()`'s and `create_manual_application()`'s own
+  transactions, which is the only honest boundary either path has. `status <>
+  'pending'` is the Do Not Engage gate: a submission from somebody already
+  refused is written straight to `do_not_engage` and creates no Kit work.
+- **decision** — `after update of status`, when it leaves `pending` for
+  `approved | needs_higher_care | not_fit`, **and the application already has
+  an applicant operation**. `reviewApplication.ts` records a decision as four
+  separate browser writes with no shared transaction; the one write that IS
+  the decision is the `applications.status` update, and a trigger on it runs
+  inside that statement's transaction. The applicant-operation guard carries
+  all of eligibility in one condition — right origin, after the boundary,
+  mapped programme, usable email — and it is also what stops the five
+  pre-integration applicants being tagged the moment Leif reviews them.
 
-- **External API credentials** — `ACUITY_API_KEY`, `STRIPE_SECRET_KEY` as
-  Edge Function secrets, read via `Deno.env.get()`, server-side only, never
-  `VITE_`. `KIT_API_KEY` is the obvious name; the value is Leif's to set with
-  `npx supabase secrets set`.
-- **Scheduled server-side work** — `pg_cron` + `pg_net` calling an Edge
-  Function over HTTP with an `x-cron-secret` header taken from the Vault
-  secret `cron_invoke_secret`, and migrations that **fail closed** rather than
-  schedule an unauthenticated call (`20260918130000`). This is the retry
-  processor, already solved.
-- **Person ↔ external system identity** —
-  `contact_external_identities` + `record_external_identity()`, whose
-  `provider` check currently allows `instagram | gmail | email | stripe |
-  acuity | notion` and whose own comment says *"adding one is a one-line
-  migration and a deliberate act"*. A Kit subscriber id belongs there, not in
-  a new bespoke table.
-- **Delivery that can fail, stay visible and be retried** —
-  `waitlist_invitations` is the canonical shape already in this schema: a
-  per-person row with `status ∈ prepared | sent | failed | cancelled`,
-  `sent_at` / `failed_at` / `failure_reason`, one failure never marking anyone
-  else done, and a **structural constraint that a `sent` row must carry real
-  delivery evidence**. A Kit sync row should look like this, not like a
-  generic job queue.
-- **Provider truth stays out of core columns** — `contact_stripe_customers`
-  and `deal_stripe_plan_objects` already keep provider facts in their own
-  narrow tables beside the business record.
+**Email** is normalized at enqueue by `public.normalize_email` through the
+`contact_email_addresses` view, so Kit is addressed by exactly the string the
+CRM considers canonical and a later Contact edit cannot retarget work already
+owed. **The tag id is resolved at enqueue and then frozen**, so retagging a
+programme in Kit tomorrow does not rewrite what a row already sent.
 
-**5. Production shape, read-only.** **Five** live `public_form` Applications
-exist, all still `pending`, submitted 2026-09-21 → 2026-09-28: Michelle Smith
-(LE), Ruth Kirschenbaum (LE), Kseniya Prudyus (GYU, cohort 4), Kara Blossom
-(GYU, cohort 4), Carey Christian (LE, today). Every one is a real person
-Leif is currently handling by hand. Against them sit the 161 historical rows.
-**That ratio is the whole deployment-safety problem in one number**, and it
-is why receipt sync must be gated on `source = 'public_form'` (plus a
-not-before timestamp), never on `status = 'pending'`.
+### The worker
 
-### WHY THIS STOPPED — the mapping cannot be derived, only guessed
+`pg_cron` every five minutes -> `pg_net` -> `kit_sync` Edge Function (with
+`x-cron-secret` from the Vault `cron_invoke_secret`) -> Kit v4. The migration
+**fails closed** if pg_cron, pg_net or the secret is absent, exactly as
+`20260918130000` does.
 
-The architecture above is nearly all determinable from the repo. **The thing
-Kit actually does is not.** There is no tag name, no tag id, no automation
-description and no list identity anywhere in the repository, the database, the
-environment or the deployed secrets. Every one of those is a fact about Leif's
-Kit account.
+`claim_kit_sync_operations()` takes work `for update skip locked`, so the cron
+pass and Leif pressing Retry cannot take the same row, and one held row never
+blocks somebody else's. A `processing` row whose attempt began more than ten
+minutes ago is reclaimed — a worker that died mid-call must not leave an
+applicant stuck forever, since that is the invisible work this whole slice
+exists to end.
 
-And getting it wrong is not a test failure — **applying a wrong tag fires a
-real automation and sends a real email to a real applicant.** Five of them are
-sitting in the queue right now. That is exactly the class of decision this
-project hands to Leif rather than guessing at.
+Each operation runs in its own `try`: **one person's failure never stops the
+queue.** A failure records a class and a short reason, redacted of the key and
+capped at 200 characters. **No credential and no provider payload is stored.**
 
-**The smallest exact inputs needed to proceed:**
+**A bad minute at Kit does not need a human.** Three classes mean the next
+pass is the fix — `rate_limited`, `provider_unavailable`, `network` — so the
+operation goes **back to pending** and is simply retried, up to five attempts
+(a little over twenty minutes at the five-minute cadence). The other three
+mean the opposite: `auth` is a key that will be refused identically,
+`rejected` is Kit saying no on purpose, `unknown` is something nobody has a
+name for. Those stop as `failed` and raise the card. The class and reason are
+written either way, so what happened stays legible while it is still being
+retried, and the UI stays quiet about a row that is merely on its way.
 
-1. **Credential.** Which Kit API, and a key for it. Kit v4 authenticates with
-   an `X-Kit-Api-Key` header; the legacy v3 takes an `api_secret` query
-   parameter. They are different clients, so this is a real fork, not a
-   detail. Set it as the Edge Function secret `KIT_API_KEY` — **never** paste
-   it into chat, a file, or a `VITE_` variable.
-2. **The receipt tags.** The exact tag Leif applies today when a Living
-   Example application arrives, and the exact tag for a Growing Yourself Up
-   application — by **name and id**. Plus: does a GYU applicant get a
-   **cohort-specific** tag as well, or is the programme tag enough?
-3. **The decision tags.** The exact tag for each of **Approved**, **Needs
-   Higher Care**, **Not Fit**, **Do Not Engage** — by name and id. If Leif
-   does not tag one of them today, say so; that maps to "no Kit work", which
-   is an answer, not a gap.
-4. **Do Not Engage.** Should a DNE person be **subscribed to Kit at all**?
-   The CRM already refuses them at receipt without telling them. Subscribing
-   somebody in order to tag them "do not engage" may be the opposite of what
-   is wanted.
-5. **Superseding.** When a decision tag is applied, must the **application
-   tag (or a previous decision tag) be removed**, or do the automations
-   tolerate both being present? This decides whether the sync model is
-   append-only or has a removal step, and it cannot be inferred.
-6. **List / form membership.** Do the automations trigger on the tag alone,
-   or does the person also need to be on a particular Kit **form or
-   sequence**? If it is a form, the whole model keys on forms, not tags.
+### Security
 
-**Nothing is built until these are answered.** A config-shaped placeholder was
-deliberately not shipped either: a mapping table with no real values is an
-invitation for the next session to fill it in with plausible-looking guesses,
-and the failure mode is an email to a real person.
+`KIT_API_KEY` exists only in the Edge Function's environment, read with
+`Deno.env.get`. Never a `VITE_` variable, never in `src/`, never logged, and
+passed into the client as an argument so no module can reach an environment
+for it. Two callers and neither may impersonate the other: the cron secret, or
+a real Supabase JWT. **Retry requires a signed-in user** — checked before the
+application id is even read.
 
-**Not started, and still queued behind this:** the Application Form Builder
-(§8b-builder), then Gmail (§9).
+`kit_sync_operations` is **SELECT-only to `authenticated`** and closed to
+`anon`, with a read policy and deliberately no write policy.
+`enqueue_kit_application_sync()` is revoked from everyone including
+`service_role` (it is reached only through the two SECURITY DEFINER triggers),
+and `retry_kit_application_sync()` / `claim_kit_sync_operations()` are granted
+to `service_role` alone. **The browser cannot create Kit work and cannot name
+a Kit tag id** — proved in real Postgres, not merely intended.
+`public_application/index.ts` contains no reference to Kit at all.
+
+### The UI
+
+`KitSyncCard`, on the Application review page. Silent when there is no Kit
+work. One muted line when it is done — *"Added to Kit — MiniDD_Applicant,
+MiniDD_Approved."* A rounded operational card only when somebody has to do
+something, saying what is true, what it costs, and offering **Retry Kit sync**.
+No status codes or payloads in the primary copy; the provider's own words sit
+behind a closed `<details>`. Work that is merely late gets the card but no
+button, because there is nothing to re-queue. No Kit admin page.
+
+### NEEDS HIGHER CARE — EMAIL DELIVERY IS NOT YET ACCEPTED
+
+**The two Needs Higher Care tags exist, but Leif has not written or attached
+their Kit automations yet.** So:
+
+- the CRM **does** apply `MiniDD_NeedsHigherCare` / `GYU-NeedsHigherCare`
+- a successfully applied tag **is** a successful Kit sync, and the card will
+  go quiet
+- that does **not** mean an email was sent, and the CRM never claims it did
+- the CRM must never start a Kit sequence directly to compensate
+- **human acceptance of Needs Higher Care email delivery stays open** until
+  Leif creates and attaches those automations in Kit. Nothing in this
+  repository changes when he does.
+
+The new Applicant tags likewise trigger no email today. That is intentional.
+
+### Proof
+
+- **Real Postgres, in the migration itself**, so it runs again on every deploy
+  and every clean-room replay: the boundary backfills nothing (asserted
+  against the live table, not promised); the eight mappings are Leif's;
+  `do_not_engage` has none; a live receipt enqueues the programme tag with a
+  normalized email; a decision adds the outcome tag **without removing the
+  applicant tag**; replay is a no-op; imported / pre-boundary / Do Not Engage /
+  unmapped-programme receipts queue nothing; **the real
+  `submit_public_application()` and `create_manual_application()` paths each
+  enqueue inside their own transaction**; resubmitting is a no-op; an
+  authenticated session cannot insert its own tag operation; claim / fail /
+  retry / succeed transitions hold, a Kit failure leaves the decision
+  `approved`, and a succeeded row is never re-queued; and nothing may call
+  itself succeeded without the subscriber Kit returned.
+- **Kit v4 client contract, mocked** (19 tests): the `X-Kit-Api-Key` header,
+  both request shapes, success parsing, 4xx/429/5xx/network classification,
+  no form / sequence / broadcast endpoint is ever called, and the key never
+  reaches a stored reason even when the provider echoes it back.
+- **Worker** (11 tests): subscriber before tag, the tag the row carries and
+  never one it works out, failure recorded with class and reason, **one
+  person's failure does not stop the queue**, an identity-bookkeeping failure
+  does not undo a tag that landed.
+- **State + UI** (17 tests): silence for an unmanaged application, one quiet
+  line when done, the card and its copy when not, the detail disclosure stays
+  shut, retry re-queues only the failed operation and leaves a succeeded one
+  alone.
+- **Repository contracts** (33 tests): every tag id, additive tagging, the
+  boundary, origin-not-status eligibility, the credential's confinement, and
+  the grant posture.
+- **No automated test calls Kit.** A real call would tag a real person.
+
+### Production acceptance plan — the next real application
+
+**Do not sync an existing applicant to prove this works.** The acceptance case
+is the next genuine submission after deployment:
+
+1. it appears in the CRM as it does today
+2. the applicant exists in Kit and carries the programme tag
+   (`MiniDD_Applicant` or `GYU-Applicant`)
+3. the Application page shows *"Added to Kit — …"* and no card
+
+then, when Leif makes the real decision:
+
+- **Approved / Not Fit** — the matching existing tag reaches Kit and **his
+  existing automation sends today's email**. This is the part that proves the
+  whole slice.
+- **Needs Higher Care** — the tag reaches Kit and the CRM goes quiet;
+  **email behaviour stays separately pending**, per the section above.
+- **Do Not Engage** — nothing happens in Kit at all, which is the correct
+  observation.
+
+**Five real `public_form` applicants predate the boundary** and are therefore
+NOT Kit-managed: Michelle Smith (LE, 21 Sep), Ruth Kirschenbaum (LE, 23 Sep),
+Kseniya Prudyus (GYU cohort 4, 24 Sep), Kara Blossom (GYU cohort 4, 27 Sep),
+Carey Christian (LE, 28 Sep). Deciding any of them will produce **no Kit work
+and no card** — the CRM will stay exactly as silent about Kit as it is today,
+and Leif keeps handling them by hand. **Reported only; none was synced.**
+Adopting one is a deliberate act and the mechanism for it is not built: that
+is the natural next Kit slice, and it should refuse `historical_import` and
+Do Not Engage by construction.
+
+### Deployment
+
+`KIT_API_KEY` is already set in the production project. `kit_sync` deploys
+with the rest (`supabase functions deploy` takes no arguments) and is
+registered `verify_jwt = false` in `config.toml` because it authenticates both
+its callers itself. The cron job is created by the migration.
+
+### Recorded, not fixed — three things found on the way
+
+- **`TRUNCATE` is granted to `authenticated` on every read-only table in this
+  project**, including `application_responses`, `deal_offer_events` and
+  `contact_external_identities` — a project-wide default-privilege residue,
+  not something this slice introduced, and `kit_sync_operations` matches the
+  existing posture exactly. RLS does not protect against TRUNCATE. Worth a
+  deliberate pass across all 47 tables; out of scope here.
+- **`npm run test:unit:scripts` has one failing test at HEAD**, unrelated to
+  Kit: manifest entry `20260921140000` is missing `owns_durable_schema`, which
+  `replayBoundary.test.mjs` asserts is `false`. That suite is **not run in
+  CI**, which is why it went unnoticed. One field fixes it.
+- **Migration ordering vs the parked builder.** This slice is
+  `20260928200000`; the builder still holds `20260926090000`, which is now
+  BELOW it. When the builder resumes, **renumber its migration above this
+  one** before pushing, or `db push` will see an out-of-order version.
+
+Queue behind this: the Application Form Builder (§8b-builder), then Gmail (§9).
 
 ## 8b-builder. APPLICATION FORM BUILDER — PARKED
 
@@ -1746,6 +1830,19 @@ else is wrong with them. The two lines it needs — the
 `liveApplicationFormSeed` import and the `...liveApplicationFormSeed(),`
 spread in `createCrmDb` — are in `storywrapper-both.patch` in the parking
 backup. Put them back first, before reading anything into a red builder suite.
+
+**Two things the Kit slice (2026-09-28) leaves for it**, both small and both
+better known now than discovered later:
+
+- **Renumber its migration.** Kit is `20260928200000`; the builder still holds
+  `20260926090000`, which is now below it. Move the builder's above this one
+  before pushing, or `db push` sees an out-of-order version.
+- **`src/test/StoryWrapper.tsx` gained one line** (`kit_sync_operations: []`),
+  in the same `createCrmDb` block `storywrapper-both.patch` touches. Expect a
+  small conflict there and keep both.
+- The builder's own `ApplicationReviewDialog.tsx` is a second review surface.
+  `KitSyncCard` is wired into `ApplicationShow.tsx` only; the dialog will want
+  it too when the builder lands.
 
 **Do not resume it** until everything ahead of it in the queue is done:
 Jenna's production acceptance, the Dashboard sales-call lightbox, the client

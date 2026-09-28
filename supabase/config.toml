@@ -199,3 +199,11 @@ verify_jwt = false
 # above.
 [functions.sync_year_planning_calendar]
 verify_jwt = false
+
+# Kit integration: invoked by pg_cron/pg_net on a five-minute schedule (a
+# scheduled Postgres job, not a CRM session) and by Leif's browser when he
+# presses Retry Kit sync. The first carries x-cron-secret and no JWT; the
+# second carries his own JWT and no secret. index.ts checks both itself and
+# accepts nothing else, same reasoning as sync_year_planning_calendar above.
+[functions.kit_sync]
+verify_jwt = false

@@ -18,6 +18,7 @@ import {
   applicationStatusLabels,
 } from "./applicationConstants";
 import { ApplicationReviewActions } from "./ApplicationReviewActions";
+import { KitSyncCard } from "./KitSyncCard";
 import { useApplicationReviewData } from "./useApplicationReviewData";
 
 // The review command center (Native Applications slice, §2/§3): titled by
@@ -170,6 +171,11 @@ const ApplicationShowContent = () => {
           </Section>
         </CardContent>
       </Card>
+
+      {/* Whether this applicant actually reached Leif's list. Silent for an
+          application Kit was never going to hear about, one muted line when
+          it is done, and a card only when somebody has to do something. */}
+      <KitSyncCard applicationId={record.id} />
 
       {deal && (
         <Section

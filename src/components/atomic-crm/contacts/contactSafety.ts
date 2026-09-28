@@ -134,6 +134,12 @@ export const CONTACT_FK_DELETE_RULES: Record<string, ContactDeleteRule> = {
   waitlist_entries: "CASCADE",
   // A person's provider identities are about them and go with them.
   contact_external_identities: "CASCADE",
+  // Kit work owed on this person's behalf (20260928200000). It is about
+  // them, it is meaningless without them, and it never held anything the
+  // CRM could not say for itself — the tag is already recorded on the
+  // operation, and the operation exists only to get that tag to Kit. The
+  // application it belongs to blocks the delete anyway.
+  kit_sync_operations: "CASCADE",
   // Block the delete instead, which is why a merge aborts for anyone who
   // ever applied.
   applications: "NO ACTION",

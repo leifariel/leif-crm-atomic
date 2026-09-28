@@ -2296,3 +2296,111 @@ create index if not exists deal_offer_events_opportunity_idx
   on public.deal_offer_events using btree (opportunity_id);
 
 alter table public.deal_offer_events enable row level security;
+
+
+-- ---------------------------------------------------------------------------
+-- Kit (20260928200000): the applicant's programme tag, and the decision tag
+-- ---------------------------------------------------------------------------
+-- Applications are not finished work until the person reaches Kit. These three
+-- tables are the whole of that: when the integration became live, which Kit
+-- tag each programme/event means, and what Kit still owes.
+
+-- Deployment configuration. An application created before not_before is not
+-- Kit-managed, which is what makes deploying the integration email nobody.
+create table if not exists public.kit_integration_settings (
+    id integer not null default 1 primary key,
+    not_before timestamp with time zone not null,
+    created_at timestamp with time zone not null default now(),
+    constraint kit_integration_settings_singleton check (id = 1)
+);
+
+-- Leif's real Kit tags, per programme, per event — seeded by migration on the
+-- literal offer ids the chain itself creates, the same posture as
+-- onboarding_requirement_templates. A programme with no row is simply not
+-- Kit-managed, and nothing is guessed on its behalf. 'do_not_engage' is
+-- deliberately not an event: that decision stays inside the CRM.
+create table if not exists public.kit_tag_mappings (
+    offer_id bigint not null,
+    event text not null,
+    kit_tag_id bigint not null,
+    kit_tag_name text not null,
+    created_at timestamp with time zone not null default now(),
+    primary key (offer_id, event),
+    constraint kit_tag_mappings_event_check
+        check (event in ('applicant', 'approved', 'needs_higher_care', 'not_fit')),
+    constraint kit_tag_mappings_name_check check (btrim(kit_tag_name) <> ''),
+    constraint kit_tag_mappings_tag_id_check check (kit_tag_id > 0)
+);
+
+alter table public.kit_tag_mappings
+    drop constraint if exists kit_tag_mappings_offer_id_fkey;
+alter table public.kit_tag_mappings
+    add constraint kit_tag_mappings_offer_id_fkey foreign key (offer_id) references public.offers(id) on update cascade on delete cascade;
+
+-- The outbox, shaped after waitlist_invitations: per-item status, real
+-- evidence required before a row may call itself done, and one person's
+-- failure never marking anyone else finished.
+create table if not exists public.kit_sync_operations (
+    id bigint generated always as identity primary key,
+    application_id bigint not null,
+    contact_id bigint not null,
+    kind text not null,
+    email text not null,
+    kit_tag_id bigint not null,
+    kit_tag_name text not null,
+    status text not null default 'pending',
+    attempts integer not null default 0,
+    last_attempt_at timestamp with time zone,
+    succeeded_at timestamp with time zone,
+    failed_at timestamp with time zone,
+    failure_class text,
+    failure_reason text,
+    kit_subscriber_id text,
+    created_at timestamp with time zone not null default now(),
+    updated_at timestamp with time zone not null default now(),
+    constraint kit_sync_operations_kind_check
+        check (kind in ('applicant', 'decision')),
+    constraint kit_sync_operations_status_check
+        check (status in ('pending', 'processing', 'succeeded', 'failed')),
+    constraint kit_sync_operations_email_check
+        check (email = lower(btrim(email)) and email <> ''),
+    constraint kit_sync_operations_failure_class_check
+        check (failure_class is null or failure_class in (
+            'auth', 'rejected', 'rate_limited', 'provider_unavailable',
+            'network', 'not_configured', 'unknown')),
+    constraint kit_sync_operations_success_evidence_check
+        check (status <> 'succeeded'
+               or (succeeded_at is not null and kit_subscriber_id is not null)),
+    constraint kit_sync_operations_failure_evidence_check
+        check (status <> 'failed'
+               or (failed_at is not null and failure_class is not null))
+);
+
+alter table public.kit_sync_operations
+    drop constraint if exists kit_sync_operations_application_id_fkey;
+alter table public.kit_sync_operations
+    add constraint kit_sync_operations_application_id_fkey foreign key (application_id) references public.applications(id) on update cascade on delete cascade;
+alter table public.kit_sync_operations
+    drop constraint if exists kit_sync_operations_contact_id_fkey;
+alter table public.kit_sync_operations
+    add constraint kit_sync_operations_contact_id_fkey foreign key (contact_id) references public.contacts(id) on update cascade on delete cascade;
+
+-- One applicant operation and one decision operation per application, forever.
+-- Every replay collides here and writes nothing.
+create unique index if not exists kit_sync_operations_application_kind_idx
+    on public.kit_sync_operations using btree (application_id, kind);
+create index if not exists kit_sync_operations_contact_idx
+    on public.kit_sync_operations using btree (contact_id);
+create index if not exists kit_sync_operations_outstanding_idx
+    on public.kit_sync_operations using btree (status, created_at)
+    where status in ('pending', 'processing');
+
+-- Kit is a place a person can be, so it is an external identity. The
+-- deliberate one-line extension contact_external_identities' own comment
+-- describes; a Kit subscriber id is global to the account, like Stripe's.
+alter table public.contact_external_identities
+    drop constraint if exists contact_external_identities_provider_check;
+alter table public.contact_external_identities
+    add constraint contact_external_identities_provider_check check (
+      provider in ('instagram', 'gmail', 'email', 'stripe', 'acuity', 'notion', 'kit')
+    );

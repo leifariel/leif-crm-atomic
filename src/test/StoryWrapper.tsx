@@ -49,6 +49,10 @@ export const createCrmDb = (overrides: Partial<Db> = {}): Db =>
     deals: [],
     deal_stage_events: [],
     deal_offer_events: [],
+    // Whether an applicant reached Kit. Empty by default: the card reads it
+    // on every Application page, and an undeclared collection is an
+    // UndefinedResourceError rather than a quiet "nothing to say".
+    kit_sync_operations: [],
     // The Won -> Enrollment mirror (ensureEnrollmentForWonDeal) reads this
     // collection, so it has to exist by default or marking a Deal Won
     // throws UndefinedResourceError instead of creating the client.

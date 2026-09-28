@@ -756,3 +756,42 @@ revoke all on function public.apply_enrollment_onboarding_projection(bigint, big
 revoke all on function public.apply_enrollment_onboarding_projection(bigint, bigint, bigint) from anon;
 revoke all on function public.apply_enrollment_onboarding_projection(bigint, bigint, bigint) from authenticated;
 revoke all on function public.apply_enrollment_onboarding_projection(bigint, bigint, bigint) from service_role;
+
+
+-- Kit integration (20260928200000).
+revoke all on public.kit_integration_settings from anon, authenticated;
+revoke all on public.kit_tag_mappings from anon, authenticated;
+grant select, insert, update, delete on public.kit_integration_settings to service_role;
+grant select, insert, update, delete on public.kit_tag_mappings to service_role;
+
+revoke all on public.kit_sync_operations from anon;
+grant select on public.kit_sync_operations to authenticated;
+grant select, insert, update, delete on public.kit_sync_operations to service_role;
+grant usage, select on sequence public.kit_sync_operations_id_seq to service_role;
+
+-- The enqueue is internal. Not even service_role: on its own it would create a
+-- tag operation with no application event to justify one.
+revoke all on function public.enqueue_kit_application_sync(bigint, text, text) from public;
+revoke all on function public.enqueue_kit_application_sync(bigint, text, text) from anon;
+revoke all on function public.enqueue_kit_application_sync(bigint, text, text) from authenticated;
+revoke all on function public.enqueue_kit_application_sync(bigint, text, text) from service_role;
+
+revoke all on function public.enqueue_kit_application_receipt() from public;
+revoke all on function public.enqueue_kit_application_receipt() from anon;
+revoke all on function public.enqueue_kit_application_receipt() from authenticated;
+revoke all on function public.enqueue_kit_application_decision() from public;
+revoke all on function public.enqueue_kit_application_decision() from anon;
+revoke all on function public.enqueue_kit_application_decision() from authenticated;
+
+-- Retry and the claim belong to the Edge Function, which is the only thing
+-- holding the Kit credential. The browser asks it; it does not ask the
+-- database.
+revoke all on function public.retry_kit_application_sync(bigint) from public;
+revoke all on function public.retry_kit_application_sync(bigint) from anon;
+revoke all on function public.retry_kit_application_sync(bigint) from authenticated;
+grant execute on function public.retry_kit_application_sync(bigint) to service_role;
+
+revoke all on function public.claim_kit_sync_operations(integer) from public;
+revoke all on function public.claim_kit_sync_operations(integer) from anon;
+revoke all on function public.claim_kit_sync_operations(integer) from authenticated;
+grant execute on function public.claim_kit_sync_operations(integer) to service_role;

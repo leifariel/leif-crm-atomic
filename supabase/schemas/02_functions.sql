@@ -3750,3 +3750,218 @@ begin
   ) || v_counts;
 end;
 $$;
+
+
+-- ---------------------------------------------------------------------------
+-- Enqueue: one body, called from receipt and from decision
+-- ---------------------------------------------------------------------------
+--
+-- SECURITY DEFINER because the two callers are different principals — the
+-- public receipt path writes as service_role, an application decision writes as
+-- Leif's own authenticated browser session — and NEITHER may hold write
+-- privilege on kit_sync_operations directly. If the browser could insert here
+-- it could name any Kit tag id it liked; it can't, and this is why. The tag is
+-- resolved from the mapping table inside this function or there is no row.
+--
+-- Returns the operation id, or null when the application is not Kit-managed.
+-- Not-managed is a silent, deliberate answer, not a failure: an unmapped
+-- programme, an imported row, a row that predates the integration and an
+-- application with no usable email address all mean "Kit was never going to
+-- hear about this", and inventing a failed row for them would fill the
+-- operator's attention with work nobody ever intended.
+create or replace function public.enqueue_kit_application_sync(
+  p_application_id bigint,
+  p_kind text,
+  p_event text
+) returns bigint
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+declare
+  v_app applications%rowtype;
+  v_email text;
+  v_tag kit_tag_mappings%rowtype;
+  v_not_before timestamp with time zone;
+  v_id bigint;
+begin
+  select * into v_app from applications where id = p_application_id;
+  if not found then
+    return null;
+  end if;
+
+  -- Origin. An imported record is what already happened, not work; it must
+  -- never subscribe or tag anybody merely because this integration exists.
+  if v_app.source not in ('public_form', 'manual') then
+    return null;
+  end if;
+
+  -- The deployment boundary. Absent settings fail closed.
+  select not_before into v_not_before from kit_integration_settings where id = 1;
+  if v_not_before is null or v_app.created_at < v_not_before then
+    return null;
+  end if;
+
+  if v_app.offer_id is null then
+    return null;
+  end if;
+
+  select * into v_tag from kit_tag_mappings
+   where offer_id = v_app.offer_id and event = p_event;
+  if not found then
+    -- No mapping is a refusal, never a guess.
+    return null;
+  end if;
+
+  select a.normalized_email into v_email
+    from contact_email_addresses a
+   where a.contact_id = v_app.contact_id
+   order by a.normalized_email
+   limit 1;
+  if v_email is null then
+    return null;
+  end if;
+
+  insert into kit_sync_operations
+    (application_id, contact_id, kind, email, kit_tag_id, kit_tag_name)
+  values
+    (v_app.id, v_app.contact_id, p_kind, v_email, v_tag.kit_tag_id, v_tag.kit_tag_name)
+  on conflict (application_id, kind) do nothing
+  returning id into v_id;
+
+  return v_id;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Receipt
+-- ---------------------------------------------------------------------------
+-- Fires inside submit_public_application()'s and create_manual_application()'s
+-- own transactions — the only honest boundary either path has — so the durable
+-- Kit intent and the application that owes it commit together or not at all.
+--
+-- status <> 'pending' is the Do Not Engage gate. A submission from somebody
+-- already marked do_not_engage is written straight to that status by
+-- submit_public_application(), and that receipt creates no Kit work at all:
+-- no subscriber, no tag, nothing removed. The submitter still gets the same
+-- undifferentiated response they get today.
+create or replace function public.enqueue_kit_application_receipt()
+returns trigger
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+begin
+  if new.status = 'pending' then
+    perform public.enqueue_kit_application_sync(new.id, 'applicant', 'applicant');
+  end if;
+  return null;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Decision
+-- ---------------------------------------------------------------------------
+-- reviewApplication.ts records a decision as four separate browser writes, so
+-- there is no shared transaction to hook. There is, however, one write that
+-- IS the decision — applications.status leaving 'pending' — and a trigger on
+-- it runs inside that statement's own transaction. That is the boundary.
+--
+-- The Kit intent is created AFTER the decision row is written, by the same
+-- statement, so a Kit failure cannot roll it back: nothing in this path ever
+-- raises. The worst case is a pending row in the outbox and a card asking Leif
+-- to retry.
+--
+-- Guarded on the application already being Kit-managed — that is, on its
+-- applicant operation existing. One condition carries all of it: right origin,
+-- after the boundary, mapped programme, usable email. It is also what keeps
+-- the five real applicants who predate this integration from being tagged the
+-- moment Leif reviews them: their receipt was never Kit-managed, so their
+-- decision is not either, and adopting them stays a deliberate act.
+--
+-- do_not_engage is absent from the list for the same reason it is absent from
+-- the mapping: that decision stays inside the CRM.
+create or replace function public.enqueue_kit_application_decision()
+returns trigger
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+begin
+  if old.status = 'pending'
+     and new.status in ('approved', 'needs_higher_care', 'not_fit')
+     and exists (
+       select 1 from kit_sync_operations
+        where application_id = new.id and kind = 'applicant'
+     )
+  then
+    perform public.enqueue_kit_application_sync(new.id, 'decision', new.status);
+  end if;
+  return null;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Owner retry
+-- ---------------------------------------------------------------------------
+-- What the "Retry Kit sync" button reaches, through the Edge Function that
+-- holds the credential. It only ever returns failed work to pending; it cannot
+-- create an operation, cannot choose a tag, and cannot touch a succeeded row,
+-- so pressing it twice — or pressing it after it worked — is safe.
+create or replace function public.retry_kit_application_sync(p_application_id bigint)
+returns integer
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+declare
+  v_count integer;
+begin
+  update kit_sync_operations
+     set status = 'pending',
+         failure_class = null,
+         failure_reason = null,
+         failed_at = null,
+         updated_at = now()
+   where application_id = p_application_id
+     and status = 'failed';
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- The worker's claim
+-- ---------------------------------------------------------------------------
+-- `for update skip locked` so two overlapping runs — the five-minute cron and
+-- Leif pressing Retry — cannot both take the same operation, and so a row one
+-- worker is holding never blocks the other from getting on with someone else's.
+--
+-- A 'processing' row whose attempt started more than ten minutes ago is
+-- reclaimed: the only way to be there that long is a worker that died mid-call,
+-- and an operation stuck forever in processing is invisible work, which is the
+-- failure mode this whole slice exists to end.
+create or replace function public.claim_kit_sync_operations(p_limit integer default 25)
+returns setof public.kit_sync_operations
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+begin
+  return query
+  update kit_sync_operations o
+     set status = 'processing',
+         attempts = o.attempts + 1,
+         last_attempt_at = now(),
+         updated_at = now()
+   where o.id in (
+     select c.id from kit_sync_operations c
+      where c.status = 'pending'
+         or (c.status = 'processing' and c.last_attempt_at < now() - interval '10 minutes')
+      order by c.created_at
+      limit greatest(p_limit, 0)
+      for update skip locked
+   )
+  returning o.*;
+end;
+$$;

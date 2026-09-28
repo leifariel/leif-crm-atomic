@@ -352,6 +352,27 @@ const getDataProviderWithCustomMethods = () => {
       }
       return data as Record<string, unknown>;
     },
+    // Asking Kit again for one application's failed work.
+    //
+    // Through the Edge Function, never the database and never Kit directly:
+    // KIT_API_KEY exists only in that function's environment, kit_sync_operations
+    // is read-only to this session, and retry_kit_application_sync() is granted to
+    // service_role alone. So the browser can say "try again for this applicant"
+    // and nothing else — it cannot create work, name a tag, or disturb an
+    // operation that already succeeded.
+    async retryKitSync(applicationId: Identifier) {
+      const { data, error } = await getSupabaseClient().functions.invoke<{
+        requeued: number;
+      }>("kit_sync", {
+        method: "POST",
+        body: { action: "retry", applicationId },
+      });
+      if (error || !data) {
+        console.error("kit_sync.retry.error", error);
+        throw new Error("Failed to retry the Kit sync");
+      }
+      return { requeued: data.requeued ?? 0 };
+    },
     // Refused here as well as in the Edge Function, so that a merge cannot
     // leave this machine even if some future caller finds the method.
     // See contacts/contactSafety.ts.

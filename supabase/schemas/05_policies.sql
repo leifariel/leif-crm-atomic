@@ -308,3 +308,20 @@ create policy "Form questions are readable" on public.application_form_questions
 -- only by transfer_enrolled_opportunity_offer(), which runs as the owner.
 drop policy if exists "Enable read for authenticated users" on public.deal_offer_events;
 create policy "Enable read for authenticated users" on public.deal_offer_events for select to authenticated using (true);
+
+
+-- Kit integration (20260928200000). The boundary and the tag mapping are
+-- deployment configuration with no reader in the browser at all, so they get
+-- row level security and no policy whatsoever.
+alter table public.kit_integration_settings enable row level security;
+alter table public.kit_tag_mappings enable row level security;
+
+-- The operations ARE app data: the Application page shows whether Kit is done.
+-- Readable, never writable — every write is a trigger or the worker, both
+-- running as the owner. Read-only here is what makes "the browser cannot name
+-- a Kit tag id" true rather than merely intended.
+alter table public.kit_sync_operations enable row level security;
+drop policy if exists "Kit sync operations are readable" on public.kit_sync_operations;
+create policy "Kit sync operations are readable" on public.kit_sync_operations
+  for select to authenticated using (true);
+-- No insert/update/delete policy exists, deliberately.

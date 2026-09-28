@@ -172,6 +172,25 @@ export const REVIEWED_DETERMINISTIC = {
   // definition and writes no business data.
   20260920130000:
     "synthetic probe rows, rolled back; owns a trigger function definition",
+
+  // Trips two signals at once. "A table of named real clients" matches the
+  // synthetic contacts its proof block inserts — Kit Proof, Grace Hopper,
+  // Manual Entry, Refused Person, Retry Proof — every one of them inside a
+  // subtransaction the block ends by raising, so all of them roll back.
+  // "Writes a hardcoded business-record id" matches the tag mapping seed,
+  // which names offer 1 and offer 2 by id exactly as
+  // 20260904220000's onboarding requirement seed does: the chain itself
+  // creates those two offers at 20260830130000, so the ids are the
+  // repository's own, not production's.
+  //
+  // It cannot be skipped: it owns three tables, five functions, two triggers
+  // on applications, the grants and policy for all of it, and the Kit tag
+  // mapping. A database rebuilt without it has no Kit integration at all.
+  // Proved by applying it to the clean room — a from-empty deterministic
+  // replay with zero applications in it — where the whole proof block ran
+  // green and left nothing behind.
+  20260928200000:
+    "synthetic proof rows, rolled back; seeds tag configuration on the chain's own offer ids; owns three tables, five functions and two triggers",
 };
 
 /**

@@ -1278,3 +1278,51 @@ export type DealOfferEvent = {
   source: "app" | "migration" | "reconstructed";
   note?: string | null;
 } & Pick<RaRecord, "id">;
+
+// One logical operation this application still owes Leif's Kit account: the
+// programme tag it earned by arriving, or the outcome tag it earned by being
+// decided. Written only by the database (enqueue_kit_application_sync, through
+// the two triggers on applications) and updated only by the kit_sync Edge
+// Function, which is the one thing holding the credential — read-only to every
+// browser session, which is what makes "nothing in the UI can name a Kit tag"
+// structurally true. See supabase/migrations/20260928200000.
+export type KitSyncOperationStatus =
+  | "pending"
+  | "processing"
+  | "succeeded"
+  | "failed";
+
+export type KitSyncFailureClass =
+  | "auth"
+  | "rejected"
+  | "rate_limited"
+  | "provider_unavailable"
+  | "network"
+  | "not_configured"
+  | "unknown";
+
+export type KitSyncOperation = {
+  application_id: Identifier;
+  contact_id: Identifier;
+  kind: "applicant" | "decision";
+  // Normalized at enqueue time by the same rule the receipt path uses, so a
+  // later edit to the Contact cannot silently retarget work already owed.
+  email: string;
+  // Resolved at enqueue time and then frozen: if a programme is retagged in
+  // Kit tomorrow, what this row already sent stays truthfully recorded.
+  kit_tag_id: number;
+  kit_tag_name: string;
+  status: KitSyncOperationStatus;
+  attempts: number;
+  last_attempt_at: string | null;
+  succeeded_at: string | null;
+  failed_at: string | null;
+  failure_class: KitSyncFailureClass | null;
+  failure_reason: string | null;
+  // Evidence, not identity — the canonical person-to-Kit link is
+  // contact_external_identities (provider = 'kit'). A row may not call itself
+  // succeeded without this, by database constraint.
+  kit_subscriber_id: string | null;
+  created_at: string;
+  updated_at: string;
+} & Pick<RaRecord, "id">;

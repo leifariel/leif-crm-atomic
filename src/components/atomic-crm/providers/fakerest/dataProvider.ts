@@ -33,6 +33,7 @@ import {
   createManualApplicationMirror,
   type ManualApplicationInput,
 } from "../../applications/createManualApplication";
+import { retryKitSyncMirror } from "../../applications/retryKitSync";
 import { completeAttendedSalesCallMirror } from "../../sales-calls/completeAttendedSalesCallMirror";
 import { acceptSaleMirror } from "../../deals/acceptSaleMirror";
 import { transferClientOfferMirrorEntry } from "../../enrollments/transferClientOfferMirrorEntry";
@@ -889,6 +890,12 @@ export const createDataProvider = ({
     // gets from its triggers.
     completeAttendedSalesCall: async (input) =>
       completeAttendedSalesCallMirror(dataProvider, input),
+    // Production asks the kit_sync Edge Function, which re-queues the failed
+    // work and then runs the worker. There is no Kit here and nothing pretends
+    // otherwise: this mirrors only the database half — failed work returns to
+    // pending, exactly as retry_kit_application_sync() does.
+    retryKitSync: async (applicationId: Identifier) =>
+      retryKitSyncMirror(dataProvider, applicationId),
     createManualApplication: async (input: ManualApplicationInput) => {
       const result = await createManualApplicationMirror(dataProvider, input);
       // Shaped exactly like the RPC's jsonb, field for field — a key

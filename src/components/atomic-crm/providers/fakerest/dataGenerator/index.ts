@@ -64,6 +64,9 @@ export default (): Db => {
   // the demo could not show payment truth at all, and no provider-level
   // test could reach it.
   db.deal_payment_schedule_items = [];
+  // Same reason: the Application page asks whether this applicant reached
+  // Kit, and the demo has no Kit at all.
+  db.kit_sync_operations = [];
   db.contact_stripe_customers = [];
   db.deal_stripe_plan_objects = [];
   db.deals = generateDeals(db);

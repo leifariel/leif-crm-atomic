@@ -257,10 +257,13 @@ describe("the contact delete-rule map is what the schema actually says", () => {
 
   it("still names the tables a contact delete would destroy", () => {
     // Arrange — the live rules read from MAIN during the Slice 0 audit,
-    // plus the three tables Slice 5 added. Each was considered rather
-    // than absorbed: identities belong to the person and go with them, a
-    // merge record has to outlive both sides of the merge it explains,
-    // and the self-reference only ever clears a forwarding pointer.
+    // plus the three tables Slice 5 added and the one Kit added. Each was
+    // considered rather than absorbed: identities belong to the person and
+    // go with them, a merge record has to outlive both sides of the merge
+    // it explains, the self-reference only ever clears a forwarding
+    // pointer, and Kit work owed on somebody's behalf is meaningless
+    // without them — it holds a tag the CRM already recorded and exists
+    // only to deliver it.
     // Assert
     expect(CONTACT_FK_DELETE_RULES).toEqual({
       applications: "NO ACTION",
@@ -271,6 +274,7 @@ describe("the contact delete-rule map is what the schema actually says", () => {
       contact_stripe_customers: "CASCADE",
       contacts: "SET NULL",
       deals: "CASCADE",
+      kit_sync_operations: "CASCADE",
       sales_calls: "CASCADE",
       tasks: "CASCADE",
       waitlist_entries: "CASCADE",

@@ -16,6 +16,7 @@ import type {
   DealNote,
   DealStageEvent,
   DealOfferEvent,
+  KitSyncOperation,
   Enrollment,
   EnrollmentExpectedSession,
   EnrollmentOffboardingItem,
@@ -50,6 +51,7 @@ export interface Db {
   deal_notes: DealNote[];
   deal_stage_events: DealStageEvent[];
   deal_offer_events: DealOfferEvent[];
+  kit_sync_operations: KitSyncOperation[];
   applications: Application[];
   application_responses: ApplicationResponse[];
   enrollments: Enrollment[];

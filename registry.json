@@ -1942,6 +1942,14 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/applications/retryKitSync.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/kitSyncState.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/applications/index.ts",
           "type": "registry:component"
         },
@@ -1963,6 +1971,10 @@
         },
         {
           "path": "src/components/atomic-crm/applications/answerLabels.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/KitSyncCard.tsx",
           "type": "registry:component"
         },
         {
