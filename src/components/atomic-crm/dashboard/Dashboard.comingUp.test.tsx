@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
-import { page } from "vitest/browser";
+import { commands, page } from "vitest/browser";
 import { memoryStore } from "ra-core";
 import { MemoryRouter } from "react-router";
 
@@ -28,17 +28,42 @@ import type { Db } from "@/components/atomic-crm/providers/fakerest/dataGenerato
 // test.tsx already established — so these exercise real routing and the
 // real Dashboard, not a shallow mount.
 //
-// Dates are computed relative to the REAL current time rather than via
-// vi.setSystemTime()/vi.useFakeTimers(): faking timers here hung the
-// render entirely (FakeRest's simulated latency and React Query's
-// internal timers never got a chance to fire), and no other rendering
-// test in this codebase mocks system time — pure-logic files like
-// livingExampleCapacity.test.ts inject `now` as a plain function
-// parameter instead. Sacrifices literal date-string assertions for a
-// reliable render; the pure-projection tests (cohortEvents.test.ts,
-// comingUpProjection.test.ts) already cover exact chronology/dedupe with
-// an injected `today`.
-const NOW = new Date();
+// THE CLOCK. Every fixture date here is relative to "now", and this file
+// used to take that from the real one. That made it a test that could pass
+// all morning and fail after tea: `end_date` is now + 95 days, computed by
+// mutating a LOCAL date and then reading it back as a UTC one, so once the
+// machine passed 17:00 MDT the same arithmetic returned 1 January instead of
+// 31 December. The Living Example completion moved into a month the fixture's
+// calendar cannot answer openings for, the row disappeared, and the wait timed
+// out — a red with nothing wrong behind it.
+//
+// So the instant is stated instead of inherited, the same way
+// IndividualProgramPage.capacity.test.tsx states its own, and for the same
+// reason. Only Date is faked: faking the whole timer API hung the render
+// entirely, because FakeRest's simulated latency and React Query's internal
+// timers never got a chance to fire. The timezone is pinned too — that
+// local-to-UTC skew is exactly what moved the date — and both are restored
+// afterwards so this file never leaves another one running in a clock it
+// chose.
+//
+// The instant itself is deliberate rather than magic: mid-September 2026 puts
+// the fixture's +95-day completion in December, inside the calendar these
+// fixtures generate, which is the situation the assertions below describe.
+const NOW = new Date("2026-09-21T12:00:00.000Z");
+
+let ambientTimezone: string;
+
+beforeEach(async () => {
+  ambientTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  await commands.setTimezone("UTC");
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+});
+
+afterEach(async () => {
+  vi.useRealTimers();
+  await commands.setTimezone(ambientTimezone);
+});
 const isoDateOnly = (date: Date) => date.toISOString().slice(0, 10);
 const daysFromNow = (days: number, hour = 12) => {
   const date = new Date(NOW);
