@@ -1946,7 +1946,7 @@
           "type": "registry:component"
         },
         {
-          "path": "src/components/atomic-crm/applications/kitSyncState.ts",
+          "path": "src/components/atomic-crm/applications/kitStatus.ts",
           "type": "registry:component"
         },
         {
@@ -1975,6 +1975,10 @@
         },
         {
           "path": "src/components/atomic-crm/applications/KitSyncCard.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/KitStatusLine.tsx",
           "type": "registry:component"
         },
         {

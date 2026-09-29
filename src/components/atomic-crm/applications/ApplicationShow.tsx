@@ -18,7 +18,7 @@ import {
   applicationStatusLabels,
 } from "./applicationConstants";
 import { ApplicationReviewActions } from "./ApplicationReviewActions";
-import { KitSyncCard } from "./KitSyncCard";
+import { KitStatusLine } from "./KitStatusLine";
 import { useApplicationReviewData } from "./useApplicationReviewData";
 
 // The review command center (Native Applications slice, §2/§3): titled by
@@ -172,10 +172,11 @@ const ApplicationShowContent = () => {
         </CardContent>
       </Card>
 
-      {/* Whether this applicant actually reached Leif's list. Silent for an
-          application Kit was never going to hear about, one muted line when
-          it is done, and a card only when somebody has to do something. */}
-      <KitSyncCard applicationId={record.id} />
+      {/* Is Kit handling this application, or is the decision email Leif's
+          to send? One compact line for every answer, and a card only for the
+          one that needs him. Silent only for an imported historical record,
+          which has no Kit work and no work for anyone. */}
+      <KitStatusLine application={record} />
 
       {deal && (
         <Section

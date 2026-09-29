@@ -522,6 +522,15 @@ classes. **Full record, and the tooling debt carried forward, in §8.**
 
 ## 6. Waiting on Leif — do not guess these
 
+**KIT — DEPLOYED AND OPERATIONALLY ACCEPTED 2026-09-28 (§8b-kit-live).** Two
+things are Leif's alone. **(1)** The two Needs Higher Care tags exist and the
+CRM applies them, but **no Kit automation is attached to either yet**, so
+nothing is emailed when they land; that acceptance stays open until he writes
+them in Kit. **(2)** Five live applicants predate the integration boundary and
+are **manual Kit handling** — Michelle Smith, Ruth Kirschenbaum, Kseniya
+Prudyus, Kara Blossom, Carey Christian. Their Application pages now say
+`Kit: Not synced — email manually` so this cannot be missed. Original note:
+
 **KIT — ANSWERED AND BUILT 2026-09-28.** All six questions were answered and
 the integration is built, proved and committed locally (§8b-kit). **One thing
 is still Leif's alone:** the two Needs Higher Care tags exist and the CRM will
@@ -1251,14 +1260,13 @@ commits and **143** in the working tree while the builder sits there.
 2. ~~**Client start-week / capacity UX**~~ — **deployed 2026-09-28, edit
    lightbox accepted** (§8b-startweek-built); three branches wait on real
    production events
-3. ~~**Kit / Applications integration**~~ — §8b-kit. **Built 2026-09-28,
-   committed locally, not pushed.** Acceptance is the next genuine
-   application; Needs Higher Care email delivery stays separately pending on
-   Leif attaching those automations in Kit.
-4. **Adopting a pre-integration applicant into Kit** — not built. The five
-   real applicants who predate the boundary stay outside Kit by design, and
-   the deliberate owner action that would bring one in is the natural next
-   Kit slice.
+3. ~~**Kit / Applications integration**~~ — **deployed and operationally
+   accepted 2026-09-28** (§8b-kit-live). Delivery acceptance still waits on the
+   next genuine application; Needs Higher Care email stays pending on Leif
+   attaching those automations in Kit.
+4. **Adopting a pre-integration applicant into Kit** — **deliberately not
+   built.** The five stay manual and their pages now say so. Revisit only
+   *after* a real post-boundary application has proved the live path.
 5. **Resume the Application Form Builder** — §8b-builder
 6. **Gmail** — §9, after the above
 
@@ -1565,7 +1573,7 @@ Every **live** LE client already has an **owner-stated** Start Week: 19 active
 rows and the one with no date are all completed/ended. So **no live capacity
 number changes**, and there is no client to try the unset-week card on today.
 
-## 8b-kit. KIT / CONVERTKIT — BUILT 2026-09-28, NOT PUSHED
+## 8b-kit. KIT / CONVERTKIT — BUILT 2026-09-28 (see §8b-kit-live for the deployed state)
 
 **Applications are not finished work until the person reaches Kit.** Until
 now the CRM stopped at its own boundary and Leif did the rest by hand: find or
@@ -1815,6 +1823,176 @@ its callers itself. The cron job is created by the migration.
 
 Queue behind this: the Application Form Builder (§8b-builder), then Gmail (§9).
 
+## 8b-kit-live. KIT — DEPLOYED AND OPERATIONALLY ACCEPTED 2026-09-28
+
+**Pushed as `797a4366` and deployed.** Production verified read-only: migration
+`20260928200000` applied (144 total, newest, builder's `20260926090000` absent),
+`kit_sync` Edge Function v1 ACTIVE, the `kit-sync` cron job scheduled `*/5`
+reading the Vault secret, **two healthy authenticated worker runs** returning
+`{"claimed":0,"succeeded":0,"failed":0,"requeued":0}` at 23:10 and 23:15, the
+**eight tag mappings matching the contract exactly with zero mismatches**,
+`not_before = 2026-09-28 23:04:40.659+00`, **zero `kit_sync_operations` rows**,
+**zero Kit identities**, the five pre-boundary applicants untouched, the live
+frontend byte-identical to a clean build of the commit, and **no Kit credential
+anywhere in the browser bundle**. `KIT_API_KEY` exists in the production project
+by name only.
+
+**One thing was not green and is deliberately closed:** the CI `e2e-test` job
+failed on this commit (run `36495902229`; every other job green, including the
+app unit project). Its log is unreadable without repository admin rights. The
+**exact clean commit was run twice with the same command CI runs**
+(`make test-e2e-ci`, clean-room rebuild then Playwright) and passed **161/161,
+exit 0, both times**. The same job also failed once before on an unrelated
+commit (`2a1eab80`). **Treated as an isolated CI flake and closed — do not
+reopen it without new evidence**, such as a second failure or a readable log.
+
+### THE MANUAL DECISION EMAIL WORKLOAD — read-only, 2026-09-28
+
+Every application whose CRM decision will **not** create Kit decision work,
+and whose decision email is therefore still Leif's to send by hand. Criteria:
+`source in ('public_form','manual')`, created before `not_before`, still
+`pending`. There are **exactly five**, and **no `manual`-source application
+exists at all**.
+
+| Name | Programme | Cohort | Submitted | Status | Source |
+|---|---|---|---|---|---|
+| Michelle Smith | The Living Example | — | 2026-09-21 | pending | public_form |
+| Ruth Kirschenbaum | The Living Example | — | 2026-09-23 | pending | public_form |
+| Kseniya Prudyus | Growing Yourself Up | January 2027 | 2026-09-24 | pending | public_form |
+| Kara Blossom | Growing Yourself Up | January 2027 | 2026-09-27 | pending | public_form |
+| Carey Christian | The Living Example | — | 2026-09-28 | pending | public_form |
+
+**MANUAL DECISION EMAIL LIST**
+
+- Michelle Smith — The Living Example
+- Ruth Kirschenbaum — The Living Example
+- Kseniya Prudyus — Growing Yourself Up / January 2027
+- Kara Blossom — Growing Yourself Up / January 2027
+- Carey Christian — The Living Example
+
+All five: `pending`, pre-boundary, **0 applicant operations, 0 decision
+operations, 0 Kit identities**. Their Opportunities all sit at
+`application_received`.
+
+**JANUARY GYU — MANUAL DECISION EMAIL LIST**
+
+The upcoming January cohort is **cohort 4**, proved from production dates
+rather than its name: `program_start_at = 2027-01-19`, `program_end_at =
+2027-03-09`, applications open until `2027-01-17`, `status =
+applications_open`. The only other GYU cohort (3, Fall 2026) started
+2026-09-22 and is `applications_closed`.
+
+- Kseniya Prudyus — Growing Yourself Up / January 2027
+- Kara Blossom — Growing Yourself Up / January 2027
+
+Cohort 4 holds 13 applications in total; the other **eleven are
+`historical_import`** (5 approved, 6 preserving a `pending` status that is
+history, not work) and are deliberately excluded.
+
+### THE COMPACT KIT STATUS LINE
+
+One question, answered at a glance on the Application: **is Kit handling this,
+or is the decision email mine?** One shared derivation,
+`applications/kitStatus.ts`, rendered by `applications/KitStatusLine.tsx`. It
+reads **only durable CRM evidence** — the application's own `source` and
+`status`, and the `kit_sync_operations` rows — and **never calls Kit**, which a
+test proves with a `fetch` spy.
+
+| Line | When |
+|---|---|
+| `Kit: Tagged ✓` | everything the **current** CRM state requires has succeeded |
+| `Kit: Syncing…` | required work is pending or processing |
+| `Kit: Needs attention` | a required operation failed, or has waited over 30 minutes |
+| `Kit: Not synced — email manually` | a live `public_form`/`manual` application Kit is not handling |
+| `Kit: Not used` | `do_not_engage` — the CRM refused them and Kit is deliberately out of it |
+| *(nothing)* | `historical_import` — finished history, no work for anyone |
+
+**What "the current state requires" means.** A pending application owes only
+its programme tag. One Leif has decided (`approved`, `needs_higher_care`,
+`not_fit`) owes the outcome tag as well — so **an approved applicant whose
+outcome tag never reached Kit does not read as finished**, which is the whole
+point. `do_not_engage` requires nothing.
+
+**Two precedence rules, both deliberate.** A failure outranks everything,
+including `do_not_engage`: in the ordinary refusal case there is no failed row
+so nothing untrue is implied, but a row that failed *before* the refusal must
+not be buried, because a buried row is exactly the invisible work this
+integration exists to end. And an imported record and a live applicant both
+have **no** Kit operations while meaning opposite things — `source` is the
+discriminator, and **`historical_import` can never be presented as current
+unsynced work** (98 of them carry a `pending` status; showing them as manual
+email work would teach Leif to ignore the line that matters).
+
+**Healthy is now one muted line, not a card.** The old `Added to Kit —
+MiniDD_Applicant, MiniDD_Approved.` exposed tag names in primary copy; they
+now sit behind a closed **Kit detail** disclosure, still there for debugging a
+sync. The rounded card and **Retry Kit sync** survive unchanged for the one
+actionable state. Work that is merely late gets the card with no button,
+because there is nothing to re-queue.
+
+**When the Application Form Builder resumes, its review lightbox MUST reuse
+this exact shared `kitStatus` derivation and `KitStatusLine`** — not a second
+opinion. A contract test refuses any other production module that decides
+these labels.
+
+**No adoption button exists, on purpose.** Nothing offers to Add to Kit, adopt
+or backfill an old applicant, and a contract test holds that. The live Kit path
+has not yet been human-accepted on a real post-boundary application; until it
+has, the five above stay manual. Whether a tiny explicit adoption path is worth
+building is a decision for **after** that acceptance.
+
+### STILL THE HUMAN ACCEPTANCE EVENT: THE NEXT GENUINE NEW APPLICATION
+
+Nothing here changes it. On the next real submission: it appears in the CRM →
+the applicant exists in Kit with the programme tag → the Application reads
+`Kit: Tagged ✓`. Then on the real decision: **Approved / Not Fit** → the
+outcome tag lands and Leif's existing automation sends today's email (the part
+that proves the slice); **Needs Higher Care** → the tag lands and the CRM goes
+quiet, but **email delivery stays separately pending** because Leif has not yet
+written or attached those two Kit automations; **Do Not Engage** → nothing in
+Kit at all.
+
+## 8b-kit-gmail. GMAIL TAKEOVER — A SEQUENCE THAT MUST NOT BE IMPROVISED
+
+**This is a hard prerequisite for the Gmail integration (§9) and it must
+survive every future chat.**
+
+**The situation it protects against.** A population of older applicants were
+never reliably added or tagged in Kit — the 161 imported records, and the five
+live applicants above. Any future backfill that adds them to Kit *with outcome
+tags* would, with today's configuration, **fire Leif's existing
+application-decision automations and email people about decisions made months
+ago**.
+
+**So the order is fixed, and the first step is not optional:**
+
+1. **FIRST, make the email automations safe.** Disable, detach, or otherwise
+   prevent the existing Kit application-decision automations from firing off
+   historical or backfill tags. Nothing else in this sequence may begin until
+   that is done and verified in Kit.
+2. **ONLY THEN, perform the deliberate one-time backfill.** Upsert the missing
+   subscribers, apply the correct programme/applicant tags, and apply
+   historical outcome tags **only where they are deliberately useful** — never
+   as a reflex, and never in a way that sends a historical decision email as a
+   side effect.
+3. **Then Gmail becomes authoritative** for individualized
+   application-decision sending: the CRM composes and Gmail sends, with the
+   send logged and idempotent (§9). **Kit stays what it is** — subscriber,
+   list and tag infrastructure — and stops being the thing that sends a
+   decision email.
+
+**Do not reorder these. Do not fold the backfill into the Gmail build. Do not
+let a later session "just backfill the tags first" —** that is precisely the
+mistake this section exists to prevent, and its cost is real email to real
+people about decisions they already heard about.
+
+**Also still true and unchanged:** the two Needs Higher Care tags
+(`MiniDD_NeedsHigherCare` 24082725, `GYU-NeedsHigherCare` 24082732) exist and
+the CRM applies them, but **Leif has not written or attached their Kit email
+automations**, so a green sync there does not mean an email went out and the
+CRM never claims it did. Nothing in this repository changes when he attaches
+them.
+
 ## 8b-builder. APPLICATION FORM BUILDER — PARKED
 
 Still **uncommitted**, parked in a stash while the three commits above were
@@ -1841,8 +2019,12 @@ better known now than discovered later:
   in the same `createCrmDb` block `storywrapper-both.patch` touches. Expect a
   small conflict there and keep both.
 - The builder's own `ApplicationReviewDialog.tsx` is a second review surface.
-  `KitSyncCard` is wired into `ApplicationShow.tsx` only; the dialog will want
-  it too when the builder lands.
+  When it lands it **MUST reuse the shared `kitStatus` derivation and
+  `KitStatusLine`** (§8b-kit-live) rather than deciding those labels itself — a
+  contract test refuses any second production module that does. `KitStatusLine`
+  is wired into `ApplicationShow.tsx` only; the lightbox needs the same line.
+- `KitSyncCard.tsx` is now **presentational** — it takes a status and a retry
+  handler and reads nothing for itself, so both surfaces can render it.
 
 **Do not resume it** until everything ahead of it in the queue is done:
 Jenna's production acceptance, the Dashboard sales-call lightbox, the client
@@ -2027,6 +2209,13 @@ state; nothing here says one exists.
 ---
 
 ## 9. Gmail (after Capacity + Waitlist)
+
+**READ §8b-kit-gmail FIRST.** Gmail cannot become authoritative for
+application-decision emails until Kit's existing decision automations are made
+safe and the deliberate one-time Kit backfill has happened, **in that order**.
+That sequencing is a hard prerequisite, not a nicety, and improvising it emails
+real people about decisions they already heard about.
+
 
 **Must be communication-provider-neutral so Instagram reuses it.** Model a
 communication fact with: provider · direction · **immutable external message

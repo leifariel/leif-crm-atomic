@@ -1,6 +1,6 @@
 import type { DataProvider, Identifier } from "ra-core";
 
-import type { KitSyncOperation } from "./kitSyncState";
+import type { KitSyncOperation } from "../types";
 
 // Asking again.
 //

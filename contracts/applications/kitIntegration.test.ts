@@ -29,6 +29,16 @@ const PROCESSOR = read("supabase/functions/kit_sync/kitSyncProcessor.ts");
 const FUNCTION = read("supabase/functions/kit_sync/index.ts");
 const GRANTS = read("supabase/schemas/06_grants.sql");
 const POLICIES = read("supabase/schemas/05_policies.sql");
+const sourceFiles = (dir: string): string[] =>
+  readdirSync(dir).flatMap((entry) => {
+    const full = path.join(dir, entry);
+    if (statSync(full).isDirectory()) return sourceFiles(full);
+    return /\.(ts|tsx)$/.test(full) ? [full] : [];
+  });
+
+const STATUS = read("src/components/atomic-crm/applications/kitStatus.ts");
+const LINE = read("src/components/atomic-crm/applications/KitStatusLine.tsx");
+const CARD_UI = read("src/components/atomic-crm/applications/KitSyncCard.tsx");
 
 // Leif's real tags, given in the resolved Kit contract. These numbers reach
 // live automations; they are not placeholders and must never be edited to
@@ -166,13 +176,6 @@ describe("deploying this emails nobody", () => {
 });
 
 describe("the credential is server-side, and only server-side", () => {
-  const sourceFiles = (dir: string): string[] =>
-    readdirSync(dir).flatMap((entry) => {
-      const full = path.join(dir, entry);
-      if (statSync(full).isDirectory()) return sourceFiles(full);
-      return /\.(ts|tsx)$/.test(full) ? [full] : [];
-    });
-
   test("no code under src/ reaches for the key, by that name or any other", () => {
     const offenders = sourceFiles("src").filter((file) => {
       const body = code(read(file));
@@ -310,6 +313,73 @@ describe("a bad minute at Kit does not become a person's problem", () => {
     // The class and reason are still written either way — what happened stays
     // legible even while it is being retried.
     expect(FUNCTION).toMatch(/failure_class: failureClass/);
+  });
+});
+
+describe('one shared answer to "is Kit handling this?"', () => {
+  test("the rules live in exactly one module", () => {
+    // Every surface asks kitStatus. A second opinion is how an Application
+    // page and a review lightbox end up disagreeing about whether somebody
+    // has been emailed.
+    const derivers = sourceFiles("src").filter((file) => {
+      // The tests assert the copy on purpose; what must not exist is a second
+      // PRODUCTION module that decides it.
+      if (file.endsWith("kitStatus.ts") || /\.test\.tsx?$/.test(file))
+        return false;
+      const body = code(read(file));
+      return /Kit: (Tagged|Syncing|Not synced|Needs attention|Not used)/.test(
+        body,
+      );
+    });
+    expect(derivers).toEqual([]);
+    expect(code(LINE)).toMatch(/kitStatus\(/);
+    expect(code(CARD_UI)).not.toMatch(/kitStatus\(/);
+  });
+
+  test("the five lines are exactly the ones Leif asked for", () => {
+    expect(STATUS).toContain('tagged: "Kit: Tagged ✓"');
+    expect(STATUS).toContain('syncing: "Kit: Syncing…"');
+    expect(STATUS).toContain('attention: "Kit: Needs attention"');
+    expect(STATUS).toContain('manual: "Kit: Not synced — email manually"');
+    expect(STATUS).toContain('"not-used": "Kit: Not used"');
+  });
+
+  test("an imported record can never be presented as unsynced work", () => {
+    expect(code(STATUS)).toMatch(
+      /application\.source === "historical_import" \? "historical" : "manual"/,
+    );
+    // And the page renders nothing at all for it.
+    expect(code(LINE)).toMatch(/status\.kind === "historical"\) return null/);
+  });
+
+  test("a decided application is not Tagged until its outcome tag has landed", () => {
+    expect(code(STATUS)).toMatch(
+      /KIT_DECISIONS\.includes\(application\.status\)/,
+    );
+    expect(code(STATUS)).toMatch(
+      /required\.every\(\(kind\) => of\(kind\)\?\.status === "succeeded"\)/,
+    );
+  });
+
+  test("nothing on the surface asks Kit anything", () => {
+    for (const source of [STATUS, LINE, CARD_UI]) {
+      expect(source).not.toMatch(/api\.kit\.com/);
+      expect(code(source)).not.toMatch(/fetch\(/);
+      expect(code(source)).not.toMatch(/X-Kit-Api-Key/);
+    }
+    // The state comes from the CRM's own durable rows.
+    expect(code(LINE)).toMatch(
+      /useGetList<KitSyncOperation>\(\s*"kit_sync_operations"/,
+    );
+  });
+
+  test("no adoption or backfill action exists yet", () => {
+    // Deliberate: the live Kit path has not been human-accepted on a real
+    // post-boundary application, so nothing offers to sync an old applicant.
+    for (const source of [STATUS, LINE, CARD_UI]) {
+      expect(source).not.toMatch(/Add to Kit|Adopt|Backfill|Sync old/i);
+    }
+    expect(MIGRATION).not.toMatch(/adopt_application_into_kit/);
   });
 });
 
