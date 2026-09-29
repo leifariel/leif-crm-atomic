@@ -168,15 +168,15 @@ const ApplicationShowContent = () => {
                 })}
               </p>
             )}
+
+            {/* Is Kit handling this application, or is it Leif's to do by
+                hand? At the foot of the decision he just made, inside the
+                Application's own card — it used to float naked between two
+                cards, which was the right information in the wrong clothes. */}
+            <KitStatusLine application={record} />
           </Section>
         </CardContent>
       </Card>
-
-      {/* Is Kit handling this application, or is the decision email Leif's
-          to send? One compact line for every answer, and a card only for the
-          one that needs him. Silent only for an imported historical record,
-          which has no Kit work and no work for anyone. */}
-      <KitStatusLine application={record} />
 
       {deal && (
         <Section

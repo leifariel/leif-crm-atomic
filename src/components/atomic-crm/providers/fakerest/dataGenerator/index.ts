@@ -67,6 +67,8 @@ export default (): Db => {
   // Same reason: the Application page asks whether this applicant reached
   // Kit, and the demo has no Kit at all.
   db.kit_sync_operations = [];
+  db.kit_tag_mappings = [];
+  db.kit_integration_settings = [];
   db.contact_stripe_customers = [];
   db.deal_stripe_plan_objects = [];
   db.deals = generateDeals(db);

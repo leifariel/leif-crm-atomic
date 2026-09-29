@@ -35,14 +35,38 @@ const LE: Offer = {
   updated_at: "2026-01-01T00:00:00.000Z",
 } as Offer;
 
+const MAPPINGS = [
+  {
+    id: 1,
+    offer_id: 1,
+    event: "applicant",
+    kit_tag_id: 24082722,
+    kit_tag_name: "MiniDD_Applicant",
+    created_at: "2026-09-28T23:04:40.000Z",
+  },
+  {
+    id: 2,
+    offer_id: 1,
+    event: "approved",
+    kit_tag_id: 21784073,
+    kit_tag_name: "MiniDD_Approved",
+    created_at: "2026-09-28T23:04:40.000Z",
+  },
+];
+const BOUNDARY = "2026-09-28T23:04:40.000Z";
+
 const buildCrm = ({
   operations = [],
   status = "pending",
   source = "public_form",
+  createdAt = "2026-09-29T09:00:00.000Z",
+  mappings = MAPPINGS,
 }: {
   operations?: Partial<KitSyncOperation>[];
   status?: string;
   source?: string;
+  createdAt?: string;
+  mappings?: unknown[];
 } = {}) => {
   const dataProvider = createDataProvider({
     db: createCrmDb({
@@ -77,10 +101,12 @@ const buildCrm = ({
           raw_answers: {},
           submitted_at: "2026-09-29T00:00:00.000Z",
           reviewed_at: null,
-          created_at: "2026-09-29T00:00:00.000Z",
-          updated_at: "2026-09-29T00:00:00.000Z",
+          created_at: createdAt,
+          updated_at: createdAt,
         } as unknown as Application,
       ],
+      kit_tag_mappings: mappings,
+      kit_integration_settings: [{ id: 1, not_before: BOUNDARY }],
       kit_sync_operations: operations.map(
         (over, index) =>
           ({
@@ -88,6 +114,8 @@ const buildCrm = ({
             application_id: 9,
             contact_id: 3,
             kind: "applicant",
+            origin: "automatic_application",
+            requested_by: null,
             email: "ada@example.com",
             kit_tag_id: 24082722,
             kit_tag_name: "MiniDD_Applicant",
@@ -212,15 +240,53 @@ describe("Kit is handling it", () => {
 });
 
 describe("Kit is not handling it", () => {
-  it("tells Leif plainly that a live applicant needs a manual email", async () => {
+  it("tells Leif it is his, and names the tag still missing", async () => {
     await page.viewport(1280, 1400);
-    const { element } = buildCrm({ operations: [] });
+    const { element } = buildCrm({
+      operations: [],
+      createdAt: "2026-09-21T14:00:00.000Z",
+    });
     const screen = await render(element);
 
     await expect
-      .element(screen.getByText("Kit: Not synced — email manually"))
+      .element(screen.getByText("Kit: Manual — action needed"))
       .toBeVisible();
+    expect(document.body.textContent ?? "").toContain("MiniDD_Applicant");
     expect(kitCalls()).toEqual([]);
+  });
+
+  it("says manual work is up to date once the tag is provider-confirmed", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm({
+      createdAt: "2026-09-21T14:00:00.000Z",
+      operations: [
+        {
+          application_id: null,
+          kind: "manual",
+          origin: "manual_owner",
+          requested_by: "leif@leifariel.com",
+          ...succeeded,
+        },
+      ],
+    });
+    const screen = await render(element);
+
+    await expect
+      .element(screen.getByText("Kit: Manual — up to date ✓"))
+      .toBeVisible();
+    // Never "Tagged": that would claim the automatic integration is following
+    // this person's lifecycle, and it is not.
+    expect(document.body.textContent ?? "").not.toContain("Kit: Tagged");
+  });
+
+  it("says so plainly when the programme has no Kit tags at all", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm({ operations: [], mappings: [] });
+    const screen = await render(element);
+
+    await expect
+      .element(screen.getByText("Kit: Automation not configured"))
+      .toBeVisible();
   });
 
   it("says nothing at all for an imported historical record", async () => {
@@ -249,6 +315,38 @@ describe("Kit is not handling it", () => {
     const text = document.body.textContent ?? "";
     expect(text).not.toContain("email manually");
     expect(text).not.toContain("Needs attention");
+  });
+});
+
+describe("the presentation itself", () => {
+  it("houses the status in a bordered container, not naked floating text", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm({ operations: [succeeded] });
+    const screen = await render(element);
+
+    await expect.element(screen.getByText("Kit: Tagged ✓")).toBeVisible();
+    const line = Array.from(document.body.querySelectorAll("span")).find(
+      (node) => node.textContent?.trim() === "Kit: Tagged ✓",
+    );
+    const strip = line?.closest("div.rounded-md.border");
+    expect(
+      strip,
+      "the Kit status is not inside a bordered strip",
+    ).not.toBeNull();
+  });
+
+  it("sits inside the Application's own card, at the foot of the decision", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm({ operations: [succeeded] });
+    const screen = await render(element);
+
+    await expect.element(screen.getByText("Kit: Tagged ✓")).toBeVisible();
+    const line = Array.from(document.body.querySelectorAll("span")).find(
+      (node) => node.textContent?.trim() === "Kit: Tagged ✓",
+    );
+    // The Application's primary object is one large rounded card; the strip
+    // belongs to its content rather than floating after it.
+    expect(line?.closest("[data-slot='card-content']")).not.toBeNull();
   });
 });
 

@@ -206,6 +206,11 @@ export type CohortStatus =
 // A single round of a GROUP offer (e.g. a GYU cohort). Individual offers
 // never use Cohorts.
 export type Cohort = {
+  // The round's own Kit tag, optional. When set, a NEW application for this
+  // round gets it IN ADDITION to the programme's applicant tag, as a second
+  // auditable operation. Changing it affects future applications only.
+  kit_tag_id?: number | null;
+  kit_tag_name?: string | null;
   offer_id: Identifier;
   name: string;
   status: CohortStatus;
@@ -1301,10 +1306,28 @@ export type KitSyncFailureClass =
   | "not_configured"
   | "unknown";
 
+// Which Kit tag a programme's applications and decisions mean. Owner-editable
+// through set_program_kit_tag() and readable by the CRM so a Programme page can
+// show what it uses; never writable from a browser, so nothing can PATCH an
+// arbitrary number into the mapping that decides a future applicant's email.
+export type KitTagMapping = {
+  offer_id: Identifier;
+  event: "applicant" | "approved" | "needs_higher_care" | "not_fit";
+  kit_tag_id: number;
+  kit_tag_name: string;
+  created_at: string;
+} & Pick<RaRecord, "id">;
+
 export type KitSyncOperation = {
-  application_id: Identifier;
+  // Null for a person-level manual tag, which is about the human rather than
+  // any one application; set when the request was started from one.
+  application_id: Identifier | null;
   contact_id: Identifier;
-  kind: "applicant" | "decision";
+  kind: "applicant" | "cohort" | "decision" | "manual";
+  // Automatic work followed from an application event; manual work is Leif
+  // asking for a tag on a person, and says who asked.
+  origin: "automatic_application" | "manual_owner";
+  requested_by: string | null;
   // Normalized at enqueue time by the same rule the receipt path uses, so a
   // later edit to the Contact cannot silently retarget work already owed.
   email: string;

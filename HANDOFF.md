@@ -1993,6 +1993,170 @@ automations**, so a green sync there does not mean an email went out and the
 CRM never claims it did. Nothing in this repository changes when he attaches
 them.
 
+## 8b-kit-owner. KIT OWNER CONTROLS — FOUNDATION BUILT 2026-09-29, UI PART-DONE
+
+**Three commits, none pushed.** `288da40b` schema and authorities, `36aadfef`
+the Kit v4 catalog, and — on top of those two — *say which Kit tags are still
+Leif’s to add, in a container*, which carries the manual-mode status and the
+presentation fix. (Named rather than hashed: amending it would move the hash.)
+**The owner-facing UI is deliberately NOT finished — see "What is still to
+build" at the end, which is the operative part of this section.**
+
+### Why this slice exists
+
+`b207c04b` put `Kit: Not synced — email manually` on the Application. Leif
+confirmed it on Michelle Smith: **the information was right, in the right
+place, and the presentation was wrong** — naked text floating between two
+cards. And it told him to act without giving him any way to.
+
+Underneath that were two bigger gaps: which tag a programme applies was a
+number only a migration could change, and the five people who predate the
+integration had no route into Kit at all.
+
+### Three concerns, kept apart
+
+Collapsing them is how a "Kit status" stops meaning anything.
+
+| | Question | Where it lives |
+|---|---|---|
+| **Configuration** | which tag should a FUTURE event apply? | `kit_tag_mappings`, `cohorts.kit_tag_id` |
+| **Manual work** | which tag does Leif want on THIS human? | an operation with `origin = 'manual_owner'` |
+| **Operational** | who needs Kit attention right now? | derived, never stored |
+
+### The rule that makes configuration safe to hand over
+
+**Changing a mapping changes nothing that already happened.** Every operation
+freezes its tag id at enqueue, so a new tag reaches new events and nothing
+else — no historical retagging, no rewriting a pending row, no backfill. The
+migration asserts exactly that, and that **clearing** a mapping stops new work
+rather than falling back to a guess. Contract tests pin it too.
+
+`set_program_kit_tag(offer, event, tag_id, tag_name)` is the only way in, and
+it never touches `kit_sync_operations`.
+
+### The outbox learned three things without losing what it guaranteed
+
+- **a cohort tag** — `cohorts.kit_tag_id` is optional and **additive**: the
+  round's applicant gets the programme's tag AND the round's, as two separate
+  auditable operations, not one that quietly did two things. Configuring it
+  afterwards does not reach back.
+- **a manual tag** — an operation about a person, with **no application at
+  all** (it may merely *mention* the one it was started from).
+- **who asked** — `requested_by`.
+
+The deployed guarantee survives exactly: `unique (application_id, kind)`
+becomes **partial**, scoped to `origin = 'automatic_application'`. Manual work
+gets its own anchor beside it: `unique (contact_id, kit_tag_id) where origin =
+'manual_owner'` — one operation per person per tag, which is also what Kit
+itself does, so the two agree. **Asking twice is the same request.**
+
+`request_kit_manual_tag()` runs through the same worker, evidence and retry as
+everything automatic. It is not a button that calls an API and hopes. It
+**refuses somebody marked Do Not Engage**, because a manual route around that
+decision would make the refusal decorative.
+
+### The browser reads configuration and writes nothing
+
+`kit_tag_mappings` and `kit_integration_settings` became **readable** by
+`authenticated` (the Programme page has to show its tags; the Application has
+to know whether it predates the boundary) and stay **unwritable** — no
+insert/update/delete policy, both authorities are validating RPCs. Proved by
+attempting both writes as `authenticated` and requiring the refusal.
+
+### Kit v4, confirmed against the real contract
+
+Checked against Kit's own published reference, not assumed:
+
+| Need | Endpoint | Behaviour |
+|---|---|---|
+| list tags | `GET /v4/tags` | cursor-paginated, ≤1000/page |
+| create tag | `POST /v4/tags` | **idempotent on name, case-insensitive** — 200 returns the existing tag |
+| tag a person | `POST /v4/tags/{id}/subscribers` `{email_address}` | **200 when already tagged** |
+| a person's tags | `GET /v4/subscribers/{id}/tags` | cursor-paginated, with `tagged_at` |
+
+**This also confirms the already-deployed worker's endpoints are correct**,
+which de-risks the pending automatic acceptance. Creating a tag attaches it to
+nobody. All four new Edge Function actions are **owner-only**, checked in one
+place: the cron secret proves a schedule, and a schedule has no business
+creating a tag or tagging a person.
+
+### Manual mode, and the status that tells the truth about it
+
+`kitStatus` is one shared derivation, now taking the application, its
+operations, the mappings, the round's tag and the boundary.
+
+| Line | When |
+|---|---|
+| `Kit: Tagged ✓` | automatic, and every tag the CURRENT state needs has landed |
+| `Kit: Syncing…` | automatic, on its way |
+| `Kit: Needs attention` | a refusal, or work waiting over 30 minutes — card + Retry |
+| `Kit: Manual — action needed` | predates the integration; the named tags are Leif's |
+| `Kit: Manual — up to date ✓` | every tag the CURRENT state needs is provider-confirmed |
+| `Kit: Automation not configured` | this programme has no Kit tags |
+| `Kit: Not used` | Do Not Engage |
+| *(nothing)* | `historical_import` — finished history |
+
+**Manual is never called Tagged.** "Tagged" claims the automatic integration is
+following that person's lifecycle; for a pre-boundary application it is not,
+and a later decision makes the work manual again — Michelle pending needs
+`MiniDD_Applicant`; Michelle approved needs `MiniDD_Approved` as well and she
+**re-enters the queue**. The strip names the tags, with `✓` / `○`, because
+"add the tags" is not an instruction until it says which.
+
+### The presentation fix
+
+The strip now lives **inside the Application's own card, at the foot of Review
+Decision** — where Leif looks straight after deciding — in the CRM's bordered
+container language (`rounded-md border px-3 py-2`), not naked text between two
+cards. The actionable failure state still expands into the existing rounded
+card with **Retry Kit sync**. Two tests assert the housing and the placement,
+so the floating version cannot come back.
+
+### WHAT IS STILL TO BUILD — the rest of this slice
+
+**The foundation is done and proved; the owner-facing surfaces are not.**
+Nothing below is started, and the CRM today still gives Leif no button to add
+a tag. In rough dependency order:
+
+1. **Shared Kit tag picker** — search the catalog, create a tag without
+   leaving the CRM, choose by id. The Edge Function actions it needs
+   (`tags`, `create_tag`) are built and tested.
+2. **Contact "Manage Kit tags" modal** — the canonical person-level manager,
+   adding only (no removal, no bulk), with the persistent warning *"Adding a
+   Kit tag may trigger an automation connected to that tag."* The authority
+   (`request_kit_manual_tag`) and the Edge Function action (`manual_tag`,
+   `contact_tags`) are built and tested.
+3. **Application "Manage Kit tags"** — the same modal, reached from the
+   Application, never a second tag universe.
+4. **Programme Kit section** in the Offer create/edit form — the four tags,
+   using the picker, saving through `set_program_kit_tag`.
+5. **Cohort Kit tag field** in `CohortInputs` — one optional tag.
+6. **Aggregate Dashboard item** — `Kit needs attention · N` as a derived
+   section (the repo's `OutstandingScholarshipReservations` /
+   `NeedsOnboarding` pattern, **not** Task rows), opening a lightbox with the
+   manual worklist and the failed-sync list, reusing the existing retry.
+   `Dashboard.tsx` carries 6 lines of parked-builder dirt at two hunks —
+   stage by content, as the schema files were.
+7. **Manual Application creation** — show the programme's Kit configuration
+   and allow extra tags through the picker.
+
+**Decision-tag safety, unchanged and still required when those land:** adding
+Approved or Not Fit may fire Leif's existing automations; **Needs Higher Care
+has no automation attached**, so the UI must say the tag landed *and* the
+email still has to be sent by hand, and must never claim an email was sent.
+Do Not Engage gets no Kit work at all.
+
+**Still not in scope:** bulk tagging, tag removal, renaming or deleting tags
+in Kit, and any automatic adoption of the five pre-boundary applicants.
+Manual tagging is **not** automatic adoption: tagging Michelle by hand records
+provider-confirmed manual evidence and does **not** make her Application
+eligible for the automatic decision trigger.
+
+**Unchanged:** the Gmail takeover sequence (§8b-kit-gmail) — make Kit's
+decision automations safe FIRST, only then backfill. And the next genuine
+post-boundary application is still the human acceptance event for the
+automatic path.
+
 ## 8b-builder. APPLICATION FORM BUILDER — PARKED
 
 Still **uncommitted**, parked in a stash while the three commits above were

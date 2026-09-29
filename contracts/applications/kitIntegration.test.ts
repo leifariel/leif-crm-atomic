@@ -39,6 +39,9 @@ const sourceFiles = (dir: string): string[] =>
 const STATUS = read("src/components/atomic-crm/applications/kitStatus.ts");
 const LINE = read("src/components/atomic-crm/applications/KitStatusLine.tsx");
 const CARD_UI = read("src/components/atomic-crm/applications/KitSyncCard.tsx");
+const MIGRATION_ADMIN = read(
+  "supabase/migrations/20260929120000_kit_is_leifs_to_configure.sql",
+);
 
 // Leif's real tags, given in the resolved Kit contract. These numbers reach
 // live automations; they are not placeholders and must never be edited to
@@ -336,17 +339,33 @@ describe('one shared answer to "is Kit handling this?"', () => {
     expect(code(CARD_UI)).not.toMatch(/kitStatus\(/);
   });
 
-  test("the five lines are exactly the ones Leif asked for", () => {
+  test("the lines are exactly the ones Leif asked for", () => {
     expect(STATUS).toContain('tagged: "Kit: Tagged ✓"');
     expect(STATUS).toContain('syncing: "Kit: Syncing…"');
     expect(STATUS).toContain('attention: "Kit: Needs attention"');
-    expect(STATUS).toContain('manual: "Kit: Not synced — email manually"');
+    expect(STATUS).toContain('"manual-action": "Kit: Manual — action needed"');
+    expect(STATUS).toContain('"manual-done": "Kit: Manual — up to date ✓"');
+    expect(STATUS).toContain(
+      '"not-configured": "Kit: Automation not configured"',
+    );
     expect(STATUS).toContain('"not-used": "Kit: Not used"');
   });
 
+  test("manual work is never called Tagged", () => {
+    // "Tagged" claims the automatic integration is following this person's
+    // lifecycle. For a pre-boundary application it is not, and a later
+    // decision makes the work manual again.
+    expect(STATUS).not.toMatch(/"manual-done": "Kit: Tagged/);
+    expect(code(STATUS)).toMatch(/say\("manual-done"/);
+  });
+
   test("an imported record can never be presented as unsynced work", () => {
+    // Source is the discriminator: only a live application can be manual work.
     expect(code(STATUS)).toMatch(
-      /application\.source === "historical_import" \? "historical" : "manual"/,
+      /if \(!TERMINAL_SOURCES\.includes\(application\.source\)\) return say\("historical"\)/,
+    );
+    expect(code(STATUS)).toMatch(
+      /TERMINAL_SOURCES = \["public_form", "manual"\]/,
     );
     // And the page renders nothing at all for it.
     expect(code(LINE)).toMatch(/status\.kind === "historical"\) return null/);
@@ -354,10 +373,49 @@ describe('one shared answer to "is Kit handling this?"', () => {
 
   test("a decided application is not Tagged until its outcome tag has landed", () => {
     expect(code(STATUS)).toMatch(
-      /KIT_DECISIONS\.includes\(application\.status\)/,
+      /KIT_DECISIONS as readonly string\[\]\)\.includes\(application\.status\)/,
     );
+    // Tagged requires EVERY tag the current state calls for, by tag id.
     expect(code(STATUS)).toMatch(
-      /required\.every\(\(kind\) => of\(kind\)\?\.status === "succeeded"\)/,
+      /const covered =\s*\n?\s*required\.length > 0/,
+    );
+    expect(code(STATUS)).toMatch(/operation\.status === "succeeded"/);
+  });
+
+  test("changing a mapping can never reach an operation that already exists", () => {
+    // Every operation freezes its tag at enqueue; the configuration authority
+    // only ever writes the mapping table.
+    const fn = MIGRATION_ADMIN.slice(
+      MIGRATION_ADMIN.indexOf("function public.set_program_kit_tag"),
+    );
+    const body = fn.slice(0, fn.indexOf("$;"));
+    expect(body).not.toMatch(/kit_sync_operations/);
+    expect(MIGRATION_ADMIN).toContain(
+      "changing the mapping rewrote an existing operation",
+    );
+    expect(MIGRATION_ADMIN).toContain(
+      "changing the mapping backfilled an old applicant",
+    );
+  });
+
+  test("manual tagging is idempotent per person per tag, and refuses Do Not Engage", () => {
+    expect(MIGRATION_ADMIN).toMatch(
+      /create unique index if not exists kit_sync_operations_manual_tag_idx[\s\S]*?\(contact_id, kit_tag_id\)[\s\S]*?where origin = 'manual_owner'/,
+    );
+    const fn = MIGRATION_ADMIN.slice(
+      MIGRATION_ADMIN.indexOf("function public.request_kit_manual_tag"),
+    );
+    const body = fn.slice(0, fn.indexOf("$;"));
+    expect(body).toMatch(/sales_eligibility = 'do_not_engage'/);
+    expect(body).toMatch(/'do-not-engage'/);
+  });
+
+  test("the deployed automatic idempotency anchor still means what it did", () => {
+    expect(MIGRATION_ADMIN).toMatch(
+      /create unique index if not exists kit_sync_operations_application_kind_idx[\s\S]*?\(application_id, kind\)[\s\S]*?where origin = 'automatic_application'/,
+    );
+    expect(MIGRATION_ADMIN).toContain(
+      "the automatic idempotency anchor is gone",
     );
   });
 

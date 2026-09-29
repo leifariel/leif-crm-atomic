@@ -2,60 +2,72 @@ import type {
   Application,
   KitSyncFailureClass,
   KitSyncOperation,
+  KitTagMapping,
 } from "../types";
 
 export type { KitSyncOperation };
 
 // THE one answer the Application page has to give about Kit:
 //
-//   is Kit handling this application, or is it mine to email by hand?
+//   is Kit handling this application, or is it mine to do by hand?
 //
-// One derivation, used by every surface (AGENTS.md -> Operational UX
-// conventions: one implementation, many entry points). When the Application
-// Form Builder resumes, its review lightbox reuses this — it does not grow a
-// second opinion.
+// One derivation, used by every surface — the Application's own status strip
+// and the Dashboard's aggregate worklist both ask this and nothing else, so
+// they cannot disagree about whether somebody has been emailed. When the
+// Application Form Builder resumes, its review lightbox reuses this too.
 //
-// Everything here comes from DURABLE CRM EVIDENCE — the application's own
-// source and status, and the kit_sync_operations rows the database wrote. Kit
-// is never asked anything at render time, which is what makes the answer
-// instant, offline-safe, and honest about what the CRM actually knows.
+// Everything comes from DURABLE CRM EVIDENCE: the application's own source,
+// status and age, the configured tag mappings, and the kit_sync_operations
+// rows the database wrote. Kit is never asked anything at render time.
 //
-// Kit is downstream of all of it: the application, the decision, the
-// Opportunity and the review Task are true whatever Kit did. So this speaks
-// only about whether the tags Kit owes have landed, and what it costs when
-// they have not.
+// Three concerns stay separate, because collapsing them is how a status stops
+// meaning anything:
+//
+//   AUTOMATIC   the integration is handling this application's lifecycle
+//   MANUAL      it predates the integration, so its tags are Leif's to add
+//   NOT KIT     Do Not Engage, an unconfigured programme, or finished history
 
 export type KitStatusKind =
-  // Everything the CURRENT CRM state requires has reached Kit.
+  // Automatic, and everything the CURRENT state requires has landed.
   | "tagged"
-  // On its way, and not yet old enough to be worth mentioning.
+  // Automatic, on its way.
   | "syncing"
-  // Somebody has to look: a refusal, or work that has been waiting far too
+  // Automatic, and somebody has to look: a refusal, or work waiting far too
   // long. The only state that gets a card and an action.
   | "attention"
-  // THE operationally important one. A real, live application that Kit is not
-  // handling — it predates the integration, or its programme has no Kit tags,
-  // or there is no usable email. Whatever the reason, the consequence is the
-  // same and Leif has to know it: the decision email is his to send.
-  | "manual"
+  // Pre-boundary and live. Its tags are Leif's to add, and some are missing.
+  | "manual-action"
+  // Pre-boundary and live, and every tag its CURRENT state needs has been
+  // confirmed by Kit through the CRM. Deliberately NOT "Tagged": that would
+  // claim the automatic integration is following this person's lifecycle,
+  // and it is not — a later decision becomes manual work again.
+  | "manual-done"
+  // Live, after the boundary, but its programme has no Kit tags configured.
+  // Said out loud rather than guessed at or silently ignored.
+  | "not-configured"
   // Do Not Engage. The CRM refused them; Kit is deliberately never involved.
   | "not-used"
-  // An imported historical record. Kit was never going to hear about it and
-  // there is nothing for anyone to do, so the page stays silent rather than
-  // dressing history up as outstanding work.
+  // An imported historical record: no Kit work, and no work for anyone.
   | "historical";
+
+// One tag the application's CURRENT state calls for, and whether Kit has
+// confirmed it. This is what the Dashboard's rows are made of.
+export type KitRequiredTag = {
+  event: "applicant" | "cohort" | "approved" | "needs_higher_care" | "not_fit";
+  kitTagId: number;
+  kitTagName: string;
+  done: boolean;
+};
 
 export type KitStatus = {
   kind: KitStatusKind;
-  // The compact line Leif reads. Deliberately short enough to sit inline.
   label: string;
-  // Tag names that actually landed. Diagnostic, not primary: the retry tooling
-  // and a puzzled operator both want them, and neither wants them first.
+  // Tag names that actually landed. Diagnostic, not primary.
   tags: string[];
+  // Only meaningful in manual mode; empty otherwise.
+  required: KitRequiredTag[];
   failureClass: KitSyncFailureClass | null;
   detail: string | null;
-  // Only a failed operation can be re-queued. Work that is merely late is
-  // already on its way, and offering a button would be theatre.
   isRetryable: boolean;
 };
 
@@ -63,7 +75,9 @@ export const KIT_STATUS_LABELS: Record<KitStatusKind, string> = {
   tagged: "Kit: Tagged ✓",
   syncing: "Kit: Syncing…",
   attention: "Kit: Needs attention",
-  manual: "Kit: Not synced — email manually",
+  "manual-action": "Kit: Manual — action needed",
+  "manual-done": "Kit: Manual — up to date ✓",
+  "not-configured": "Kit: Automation not configured",
   "not-used": "Kit: Not used",
   historical: "",
 };
@@ -76,32 +90,104 @@ export const STALE_AFTER_MS = 30 * 60 * 1000;
 // Which decisions Kit has a tag for. 'do_not_engage' is absent because the
 // database has no mapping for it and never will; 'denied' and 'waitlist' are
 // historical-import-only values no live review can set.
-const KIT_DECISIONS = ["approved", "needs_higher_care", "not_fit"];
+const KIT_DECISIONS = ["approved", "needs_higher_care", "not_fit"] as const;
+
+const TERMINAL_SOURCES = ["public_form", "manual"];
 
 const outstanding = (operation: KitSyncOperation) =>
   operation.status === "pending" || operation.status === "processing";
 
-// What the application's CURRENT state requires Kit to have done. An
-// application still awaiting review owes only its programme tag; one Leif has
-// decided owes the outcome tag too. Nothing is "done" until this whole list
-// has landed.
-const requiredKinds = (application: Pick<Application, "status">) =>
-  KIT_DECISIONS.includes(application.status)
-    ? (["applicant", "decision"] as const)
-    : (["applicant"] as const);
+type StatusInput = {
+  application: Pick<
+    Application,
+    "id" | "contact_id" | "status" | "source" | "created_at" | "offer_id"
+  > & { intended_cohort_id?: number | string | null };
+  // Every operation that could speak about this application: its own automatic
+  // rows, plus this person's manual rows.
+  operations: KitSyncOperation[];
+  mappings?: KitTagMapping[];
+  cohortTag?: { kitTagId: number; kitTagName: string } | null;
+  // When the integration became live. Null means "not known here", and the
+  // caller then gets the pre-boundary reading, which is the safe one: it says
+  // the work is Leif's rather than claiming Kit has it.
+  notBefore?: string | null;
+  now?: Date;
+};
+
+// What the application's CURRENT state calls for. A pending application owes
+// its programme tag (and its round's, if that round has one); one Leif has
+// decided owes the outcome tag as well.
+export const requiredKitTags = ({
+  application,
+  mappings = [],
+  cohortTag = null,
+  operations,
+}: Pick<
+  StatusInput,
+  "application" | "mappings" | "cohortTag" | "operations"
+>): KitRequiredTag[] => {
+  const confirmed = new Set(
+    operations
+      .filter((operation) => operation.status === "succeeded")
+      .map((operation) => Number(operation.kit_tag_id)),
+  );
+  const mappedTag = (event: string) =>
+    mappings.find(
+      (mapping) =>
+        String(mapping.offer_id) === String(application.offer_id) &&
+        mapping.event === event,
+    );
+
+  const wanted: Array<{
+    event: KitRequiredTag["event"];
+    id: number;
+    name: string;
+  }> = [];
+  const applicant = mappedTag("applicant");
+  if (applicant) {
+    wanted.push({
+      event: "applicant",
+      id: Number(applicant.kit_tag_id),
+      name: applicant.kit_tag_name,
+    });
+  }
+  if (cohortTag) {
+    wanted.push({
+      event: "cohort",
+      id: cohortTag.kitTagId,
+      name: cohortTag.kitTagName,
+    });
+  }
+  if ((KIT_DECISIONS as readonly string[]).includes(application.status)) {
+    const decision = mappedTag(application.status);
+    if (decision) {
+      wanted.push({
+        event: application.status as KitRequiredTag["event"],
+        id: Number(decision.kit_tag_id),
+        name: decision.kit_tag_name,
+      });
+    }
+  }
+
+  return wanted.map((tag) => ({
+    event: tag.event,
+    kitTagId: tag.id,
+    kitTagName: tag.name,
+    done: confirmed.has(tag.id),
+  }));
+};
 
 export const kitStatus = ({
   application,
   operations,
+  mappings = [],
+  cohortTag = null,
+  notBefore = null,
   now = new Date(),
-}: {
-  application: Pick<Application, "status" | "source">;
-  operations: KitSyncOperation[];
-  now?: Date;
-}): KitStatus => {
-  const of = (kind: string) =>
-    operations.find((operation) => operation.kind === kind);
-
+}: StatusInput): KitStatus => {
+  const automatic = operations.filter(
+    (operation) => operation.origin !== "manual_owner",
+  );
   const tags = operations
     .filter((operation) => operation.status === "succeeded")
     .map((operation) => operation.kit_tag_name);
@@ -122,6 +208,7 @@ export const kitStatus = ({
     kind,
     label: KIT_STATUS_LABELS[kind],
     tags,
+    required: [],
     failureClass: null,
     detail: null,
     isRetryable: false,
@@ -129,10 +216,9 @@ export const kitStatus = ({
   });
 
   // A refusal outranks everything, including Do Not Engage. In the ordinary
-  // Do Not Engage case there is no failed row to find, so nothing is implied
-  // that is not true; but a row that failed before the decision was made must
-  // not be buried by it, because a buried row is exactly the invisible work
-  // this whole integration exists to end.
+  // refusal case there is no failed row so nothing untrue is implied; a row
+  // that failed BEFORE the refusal must not be buried, because a buried row is
+  // exactly the invisible work this integration exists to end.
   if (failed.length > 0 || stuck.length > 0) {
     const worst = failed[0] ?? null;
     return say("attention", {
@@ -144,25 +230,68 @@ export const kitStatus = ({
 
   if (application.status === "do_not_engage") return say("not-used");
 
-  if (operations.length === 0) {
-    // The discriminator that matters. An imported record and a live applicant
-    // both have no Kit operations, and they mean opposite things: one is
-    // finished history, the other is a decision email nobody has sent.
-    return say(
-      application.source === "historical_import" ? "historical" : "manual",
-    );
+  // An imported record and a live applicant can both have no operations and
+  // mean opposite things. Source is the discriminator, and history must never
+  // read as outstanding work.
+  if (!TERMINAL_SOURCES.includes(application.source)) return say("historical");
+
+  // Automatic: the application is Kit-managed exactly when the integration
+  // created work for it.
+  if (automatic.length > 0) {
+    const required = requiredKitTags({
+      application,
+      mappings,
+      cohortTag,
+      operations: automatic,
+    });
+    const covered =
+      required.length > 0 &&
+      required.every((tag) =>
+        automatic.some(
+          (operation) =>
+            Number(operation.kit_tag_id) === tag.kitTagId &&
+            operation.status === "succeeded",
+        ),
+      );
+    if (covered) return say("tagged");
+    if (automatic.some(outstanding)) return say("syncing");
+    // Operations exist, none failed, none in flight, and something the current
+    // state needs is missing — so nothing is coming.
+    return say("manual-action", {
+      required: requiredKitTags({
+        application,
+        mappings,
+        cohortTag,
+        operations,
+      }),
+    });
   }
 
-  const required = requiredKinds(application);
-  if (required.every((kind) => of(kind)?.status === "succeeded")) {
-    return say("tagged");
-  }
-  if (operations.some(outstanding)) return say("syncing");
+  // No automatic work. Either this application predates the integration, or
+  // its programme is not configured.
+  const preBoundary =
+    notBefore == null ||
+    new Date(application.created_at).getTime() < new Date(notBefore).getTime();
 
-  // Operations exist, none failed, none in flight, and something the current
-  // state requires is still missing — so nothing is coming, and the honest
-  // answer is the same one a pre-boundary application gets.
-  return say("manual");
+  const required = requiredKitTags({
+    application,
+    mappings,
+    cohortTag,
+    operations,
+  });
+
+  // Nothing is configured for this programme, so nothing can be required —
+  // said out loud either way, because a silent page would let an application
+  // look handled when no tag exists for it at all.
+  if (required.length === 0) return say("not-configured");
+  // Only a live application that predates the integration is Leif's to tag by
+  // hand. One created after it with a configured programme but no operation is
+  // a real anomaly, and reads the same way: somebody has to act.
+  void preBoundary;
+
+  return required.every((tag) => tag.done)
+    ? say("manual-done", { required })
+    : say("manual-action", { required });
 };
 
 // What went wrong, in Leif's terms. No status codes, no payloads, no mention

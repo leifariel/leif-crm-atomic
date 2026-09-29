@@ -53,6 +53,10 @@ export const createCrmDb = (overrides: Partial<Db> = {}): Db =>
     // on every Application page, and an undeclared collection is an
     // UndefinedResourceError rather than a quiet "nothing to say".
     kit_sync_operations: [],
+    // Which Kit tag each programme's events mean, and when the integration
+    // became live. Read by the Application's Kit strip on every render.
+    kit_tag_mappings: [],
+    kit_integration_settings: [],
     // The Won -> Enrollment mirror (ensureEnrollmentForWonDeal) reads this
     // collection, so it has to exist by default or marking a Deal Won
     // throws UndefinedResourceError instead of creating the client.

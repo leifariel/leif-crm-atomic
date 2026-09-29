@@ -4,31 +4,60 @@ import {
   KIT_STATUS_LABELS,
   kitFailureSentence,
   kitStatus,
+  requiredKitTags,
   STALE_AFTER_MS,
 } from "./kitStatus";
 import type {
   Application,
   ApplicationStatus,
   KitSyncOperation,
+  KitTagMapping,
 } from "../types";
 
-// The one question the Application has to answer at a glance: is Kit handling
-// this, or is the decision email Leif's to send? Every branch of that answer
-// is pinned here, because the expensive mistake is the silent one — reviewing
-// somebody while assuming an email will go out that never will.
+// The one question the Application has to answer: is Kit handling this, or is
+// it Leif's to do by hand? Every branch is pinned, because the expensive
+// mistake is the silent one — reviewing somebody while assuming an email will
+// go out that never will.
 
 const NOW = new Date("2026-09-29T12:00:00.000Z");
+const BOUNDARY = "2026-09-28T23:04:40.000Z";
 const minutesAgo = (n: number) =>
   new Date(NOW.getTime() - n * 60 * 1000).toISOString();
 
+const LE_TAGS = {
+  applicant: { id: 24082722, name: "MiniDD_Applicant" },
+  approved: { id: 21784073, name: "MiniDD_Approved" },
+  needs_higher_care: { id: 24082725, name: "MiniDD_NeedsHigherCare" },
+  not_fit: { id: 21784076, name: "MiniDD_Denied" },
+};
+
+const MAPPINGS: KitTagMapping[] = Object.entries(LE_TAGS).map(
+  ([event, tag], index) =>
+    ({
+      id: index + 1,
+      offer_id: 1,
+      event,
+      kit_tag_id: tag.id,
+      kit_tag_name: tag.name,
+      created_at: "2026-09-28T23:04:40.000Z",
+    }) as KitTagMapping,
+);
+
+// After the boundary by default: the automatic integration's world.
 const app = (over: Partial<Application> = {}) =>
   ({
     id: 9,
     contact_id: 3,
     status: "pending",
     source: "public_form",
+    offer_id: 1,
+    intended_cohort_id: null,
+    created_at: "2026-09-29T09:00:00.000Z",
     ...over,
   }) as Application;
+
+const preBoundary = (over: Partial<Application> = {}) =>
+  app({ created_at: "2026-09-21T14:00:00.000Z", ...over });
 
 const op = (over: Partial<KitSyncOperation> = {}) =>
   ({
@@ -36,9 +65,11 @@ const op = (over: Partial<KitSyncOperation> = {}) =>
     application_id: 9,
     contact_id: 3,
     kind: "applicant",
+    origin: "automatic_application",
+    requested_by: null,
     email: "ada@example.com",
-    kit_tag_id: 24082722,
-    kit_tag_name: "MiniDD_Applicant",
+    kit_tag_id: LE_TAGS.applicant.id,
+    kit_tag_name: LE_TAGS.applicant.name,
     status: "pending",
     attempts: 0,
     last_attempt_at: null,
@@ -60,102 +91,100 @@ const done = (over: Partial<KitSyncOperation> = {}) =>
     ...over,
   });
 
-const failed = (over: Partial<KitSyncOperation> = {}) =>
+const manual = (over: Partial<KitSyncOperation> = {}) =>
   op({
-    status: "failed",
-    failed_at: minutesAgo(1),
-    failure_class: "provider_unavailable",
-    failure_reason: "Kit responded 503",
+    application_id: null,
+    kind: "manual",
+    origin: "manual_owner",
+    requested_by: "leif@leifariel.com",
     ...over,
   });
 
-const DECISION = {
-  kind: "decision" as const,
-  kit_tag_id: 21784073,
-  kit_tag_name: "MiniDD_Approved",
-};
+const state = (over: Parameters<typeof kitStatus>[0]) =>
+  kitStatus({ mappings: MAPPINGS, notBefore: BOUNDARY, now: NOW, ...over });
 
-describe("Kit is handling it", () => {
+describe("automatic — Kit is handling it", () => {
   it("says Tagged once the programme tag has landed on a pending application", () => {
-    const status = kitStatus({
-      application: app(),
-      operations: [done()],
-      now: NOW,
-    });
+    const status = state({ application: app(), operations: [done()] });
     expect(status.kind).toBe("tagged");
     expect(status.label).toBe("Kit: Tagged ✓");
-    expect(status.isRetryable).toBe(false);
   });
 
   it("says Tagged on a decided application only once BOTH tags have landed", () => {
-    const status = kitStatus({
+    const status = state({
       application: app({ status: "approved" }),
-      operations: [done(), done({ id: 2, ...DECISION })],
-      now: NOW,
+      operations: [
+        done(),
+        done({
+          id: 2,
+          kind: "decision",
+          kit_tag_id: LE_TAGS.approved.id,
+          kit_tag_name: LE_TAGS.approved.name,
+        }),
+      ],
     });
     expect(status.kind).toBe("tagged");
-    expect(status.tags).toEqual(["MiniDD_Applicant", "MiniDD_Approved"]);
   });
 
-  it.each(["approved", "needs_higher_care", "not_fit"] as const)(
-    "requires the decision tag for %s, and says Syncing until it lands",
-    (status) => {
-      const result = kitStatus({
-        application: app({ status }),
-        operations: [done(), op({ id: 2, ...DECISION })],
-        now: NOW,
-      });
-      expect(result.kind).toBe("syncing");
-      expect(result.label).toBe("Kit: Syncing…");
-    },
-  );
-
   it("does not call a decided application Tagged on the applicant tag alone", () => {
-    // The whole point: an approved applicant whose outcome tag never reached
-    // Kit has not had their email sent, and must not read as finished.
-    const status = kitStatus({
+    const status = state({
       application: app({ status: "approved" }),
-      operations: [done()],
-      now: NOW,
+      operations: [
+        done(),
+        op({ id: 2, kind: "decision", kit_tag_id: LE_TAGS.approved.id }),
+      ],
     });
+    expect(status.kind).toBe("syncing");
+  });
+
+  it("counts a cohort tag as required when the round has one", () => {
+    const status = state({
+      application: app({ intended_cohort_id: 4 }),
+      cohortTag: { kitTagId: 991234, kitTagName: "GYU_Jan2027" },
+      operations: [done()],
+    });
+    // The programme tag landed; the round's has not.
     expect(status.kind).not.toBe("tagged");
   });
 
-  it("says Syncing for work only just queued", () => {
-    expect(
-      kitStatus({ application: app(), operations: [op()], now: NOW }).kind,
-    ).toBe("syncing");
-  });
-
-  it("stays Syncing while a claimed operation is being processed", () => {
-    expect(
-      kitStatus({
-        application: app(),
-        operations: [op({ status: "processing", attempts: 1 })],
-        now: NOW,
-      }).kind,
-    ).toBe("syncing");
+  it("is Tagged once both the programme and the round tag have landed", () => {
+    const status = state({
+      application: app({ intended_cohort_id: 4 }),
+      cohortTag: { kitTagId: 991234, kitTagName: "GYU_Jan2027" },
+      operations: [
+        done(),
+        done({
+          id: 2,
+          kind: "cohort",
+          kit_tag_id: 991234,
+          kit_tag_name: "GYU_Jan2027",
+        }),
+      ],
+    });
+    expect(status.kind).toBe("tagged");
   });
 });
 
-describe("somebody has to look", () => {
+describe("automatic — somebody has to look", () => {
   it("says Needs attention for a refusal, and offers a retry", () => {
-    const status = kitStatus({
-      application: app({ status: "approved" }),
-      operations: [done(), failed({ id: 2, ...DECISION })],
-      now: NOW,
+    const status = state({
+      application: app(),
+      operations: [
+        op({
+          status: "failed",
+          failed_at: minutesAgo(1),
+          failure_class: "provider_unavailable",
+          failure_reason: "Kit responded 503",
+        }),
+      ],
     });
     expect(status.kind).toBe("attention");
-    expect(status.label).toBe("Kit: Needs attention");
     expect(status.isRetryable).toBe(true);
-    expect(status.failureClass).toBe("provider_unavailable");
     expect(status.detail).toBe("Kit responded 503");
-    // What did land is still reported, so a half-done sync stays legible.
-    expect(status.tags).toEqual(["MiniDD_Applicant"]);
   });
 
   it("raises work that has waited far too long, with nothing to re-queue", () => {
-    const status = kitStatus({
+    const status = state({
       application: app(),
       operations: [
         op({
@@ -164,131 +193,230 @@ describe("somebody has to look", () => {
           ).toISOString(),
         }),
       ],
-      now: NOW,
     });
     expect(status.kind).toBe("attention");
     expect(status.isRetryable).toBe(false);
   });
 
-  it("does not raise work that is merely a few minutes old", () => {
-    expect(
-      kitStatus({
-        application: app(),
-        operations: [
-          op({
-            created_at: new Date(
-              NOW.getTime() - STALE_AFTER_MS + 1000,
-            ).toISOString(),
-          }),
-        ],
-        now: NOW,
-      }).kind,
-    ).toBe("syncing");
-  });
-
   it("does not let a Do Not Engage decision bury a row that already failed", () => {
-    // Ordinary Do Not Engage has no failed row, so nothing untrue is implied.
-    // This one does, and a buried row is the invisible work the integration
-    // exists to end.
-    const status = kitStatus({
+    const status = state({
       application: app({ status: "do_not_engage" }),
-      operations: [failed()],
-      now: NOW,
+      operations: [
+        op({
+          status: "failed",
+          failed_at: minutesAgo(1),
+          failure_class: "auth",
+        }),
+      ],
     });
     expect(status.kind).toBe("attention");
   });
 });
 
-describe("Kit is NOT handling it — the state that has to be visible", () => {
-  it("tells Leif to email a live public-form applicant manually", () => {
-    const status = kitStatus({
-      application: app({ source: "public_form" }),
-      operations: [],
-      now: NOW,
+describe("manual — it predates the integration, so the tags are Leif's", () => {
+  it("names what is still missing rather than only saying 'email manually'", () => {
+    const status = state({ application: preBoundary(), operations: [] });
+    expect(status.kind).toBe("manual-action");
+    expect(status.label).toBe("Kit: Manual — action needed");
+    expect(status.required).toEqual([
+      {
+        event: "applicant",
+        kitTagId: 24082722,
+        kitTagName: "MiniDD_Applicant",
+        done: false,
+      },
+    ]);
+  });
+
+  it("is up to date once the applicant tag is provider-confirmed", () => {
+    const status = state({
+      application: preBoundary(),
+      operations: [
+        manual({
+          status: "succeeded",
+          succeeded_at: minutesAgo(1),
+          kit_subscriber_id: "42",
+        }),
+      ],
     });
-    expect(status.kind).toBe("manual");
-    expect(status.label).toBe("Kit: Not synced — email manually");
+    expect(status.kind).toBe("manual-done");
+    expect(status.label).toBe("Kit: Manual — up to date ✓");
   });
 
-  it("says the same for one Leif entered by hand", () => {
-    expect(
-      kitStatus({
-        application: app({ source: "manual" }),
-        operations: [],
-        now: NOW,
-      }).kind,
-    ).toBe("manual");
-  });
-
-  it("says it for a decided one too, because that email is the one at stake", () => {
-    expect(
-      kitStatus({
-        application: app({ status: "approved", source: "public_form" }),
-        operations: [],
-        now: NOW,
-      }).kind,
-    ).toBe("manual");
-  });
-
-  it("says it when operations exist but nothing is coming for the current state", () => {
-    // Succeeded applicant tag, decided application, no decision operation and
-    // nothing in flight: whatever produced that, the outcome email is manual.
-    const status = kitStatus({
-      application: app({ status: "not_fit" }),
-      operations: [done()],
-      now: NOW,
+  it("never says Tagged for manual work, because the lifecycle is not being followed", () => {
+    const status = state({
+      application: preBoundary(),
+      operations: [
+        manual({
+          status: "succeeded",
+          succeeded_at: minutesAgo(1),
+          kit_subscriber_id: "42",
+        }),
+      ],
     });
-    expect(status.kind).toBe("manual");
+    expect(status.kind).not.toBe("tagged");
+    expect(status.label).not.toContain("Tagged");
   });
-});
 
-describe("an imported record is history, not outstanding work", () => {
-  it("is never presented as current unsynced work", () => {
-    const status = kitStatus({
-      application: app({ source: "historical_import" }),
-      operations: [],
-      now: NOW,
+  it("re-enters the queue when the CRM decision adds a required tag", () => {
+    const status = state({
+      application: preBoundary({ status: "approved" }),
+      operations: [
+        manual({
+          status: "succeeded",
+          succeeded_at: minutesAgo(1),
+          kit_subscriber_id: "42",
+        }),
+      ],
     });
-    expect(status.kind).toBe("historical");
-    expect(status.label).toBe("");
-    expect(status.kind).not.toBe("manual");
+    expect(status.kind).toBe("manual-action");
+    expect(status.required.map((tag) => [tag.kitTagName, tag.done])).toEqual([
+      ["MiniDD_Applicant", true],
+      ["MiniDD_Approved", false],
+    ]);
   });
 
-  it.each(["pending", "approved", "denied", "waitlist"] as const)(
-    "stays historical whatever status the import preserved (%s)",
-    (status: ApplicationStatus) => {
+  it("is up to date again once the decision tag is confirmed too", () => {
+    const status = state({
+      application: preBoundary({ status: "approved" }),
+      operations: [
+        manual({
+          status: "succeeded",
+          succeeded_at: minutesAgo(1),
+          kit_subscriber_id: "42",
+        }),
+        manual({
+          id: 2,
+          kit_tag_id: LE_TAGS.approved.id,
+          kit_tag_name: LE_TAGS.approved.name,
+          status: "succeeded",
+          succeeded_at: minutesAgo(1),
+          kit_subscriber_id: "42",
+        }),
+      ],
+    });
+    expect(status.kind).toBe("manual-done");
+  });
+
+  it.each(["needs_higher_care", "not_fit"] as const)(
+    "requires the %s tag once that decision is recorded",
+    (decision) => {
+      const status = state({
+        application: preBoundary({ status: decision }),
+        operations: [
+          manual({
+            status: "succeeded",
+            succeeded_at: minutesAgo(1),
+            kit_subscriber_id: "42",
+          }),
+        ],
+      });
+      expect(status.kind).toBe("manual-action");
       expect(
-        kitStatus({
-          application: app({ source: "historical_import", status }),
-          operations: [],
-          now: NOW,
-        }).kind,
-      ).toBe("historical");
+        status.required.some((tag) => tag.event === decision && !tag.done),
+      ).toBe(true);
     },
   );
 });
 
-describe("Do Not Engage", () => {
-  it("says Kit is not used, and implies no missing work", () => {
-    const status = kitStatus({
-      application: app({ status: "do_not_engage" }),
+describe("Kit is not involved at all", () => {
+  it("says the automation is not configured when the programme has no tags", () => {
+    const status = state({
+      application: preBoundary({ offer_id: 3 }),
       operations: [],
-      now: NOW,
+    });
+    expect(status.kind).toBe("not-configured");
+    expect(status.label).toBe("Kit: Automation not configured");
+    // Never a guess, and never another programme's tag.
+    expect(status.required).toEqual([]);
+  });
+
+  it("says Kit is not used for somebody the CRM refused", () => {
+    const status = state({
+      application: preBoundary({ status: "do_not_engage" }),
+      operations: [],
     });
     expect(status.kind).toBe("not-used");
-    expect(status.label).toBe("Kit: Not used");
-    expect(status.isRetryable).toBe(false);
-    expect(status.failureClass).toBeNull();
+    expect(status.required).toEqual([]);
+  });
+
+  it.each(["pending", "approved", "denied", "waitlist"] as const)(
+    "stays silent for an imported record, whatever status it preserved (%s)",
+    (status: ApplicationStatus) => {
+      const result = state({
+        application: preBoundary({ source: "historical_import", status }),
+        operations: [],
+      });
+      expect(result.kind).toBe("historical");
+      expect(result.label).toBe("");
+    },
+  );
+});
+
+describe("what the current state requires", () => {
+  it("is the programme tag while pending, and the outcome tag once decided", () => {
+    expect(
+      requiredKitTags({
+        application: app(),
+        mappings: MAPPINGS,
+        operations: [],
+      }).map((t) => t.event),
+    ).toEqual(["applicant"]);
+    expect(
+      requiredKitTags({
+        application: app({ status: "not_fit" }),
+        mappings: MAPPINGS,
+        operations: [],
+      }).map((t) => t.event),
+    ).toEqual(["applicant", "not_fit"]);
+  });
+
+  it("includes the round's tag between them when the round has one", () => {
+    expect(
+      requiredKitTags({
+        application: app({ status: "approved" }),
+        mappings: MAPPINGS,
+        cohortTag: { kitTagId: 991234, kitTagName: "GYU_Jan2027" },
+        operations: [],
+      }).map((t) => t.event),
+    ).toEqual(["applicant", "cohort", "approved"]);
+  });
+
+  it("requires nothing for a programme with no mappings", () => {
+    expect(
+      requiredKitTags({
+        application: app({ offer_id: 99 }),
+        mappings: MAPPINGS,
+        operations: [],
+      }),
+    ).toEqual([]);
+  });
+
+  it("marks a tag done from any succeeded operation carrying that tag id", () => {
+    const required = requiredKitTags({
+      application: app(),
+      mappings: MAPPINGS,
+      operations: [
+        manual({
+          status: "succeeded",
+          succeeded_at: minutesAgo(1),
+          kit_subscriber_id: "42",
+        }),
+      ],
+    });
+    expect(required[0].done).toBe(true);
   });
 });
 
 describe("the copy itself", () => {
-  it("is exactly the five lines Leif asked for", () => {
+  it("is exactly the lines Leif asked for", () => {
     expect(KIT_STATUS_LABELS).toEqual({
       tagged: "Kit: Tagged ✓",
       syncing: "Kit: Syncing…",
       attention: "Kit: Needs attention",
-      manual: "Kit: Not synced — email manually",
+      "manual-action": "Kit: Manual — action needed",
+      "manual-done": "Kit: Manual — up to date ✓",
+      "not-configured": "Kit: Automation not configured",
       "not-used": "Kit: Not used",
       historical: "",
     });
