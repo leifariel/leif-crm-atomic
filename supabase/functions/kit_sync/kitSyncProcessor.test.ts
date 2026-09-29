@@ -38,6 +38,9 @@ const buildDb = (claimed: KitSyncOperation[]) => {
         if (fn === "claim_kit_sync_operations") {
           return { data: claimed, error: null };
         }
+        if (fn === "reconcile_kit_identities") {
+          return { data: 0, error: null };
+        }
         return { data: null, error: null };
       },
       markSucceeded: async (id: number, subscriberId: string) => {
@@ -77,6 +80,8 @@ describe("doing the work", () => {
       succeeded: 1,
       failed: 0,
       requeued: 0,
+      identitiesRepaired: 0,
+      identityProblems: 0,
     });
     expect(kit.upsertSubscriber).toHaveBeenCalledWith("ada@example.com");
     expect(kit.addTag).toHaveBeenCalledWith(24082722, "ada@example.com");
@@ -142,6 +147,8 @@ describe("when Kit says no", () => {
       succeeded: 0,
       failed: 0,
       requeued: 1,
+      identitiesRepaired: 0,
+      identityProblems: 0,
     });
     expect(succeeded).toEqual([]);
     expect(failed).toEqual([
@@ -187,6 +194,8 @@ describe("when Kit says no", () => {
       succeeded: 2,
       failed: 1,
       requeued: 0,
+      identitiesRepaired: 0,
+      identityProblems: 0,
     });
     expect(succeeded.map(([id]) => id)).toEqual([1, 3]);
     expect(failed.map(([id]) => id)).toEqual([2]);
@@ -279,8 +288,93 @@ describe("a bad minute at Kit does not need a human", () => {
       succeeded: 0,
       failed: 1,
       requeued: 0,
+      identitiesRepaired: 0,
+      identityProblems: 0,
     });
     expect(failed[0][3]).toBe(false);
+  });
+});
+
+describe("the canonical Kit identity", () => {
+  it("records it through the CRM's own authority, never a second one", async () => {
+    const { db, rpcCalls } = buildDb([operation()]);
+
+    await processKitSyncOperations({ db, kit: kitThat() });
+
+    const identity = rpcCalls.find(([fn]) => fn === "record_external_identity");
+    expect(identity?.[1]).toMatchObject({
+      p_provider: "kit",
+      p_external_user_id: "42",
+      p_email: "ada@example.com",
+    });
+  });
+
+  it("counts a refused identity write instead of discarding it", async () => {
+    // The defect the first real acceptance event exposed: rpc() RETURNS an
+    // error rather than throwing, so the answer has to be read.
+    const { db } = buildDb([operation()]);
+    const watching = {
+      ...db,
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        if (fn === "record_external_identity") {
+          return { data: null, error: { message: "permission denied" } };
+        }
+        return db.rpc(fn, args);
+      },
+    };
+
+    const summary = await processKitSyncOperations({
+      db: watching,
+      kit: kitThat(),
+    });
+
+    expect(summary.identityProblems).toBe(1);
+    // And the tag still succeeded, because Kit really did apply it.
+    expect(summary.succeeded).toBe(1);
+    expect(summary.failed).toBe(0);
+  });
+
+  it("repairs a missing identity from stored evidence before doing any tag work", async () => {
+    const { db, rpcCalls } = buildDb([]);
+    const repairing = {
+      ...db,
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        if (fn === "reconcile_kit_identities") return { data: 2, error: null };
+        return db.rpc(fn, args);
+      },
+    };
+
+    const summary = await processKitSyncOperations({
+      db: repairing,
+      kit: kitThat(),
+    });
+
+    expect(summary.identitiesRepaired).toBe(2);
+    // No provider call was needed to repair anybody.
+    expect(rpcCalls.every(([fn]) => fn !== "record_external_identity")).toBe(
+      true,
+    );
+  });
+
+  it("does not let a failed repair stop the queue", async () => {
+    const { db } = buildDb([operation()]);
+    const broken = {
+      ...db,
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        if (fn === "reconcile_kit_identities") {
+          return { data: null, error: { message: "nope" } };
+        }
+        return db.rpc(fn, args);
+      },
+    };
+
+    const summary = await processKitSyncOperations({
+      db: broken,
+      kit: kitThat(),
+    });
+
+    expect(summary.succeeded).toBe(1);
+    expect(summary.identityProblems).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -300,6 +394,8 @@ describe("claiming", () => {
       succeeded: 0,
       failed: 0,
       requeued: 0,
+      identitiesRepaired: 0,
+      identityProblems: 0,
     });
   });
 

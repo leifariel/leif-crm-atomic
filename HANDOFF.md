@@ -1952,6 +1952,91 @@ quiet, but **email delivery stays separately pending** because Leif has not yet
 written or attached those two Kit automations; **Do Not Engage** → nothing in
 Kit at all.
 
+### FIRST GENUINE AUTOMATIC ACCEPTANCE — TERRY ROBINSON WHITNEY, 2026-09-29
+
+**The automatic path proved itself in production, on a real person, unaided.**
+
+At **16:59:22Z** a real application arrived: **Terry Robinson Whitney**, Growing
+Yourself Up · January 2027, `public_form`, post-boundary. The receipt trigger
+enqueued his programme tag in the same transaction. The five-minute worker
+picked it up and at **17:00:02Z — forty seconds later — it succeeded**:
+
+```
+application 204 → subscriber 4315021388 → GYU-Applicant (24082724)
+status succeeded · attempts 1 · no failure
+```
+
+**Application → Kit subscriber → correct programme tag is accepted.** Nobody
+intervened; it is provider-confirmed; and it happened on `797a4366`'s code.
+
+**Acceptance remains partially open** on two counts, and neither undoes the
+above:
+
+1. **The canonical identity defect** found in the same verification pass, fixed
+   in `20260929230000` and **not yet deployed**. Until it is, Terry has no
+   `contact_external_identities(provider='kit')` row, so **Manage Kit tags**
+   reports him as "not in Kit yet" even though Kit demonstrably knows him.
+2. **Outcome/decision tag acceptance**, which still waits for a real decision
+   on a post-boundary application. Approved and Not Fit tags fire live email
+   automations, so that event is Leif's to create in the ordinary course of
+   work, never a test.
+
+### THE IDENTITY DEFECT, AND WHY IT WAS INVISIBLE
+
+Two causes, both real, both fixed.
+
+1. **The grant.** `20260919130000` revoked `record_external_identity()` from
+   `public` and `anon` and **never granted it to `service_role`**. Its live ACL
+   was `postgres=X` and nothing else, so the worker — which runs as
+   `service_role` — was refused every time.
+2. **The worker never read the answer.** `supabaseAdmin.rpc()` **returns** an
+   error rather than throwing one, so the `try/catch` around the call never
+   fired and the refusal was simply discarded. This is the more important half:
+   the first cause would have been obvious within minutes if the second had not
+   hidden it.
+
+Nothing about the provider was wrong. The tag landed; only the bookkeeping
+failed. Diagnosis was confirmed rather than assumed: Terry's address resolves
+to exactly one Contact (463), the provider check already allows `'kit'`, and
+the subscriber id was recorded on the operation all along.
+
+### THE FIX
+
+- **`grant execute on function public.record_external_identity(...) to
+  service_role;`** — `anon` and `authenticated` stay refused. Recording an
+  external identity is the CRM's own server-side work, never a browser's.
+- **`reconcile_kit_identities()`** — one query, one authority, one purpose. It
+  finds people whose succeeded Kit operation carries a subscriber id but who
+  have no Kit identity, and records it through `record_external_identity()`.
+  **It never calls Kit**, never writes a tag operation, and never re-tags
+  anybody. `service_role` only.
+- **The worker now reads the identity answer**, counts a refusal as
+  `identityProblems` in the pass summary — which lands in the cron response
+  body and so in durable evidence — and **still marks the tag succeeded**,
+  because Kit really did apply it. Failing the operation would ask Leif to
+  retry work that already worked.
+- The sweep runs **once at the start of every pass**, before any tag work.
+
+**An address two Contacts share is left alone.** `record_external_identity()`
+answers `ambiguous` there, and the sweep counts nothing and writes nothing — a
+shared address is a decision for a person, and a sweep that resolved it would
+be inventing an identity rather than recording one.
+
+### TERRY REPAIRS HIMSELF
+
+**No manual action, and no second Kit call.** Once `20260929230000` deploys,
+the next five-minute pass finds his succeeded operation, reads the subscriber
+id `4315021388` already stored on it, and records the identity. His address
+maps to exactly one Contact, so it resolves. The tag operation is untouched.
+
+Proved on a fixture in the exact same state: succeeded operation with a
+subscriber id and no identity → repaired, once, with no provider call and no
+second operation; repeating the sweep forks nothing; and a deliberately shared
+address is left unresolved.
+
+**Watch for it in the cron response body:** the pass that repairs him will
+report `"identitiesRepaired":1`.
+
 ## 8b-kit-gmail. GMAIL TAKEOVER — A SEQUENCE THAT MUST NOT BE IMPROVISED
 
 **This is a hard prerequisite for the Gmail integration (§9) and it must
@@ -2195,10 +2280,11 @@ adoption:** tagging Michelle by hand records provider-confirmed manual evidence
 and does **not** make her Application eligible for the automatic decision
 trigger.
 
-**Unchanged:** the Gmail takeover sequence (§8b-kit-gmail) — make Kit's
-decision automations safe FIRST, only then backfill. And the next genuine
-post-boundary application is still the human acceptance event for the
-automatic path.
+**The automatic path is now accepted** — see "First genuine automatic
+acceptance" below for Terry Robinson Whitney, and for the one defect that
+acceptance exposed. **Unchanged:** the Gmail takeover sequence
+(§8b-kit-gmail) — make Kit's decision automations safe FIRST, only then
+backfill.
 
 ## 8b-builder. APPLICATION FORM BUILDER — PARKED
 

@@ -4230,3 +4230,58 @@ begin
   return jsonb_build_object('status', 'requested', 'operation_id', v_id);
 end;
 $$;
+
+
+-- ---------------------------------------------------------------------------
+-- Repair, from evidence the CRM already holds
+-- ---------------------------------------------------------------------------
+-- A succeeded Kit operation carries the subscriber id Kit returned. That is
+-- enough to record the identity later, so a failure to record it is a delay
+-- rather than a loss — and emphatically NOT a reason to tag anybody again.
+--
+-- Deliberately not a reconciliation framework: one query, one authority, one
+-- purpose. It calls record_external_identity() and nothing else, so the rules
+-- about what may become an identity stay in exactly one place — including its
+-- refusal to guess when an address belongs to more than one Contact, which
+-- stays a decision for a person rather than something a sweep forces.
+--
+-- Returns the number of people it recorded.
+create or replace function public.reconcile_kit_identities()
+returns integer
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+declare
+  v_row record;
+  v_result jsonb;
+  v_recorded integer := 0;
+begin
+  for v_row in
+    -- One per person, using their most recent confirmed operation: the
+    -- subscriber id is the same either way, and the newest is the freshest
+    -- evidence that Kit still knows them.
+    select distinct on (o.contact_id)
+           o.contact_id, o.kit_subscriber_id, o.email
+      from kit_sync_operations o
+     where o.status = 'succeeded'
+       and o.kit_subscriber_id is not null
+       and not exists (
+         select 1 from contact_external_identities i
+          where i.contact_id = o.contact_id and i.provider = 'kit'
+       )
+     order by o.contact_id, o.succeeded_at desc nulls last
+  loop
+    v_result := public.record_external_identity(
+      'kit', null, v_row.kit_subscriber_id, v_row.email,
+      '{}'::jsonb, now(), v_row.email);
+    -- 'ambiguous' and 'unresolved' are left exactly as they are. An address
+    -- two Contacts share is a question for Leif, and a sweep that answered it
+    -- would be inventing an identity rather than recording one.
+    if v_result ->> 'status' in ('known', 'linked_by_email') then
+      v_recorded := v_recorded + 1;
+    end if;
+  end loop;
+  return v_recorded;
+end;
+$$;

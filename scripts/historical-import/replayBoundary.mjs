@@ -204,6 +204,18 @@ export const REVIEWED_DETERMINISTIC = {
   // configuration and no manual tagging.
   20260929120000:
     "synthetic proof rows, rolled back; owns the cohort Kit columns, the generalized outbox, six functions, two policies and their grants",
+
+  // Matched "a table of named real clients" on the synthetic contacts its
+  // proof block inserts — Identity Proof, Shared Address, Shared Twin — all
+  // inside a subtransaction the block ends by raising, so all of them roll
+  // back. Terry Robinson Whitney is named in the header comment only; nothing
+  // here reads or writes his row, and the repair it ships is general.
+  //
+  // It cannot be skipped: it owns the grant that lets the worker record a Kit
+  // identity at all, and reconcile_kit_identities()'s definition. A database
+  // rebuilt without it tags people in Kit and never records that it did.
+  20260929230000:
+    "synthetic proof rows, rolled back; owns the service_role grant on record_external_identity and reconcile_kit_identities()'s definition",
 };
 
 /**

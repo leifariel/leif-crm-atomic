@@ -74,6 +74,15 @@ export type KitSyncSummary = {
   claimed: number;
   succeeded: number;
   failed: number;
+  // People whose Kit identity this pass recorded from evidence already held —
+  // normally 0, and above 0 only while repairing something an earlier pass
+  // could not write.
+  identitiesRepaired: number;
+  // A tag that landed whose canonical identity could not be recorded. The tag
+  // is still true; this says the bookkeeping is behind, and it appears in the
+  // cron response body so it is visible in durable evidence rather than
+  // nowhere at all.
+  identityProblems: number;
   // Transient failures put back for the next pass. Counted separately because
   // "three retrying" and "three stuck" are different mornings.
   requeued: number;
@@ -99,7 +108,23 @@ export const processKitSyncOperations = async ({
     succeeded: 0,
     failed: 0,
     requeued: 0,
+    identitiesRepaired: 0,
+    identityProblems: 0,
   };
+
+  // First, repair any person Kit already knows whose canonical identity is
+  // missing. It uses the subscriber id the succeeded operation already
+  // carries, so nobody is tagged again and Kit is not called at all. Normally
+  // this finds nothing; it exists because a tag landing and its identity
+  // failing to record must be a delay rather than a permanent hole.
+  const repaired = await db.rpc("reconcile_kit_identities", {});
+  if (repaired.error) {
+    // Not fatal: the queue is the work, and this is bookkeeping that the next
+    // pass will try again.
+    summary.identityProblems += 1;
+  } else if (typeof repaired.data === "number") {
+    summary.identitiesRepaired = repaired.data;
+  }
 
   const recordFailure = async (
     operation: KitSyncOperation,
@@ -134,11 +159,19 @@ export const processKitSyncOperations = async ({
       }
 
       // The durable person-to-Kit link, through the CRM's own external
-      // identity authority rather than a second one. Best effort on purpose:
-      // the tag is applied either way, and failing the operation over its
-      // bookkeeping would ask Leif to retry work that already succeeded.
+      // identity authority rather than a second one.
+      //
+      // It must not fail the operation: Kit really did apply the tag, and
+      // marking it failed would ask Leif to retry work that already
+      // succeeded. But it must not vanish either — the first real acceptance
+      // event lost exactly this write to a missing grant and nobody could
+      // tell, because rpc() RETURNS an error rather than throwing one and the
+      // returned error was never read. So the answer is read now, counted,
+      // and reported in the pass summary; the subscriber id stays on the
+      // operation, which is all reconcile_kit_identities() needs to finish
+      // the job on a later pass without touching Kit.
       try {
-        await db.rpc("record_external_identity", {
+        const identity = await db.rpc("record_external_identity", {
           p_provider: "kit",
           p_provider_account_id: null,
           p_external_user_id: subscriber.value.subscriberId,
@@ -146,8 +179,9 @@ export const processKitSyncOperations = async ({
           p_metadata: {},
           p_email: operation.email,
         });
+        if (identity.error) summary.identityProblems += 1;
       } catch {
-        // Recorded nowhere on purpose: the tag landed, which is the work.
+        summary.identityProblems += 1;
       }
 
       await db.markSucceeded(operation.id, subscriber.value.subscriberId);

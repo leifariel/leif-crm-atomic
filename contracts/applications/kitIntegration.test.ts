@@ -42,6 +42,9 @@ const CARD_UI = read("src/components/atomic-crm/applications/KitSyncCard.tsx");
 const MIGRATION_ADMIN = read(
   "supabase/migrations/20260929120000_kit_is_leifs_to_configure.sql",
 );
+const MIGRATION_IDENTITY = read(
+  "supabase/migrations/20260929230000_a_tagged_person_is_recorded_as_known_to_kit.sql",
+);
 
 // Leif's real tags, given in the resolved Kit contract. These numbers reach
 // live automations; they are not placeholders and must never be edited to
@@ -438,6 +441,62 @@ describe('one shared answer to "is Kit handling this?"', () => {
       expect(source).not.toMatch(/Add to Kit|Adopt|Backfill|Sync old/i);
     }
     expect(MIGRATION).not.toMatch(/adopt_application_into_kit/);
+  });
+});
+
+describe("a person Kit knows is recorded as known to Kit", () => {
+  test("the worker's role may record an identity, and no browser role may", () => {
+    expect(GRANTS).toContain(
+      "grant execute on function public.record_external_identity(text, text, text, text, jsonb, timestamptz, text) to service_role;",
+    );
+    expect(GRANTS).not.toMatch(
+      /grant execute on function public\.record_external_identity[^\n]*to (anon|authenticated)/,
+    );
+    for (const role of ["public", "anon", "authenticated"]) {
+      expect(GRANTS).toContain(
+        `revoke all on function public.reconcile_kit_identities() from ${role};`,
+      );
+    }
+    expect(GRANTS).toContain(
+      "grant execute on function public.reconcile_kit_identities() to service_role;",
+    );
+  });
+
+  test("the repair reads evidence the CRM already holds and never calls Kit", () => {
+    const fn = MIGRATION_IDENTITY.slice(
+      MIGRATION_IDENTITY.indexOf("function public.reconcile_kit_identities"),
+    );
+    const body = fn.slice(0, fn.indexOf("$;"));
+    expect(body).toMatch(/kit_subscriber_id is not null/);
+    expect(body).toMatch(/record_external_identity\(/);
+    // It never writes a tag operation and never invents an identity for an
+    // address two Contacts share.
+    expect(body).not.toMatch(/insert into kit_sync_operations/i);
+    expect(body).toMatch(/'known', 'linked_by_email'/);
+    expect(MIGRATION_IDENTITY).toContain(
+      "the sweep resolved a shared address it had no business deciding",
+    );
+  });
+
+  test("a refused identity write is counted, not discarded", () => {
+    // The first real acceptance event lost this write to a missing grant and
+    // nothing noticed, because rpc() returns an error rather than throwing.
+    expect(code(PROCESSOR)).toMatch(
+      /if \(identity\.error\) summary\.identityProblems/,
+    );
+    expect(code(PROCESSOR)).toMatch(/reconcile_kit_identities/);
+  });
+
+  test("a failed identity write never turns a landed tag into a failure", () => {
+    const body = code(PROCESSOR);
+    // markSucceeded is still reached after the identity attempt inside the
+    // same operation, so Kit having really applied the tag is what decides
+    // the row's status.
+    const at = body.indexOf('rpc("record_external_identity"');
+    expect(at).toBeGreaterThan(-1);
+    expect(body.indexOf("db.markSucceeded(", at)).toBeGreaterThan(at);
+    // And the identity failure path counts, never fails.
+    expect(body).not.toMatch(/identity\.error[\s\S]{0,120}markFailed/);
   });
 });
 

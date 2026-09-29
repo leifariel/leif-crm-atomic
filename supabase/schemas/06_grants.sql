@@ -825,3 +825,18 @@ revoke all on function public.enqueue_kit_cohort_tag(bigint) from public;
 revoke all on function public.enqueue_kit_cohort_tag(bigint) from anon;
 revoke all on function public.enqueue_kit_cohort_tag(bigint) from authenticated;
 revoke all on function public.enqueue_kit_cohort_tag(bigint) from service_role;
+
+
+-- Kit identity persistence (20260929230000). The worker runs as service_role
+-- and had no EXECUTE here, so a tag could land while the canonical
+-- person-to-Kit link silently failed to record. anon and authenticated stay
+-- refused: recording an external identity is the CRM's own server-side work,
+-- never something a browser asks for directly.
+grant execute on function public.record_external_identity(text, text, text, text, jsonb, timestamptz, text) to service_role;
+
+-- The repair sweep. Reads evidence the CRM already holds and calls the one
+-- identity authority; it never touches Kit.
+revoke all on function public.reconcile_kit_identities() from public;
+revoke all on function public.reconcile_kit_identities() from anon;
+revoke all on function public.reconcile_kit_identities() from authenticated;
+grant execute on function public.reconcile_kit_identities() to service_role;
