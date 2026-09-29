@@ -2404,3 +2404,55 @@ alter table public.contact_external_identities
     add constraint contact_external_identities_provider_check check (
       provider in ('instagram', 'gmail', 'email', 'stripe', 'acuity', 'notion', 'kit')
     );
+
+
+-- ---------------------------------------------------------------------------
+-- Kit owner controls (20260929120000)
+-- ---------------------------------------------------------------------------
+-- A round may carry its own Kit tag, optional and additive: its applicant gets
+-- the programme's applicant tag AND this one, as two separate auditable
+-- operations rather than one operation that quietly did two things.
+alter table public.cohorts add column if not exists kit_tag_id bigint;
+alter table public.cohorts add column if not exists kit_tag_name text;
+alter table public.cohorts drop constraint if exists cohorts_kit_tag_both_or_neither;
+alter table public.cohorts add constraint cohorts_kit_tag_both_or_neither check (
+  (kit_tag_id is null and kit_tag_name is null)
+  or (kit_tag_id > 0 and btrim(coalesce(kit_tag_name, '')) <> '')
+);
+
+-- The outbox learns three things: a cohort tag (a second automatic operation
+-- on one application), a manual tag (an operation about a person, with no
+-- application at all), and who asked for it.
+alter table public.kit_sync_operations alter column application_id drop not null;
+alter table public.kit_sync_operations
+  add column if not exists origin text not null default 'automatic_application';
+alter table public.kit_sync_operations
+  add column if not exists requested_by text;
+
+alter table public.kit_sync_operations drop constraint if exists kit_sync_operations_origin_check;
+alter table public.kit_sync_operations add constraint kit_sync_operations_origin_check
+  check (origin in ('automatic_application', 'manual_owner'));
+alter table public.kit_sync_operations drop constraint if exists kit_sync_operations_kind_check;
+alter table public.kit_sync_operations add constraint kit_sync_operations_kind_check
+  check (kind in ('applicant', 'cohort', 'decision', 'manual'));
+alter table public.kit_sync_operations drop constraint if exists kit_sync_operations_origin_shape_check;
+alter table public.kit_sync_operations add constraint kit_sync_operations_origin_shape_check check (
+  (origin = 'automatic_application'
+     and application_id is not null
+     and kind in ('applicant', 'cohort', 'decision'))
+  or (origin = 'manual_owner' and kind = 'manual')
+);
+
+-- One idempotency anchor per origin. The automatic one keeps its deployed
+-- meaning exactly — one operation per application per kind — and simply
+-- becomes partial so manual work can share the table with its own rule: one
+-- operation per person per tag, which is also what Kit itself does.
+drop index if exists kit_sync_operations_application_kind_idx;
+create unique index if not exists kit_sync_operations_application_kind_idx
+  on public.kit_sync_operations using btree (application_id, kind)
+  where origin = 'automatic_application';
+create unique index if not exists kit_sync_operations_manual_tag_idx
+  on public.kit_sync_operations using btree (contact_id, kit_tag_id)
+  where origin = 'manual_owner';
+create index if not exists kit_sync_operations_origin_idx
+  on public.kit_sync_operations using btree (origin, status);

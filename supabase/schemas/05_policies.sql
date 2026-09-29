@@ -325,3 +325,16 @@ drop policy if exists "Kit sync operations are readable" on public.kit_sync_oper
 create policy "Kit sync operations are readable" on public.kit_sync_operations
   for select to authenticated using (true);
 -- No insert/update/delete policy exists, deliberately.
+
+
+-- Kit owner controls (20260929120000). The configuration becomes READABLE by
+-- the browser — the Programme page shows which tags it uses, and the
+-- Application has to know whether it predates the integration. It does not
+-- become writable: every change goes through set_program_kit_tag.
+drop policy if exists "Kit tag mappings are readable" on public.kit_tag_mappings;
+create policy "Kit tag mappings are readable" on public.kit_tag_mappings
+  for select to authenticated using (true);
+drop policy if exists "Kit integration settings are readable" on public.kit_integration_settings;
+create policy "Kit integration settings are readable" on public.kit_integration_settings
+  for select to authenticated using (true);
+-- No insert/update/delete policy on either, deliberately.

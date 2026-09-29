@@ -795,3 +795,33 @@ revoke all on function public.claim_kit_sync_operations(integer) from public;
 revoke all on function public.claim_kit_sync_operations(integer) from anon;
 revoke all on function public.claim_kit_sync_operations(integer) from authenticated;
 grant execute on function public.claim_kit_sync_operations(integer) to service_role;
+
+
+-- Kit owner controls (20260929120000).
+revoke all on public.kit_tag_mappings from anon;
+grant select on public.kit_tag_mappings to authenticated;
+revoke all on public.kit_integration_settings from anon;
+grant select on public.kit_integration_settings to authenticated;
+
+-- The two owner authorities: configuration, and asking for one tag on one
+-- human. Both validate; the tables themselves stay closed to direct writes.
+revoke all on function public.set_program_kit_tag(bigint, text, bigint, text) from public;
+revoke all on function public.set_program_kit_tag(bigint, text, bigint, text) from anon;
+grant execute on function public.set_program_kit_tag(bigint, text, bigint, text) to authenticated;
+grant execute on function public.set_program_kit_tag(bigint, text, bigint, text) to service_role;
+
+revoke all on function public.request_kit_manual_tag(bigint, bigint, text, bigint) from public;
+revoke all on function public.request_kit_manual_tag(bigint, bigint, text, bigint) from anon;
+grant execute on function public.request_kit_manual_tag(bigint, bigint, text, bigint) to authenticated;
+grant execute on function public.request_kit_manual_tag(bigint, bigint, text, bigint) to service_role;
+
+-- The insert primitives stay internal. Not even service_role: on their own
+-- they would create a tag operation with nothing to justify one.
+revoke all on function public.enqueue_kit_operation(bigint, bigint, text, text, bigint, text, text) from public;
+revoke all on function public.enqueue_kit_operation(bigint, bigint, text, text, bigint, text, text) from anon;
+revoke all on function public.enqueue_kit_operation(bigint, bigint, text, text, bigint, text, text) from authenticated;
+revoke all on function public.enqueue_kit_operation(bigint, bigint, text, text, bigint, text, text) from service_role;
+revoke all on function public.enqueue_kit_cohort_tag(bigint) from public;
+revoke all on function public.enqueue_kit_cohort_tag(bigint) from anon;
+revoke all on function public.enqueue_kit_cohort_tag(bigint) from authenticated;
+revoke all on function public.enqueue_kit_cohort_tag(bigint) from service_role;

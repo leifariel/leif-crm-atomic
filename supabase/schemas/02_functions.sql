@@ -3965,3 +3965,268 @@ begin
   returning o.*;
 end;
 $$;
+
+
+-- ---------------------------------------------------------------------------
+-- One insert path for every Kit operation
+-- ---------------------------------------------------------------------------
+-- Automatic receipt, automatic cohort tag, automatic decision and manual owner
+-- tagging all arrive here. Resolving WHICH tag is the caller's job; getting a
+-- durable, idempotent, evidence-shaped row is this function's.
+--
+-- Returns the operation id, or null when there is nothing to do — an unusable
+-- email, or a request that already exists.
+create or replace function public.enqueue_kit_operation(
+  p_contact_id bigint,
+  p_application_id bigint,
+  p_kind text,
+  p_origin text,
+  p_kit_tag_id bigint,
+  p_kit_tag_name text,
+  p_requested_by text default null
+) returns bigint
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+declare
+  v_email text;
+  v_id bigint;
+begin
+  if p_kit_tag_id is null or p_kit_tag_id <= 0 then
+    return null;
+  end if;
+
+  -- The CRM's canonical address for this person, by the same rule the receipt
+  -- path uses, so every operation for them is addressed identically.
+  select a.normalized_email into v_email
+    from contact_email_addresses a
+   where a.contact_id = p_contact_id
+   order by a.normalized_email
+   limit 1;
+  if v_email is null then
+    return null;
+  end if;
+
+  insert into kit_sync_operations
+    (application_id, contact_id, kind, origin, email, kit_tag_id, kit_tag_name,
+     requested_by)
+  values
+    (p_application_id, p_contact_id, p_kind, p_origin, v_email, p_kit_tag_id,
+     coalesce(nullif(btrim(p_kit_tag_name), ''), 'tag ' || p_kit_tag_id),
+     p_requested_by)
+  on conflict do nothing
+  returning id into v_id;
+
+  return v_id;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Automatic: the mapping-resolving enqueue, now including the cohort tag
+-- ---------------------------------------------------------------------------
+create or replace function public.enqueue_kit_application_sync(
+  p_application_id bigint,
+  p_kind text,
+  p_event text
+) returns bigint
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+declare
+  v_app applications%rowtype;
+  v_tag kit_tag_mappings%rowtype;
+  v_not_before timestamp with time zone;
+begin
+  select * into v_app from applications where id = p_application_id;
+  if not found then
+    return null;
+  end if;
+
+  -- Origin. An imported record is what already happened, not work.
+  if v_app.source not in ('public_form', 'manual') then
+    return null;
+  end if;
+
+  -- The deployment boundary. Absent settings fail closed.
+  select not_before into v_not_before from kit_integration_settings where id = 1;
+  if v_not_before is null or v_app.created_at < v_not_before then
+    return null;
+  end if;
+
+  if v_app.offer_id is null then
+    return null;
+  end if;
+
+  select * into v_tag from kit_tag_mappings
+   where offer_id = v_app.offer_id and event = p_event;
+  if not found then
+    -- No mapping is a refusal, never a guess. A programme Leif has not
+    -- configured simply is not Kit-managed, and the UI says so rather than
+    -- borrowing another programme's tag.
+    return null;
+  end if;
+
+  return public.enqueue_kit_operation(
+    v_app.contact_id, v_app.id, p_kind, 'automatic_application',
+    v_tag.kit_tag_id, v_tag.kit_tag_name, null);
+end;
+$$;
+
+-- The round's own tag, when it has one. Same eligibility as the programme tag
+-- — it reuses enqueue_kit_application_sync's gates by only ever being called
+-- after that one has produced an operation.
+create or replace function public.enqueue_kit_cohort_tag(p_application_id bigint)
+returns bigint
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+declare
+  v_app applications%rowtype;
+  v_cohort cohorts%rowtype;
+begin
+  select * into v_app from applications where id = p_application_id;
+  if not found or v_app.intended_cohort_id is null then
+    return null;
+  end if;
+
+  select * into v_cohort from cohorts where id = v_app.intended_cohort_id;
+  if not found or v_cohort.kit_tag_id is null then
+    return null;
+  end if;
+
+  return public.enqueue_kit_operation(
+    v_app.contact_id, v_app.id, 'cohort', 'automatic_application',
+    v_cohort.kit_tag_id, v_cohort.kit_tag_name, null);
+end;
+$$;
+
+-- The receipt trigger now owes up to two tags: the programme's, and the
+-- round's if that round has one. The cohort tag is enqueued only when the
+-- programme tag was — one gate, applied once.
+create or replace function public.enqueue_kit_application_receipt()
+returns trigger
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+begin
+  if new.status = 'pending'
+     and public.enqueue_kit_application_sync(new.id, 'applicant', 'applicant') is not null
+  then
+    perform public.enqueue_kit_cohort_tag(new.id);
+  end if;
+  return null;
+end;
+$$;
+
+-- Set (or clear) one programme/event tag. Future events only, by construction:
+-- every operation froze its tag at enqueue, so nothing already written can be
+-- reached from here.
+create or replace function public.set_program_kit_tag(
+  p_offer_id bigint,
+  p_event text,
+  p_kit_tag_id bigint,
+  p_kit_tag_name text
+) returns jsonb
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+begin
+  if not exists (select 1 from offers where id = p_offer_id) then
+    return jsonb_build_object('status', 'offer-invalid');
+  end if;
+  if p_event not in ('applicant', 'approved', 'needs_higher_care', 'not_fit') then
+    return jsonb_build_object('status', 'event-invalid');
+  end if;
+
+  -- Clearing is legitimate: a programme may stop being Kit-managed, and the
+  -- honest way to say that is to have no mapping rather than a wrong one.
+  if p_kit_tag_id is null then
+    delete from kit_tag_mappings where offer_id = p_offer_id and event = p_event;
+    return jsonb_build_object('status', 'cleared', 'offer_id', p_offer_id, 'event', p_event);
+  end if;
+
+  if p_kit_tag_id <= 0 or btrim(coalesce(p_kit_tag_name, '')) = '' then
+    return jsonb_build_object('status', 'tag-invalid');
+  end if;
+
+  insert into kit_tag_mappings (offer_id, event, kit_tag_id, kit_tag_name)
+  values (p_offer_id, p_event, p_kit_tag_id, btrim(p_kit_tag_name))
+  on conflict (offer_id, event) do update
+    set kit_tag_id = excluded.kit_tag_id,
+        kit_tag_name = excluded.kit_tag_name;
+
+  return jsonb_build_object(
+    'status', 'set', 'offer_id', p_offer_id, 'event', p_event,
+    'kit_tag_id', p_kit_tag_id, 'kit_tag_name', btrim(p_kit_tag_name));
+end;
+$$;
+
+-- Ask for one tag on one human. The tag reaches Kit through the same worker,
+-- with the same evidence and the same retry, as everything automatic — a
+-- manual tag is not a button that calls an API and hopes.
+--
+-- Do Not Engage is refused. The CRM already declined to work with them; adding
+-- them to a list and tagging them is the one thing that decision exists to
+-- prevent, and a manual route around it would make the refusal decorative.
+create or replace function public.request_kit_manual_tag(
+  p_contact_id bigint,
+  p_kit_tag_id bigint,
+  p_kit_tag_name text,
+  p_application_id bigint default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+declare
+  v_contact contacts%rowtype;
+  v_requested_by text;
+  v_id bigint;
+  v_existing kit_sync_operations%rowtype;
+begin
+  select * into v_contact from contacts where id = p_contact_id;
+  if not found then
+    return jsonb_build_object('status', 'contact-invalid');
+  end if;
+  if v_contact.sales_eligibility = 'do_not_engage' then
+    return jsonb_build_object('status', 'do-not-engage');
+  end if;
+  if p_kit_tag_id is null or p_kit_tag_id <= 0 then
+    return jsonb_build_object('status', 'tag-invalid');
+  end if;
+  if p_application_id is not null
+     and not exists (select 1 from applications where id = p_application_id
+                      and contact_id = p_contact_id) then
+    -- A manual tag may MENTION the application it was started from, but only
+    -- one that belongs to the same person.
+    return jsonb_build_object('status', 'application-invalid');
+  end if;
+
+  select coalesce(s.email, s.first_name || ' ' || s.last_name) into v_requested_by
+    from sales s where s.user_id = auth.uid();
+
+  v_id := public.enqueue_kit_operation(
+    p_contact_id, p_application_id, 'manual', 'manual_owner',
+    p_kit_tag_id, p_kit_tag_name, coalesce(v_requested_by, 'owner'));
+
+  if v_id is null then
+    -- Either this person has no usable email, or the same tag was already
+    -- asked for. The second is a no-op and must read as success.
+    select * into v_existing from kit_sync_operations
+     where contact_id = p_contact_id and kit_tag_id = p_kit_tag_id
+       and origin = 'manual_owner';
+    if found then
+      return jsonb_build_object('status', 'already-requested',
+        'operation_id', v_existing.id, 'operation_status', v_existing.status);
+    end if;
+    return jsonb_build_object('status', 'no-email');
+  end if;
+
+  return jsonb_build_object('status', 'requested', 'operation_id', v_id);
+end;
+$$;

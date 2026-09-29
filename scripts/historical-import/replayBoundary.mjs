@@ -191,6 +191,19 @@ export const REVIEWED_DETERMINISTIC = {
   // green and left nothing behind.
   20260928200000:
     "synthetic proof rows, rolled back; seeds tag configuration on the chain's own offer ids; owns three tables, five functions and two triggers",
+
+  // Matched "a table of named real clients" on the synthetic contacts its
+  // proof block inserts — Config Proof, Future Only, Ada Byron, Grace Hopper
+  // — every one inside a subtransaction the block ends by raising, so all of
+  // them roll back. It writes no business data at all.
+  //
+  // It cannot be skipped: it owns the cohort Kit columns, the generalized
+  // outbox (nullable application_id, origin, the two partial idempotency
+  // indexes), six function definitions, two read policies and the grants for
+  // all of it. A database rebuilt without it has no owner-editable Kit
+  // configuration and no manual tagging.
+  20260929120000:
+    "synthetic proof rows, rolled back; owns the cohort Kit columns, the generalized outbox, six functions, two policies and their grants",
 };
 
 /**
