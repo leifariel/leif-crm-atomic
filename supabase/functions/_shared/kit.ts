@@ -130,7 +130,85 @@ export const createKitClient = (
     }
   };
 
+  const get = async (path: string): Promise<KitResult<unknown>> => {
+    let response: Response;
+    try {
+      response = await fetchImpl(`${KIT_API_BASE}${path}`, {
+        headers: { "X-Kit-Api-Key": apiKey },
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        failureClass: "network",
+        reason: redactKey(
+          `Could not reach Kit: ${error instanceof Error ? error.message : "unknown error"}`,
+          apiKey,
+        ).slice(0, MAX_REASON),
+      };
+    }
+    if (!response.ok) {
+      return {
+        ok: false,
+        failureClass: classifyKitStatus(response.status),
+        reason: await readErrorReason(response, apiKey),
+      };
+    }
+    try {
+      return { ok: true, value: await response.json() };
+    } catch {
+      return { ok: true, value: null };
+    }
+  };
+
+  // Every tag page, followed to the end. Bounded so a runaway cursor cannot
+  // spin: twenty pages of 1000 is far more tags than a person has.
+  const collectTags = async (path: string): Promise<KitResult<KitTag[]>> => {
+    const tags: KitTag[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < 20; page++) {
+      const query = `${path}?per_page=1000${after ? `&after=${encodeURIComponent(after)}` : ""}`;
+      const result = await get(query);
+      if (!result.ok) return result;
+      const body = result.value as {
+        tags?: Array<{ id?: unknown; name?: unknown }>;
+        pagination?: { has_next_page?: boolean; end_cursor?: string };
+      } | null;
+      for (const tag of body?.tags ?? []) {
+        if (tag?.id == null) continue;
+        tags.push({ id: Number(tag.id), name: String(tag.name ?? "") });
+      }
+      if (!body?.pagination?.has_next_page || !body.pagination.end_cursor)
+        break;
+      after = body.pagination.end_cursor;
+    }
+    return { ok: true, value: tags };
+  };
+
   return {
+    listTags: () => collectTags("/tags"),
+
+    createTag: async (name) => {
+      const result = await request("/tags", { name });
+      if (!result.ok) return result;
+      const tag = (
+        result.value as { tag?: { id?: unknown; name?: unknown } } | null
+      )?.tag;
+      if (tag?.id == null) {
+        return {
+          ok: false,
+          failureClass: "unknown",
+          reason: "Kit accepted the tag but returned no id",
+        };
+      }
+      return {
+        ok: true,
+        value: { id: Number(tag.id), name: String(tag.name ?? name) },
+      };
+    },
+
+    subscriberTags: (subscriberId) =>
+      collectTags(`/subscribers/${encodeURIComponent(subscriberId)}/tags`),
+
     // Kit v4 treats this as an upsert: an address it already knows comes back
     // as the existing subscriber rather than a second one. Running it twice is
     // the same as running it once, which is what makes a replayed operation

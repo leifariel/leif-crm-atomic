@@ -74,6 +74,162 @@ describe("the Kit v4 request shape", () => {
   });
 });
 
+describe("the tag catalog", () => {
+  const page = (tags, next = null) => ({
+    ok: true,
+    status: 200,
+    json: () =>
+      Promise.resolve({
+        tags,
+        pagination: { has_next_page: Boolean(next), end_cursor: next },
+      }),
+  });
+
+  it("lists the account's tags, by id and name", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(page([{ id: 24082722, name: "MiniDD_Applicant" }]));
+    const kit = createKitClient(KEY, fetchSpy as unknown as typeof fetch);
+
+    const result = await kit.listTags();
+
+    expect(result).toEqual({
+      ok: true,
+      value: [{ id: 24082722, name: "MiniDD_Applicant" }],
+    });
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(String(url)).toBe("https://api.kit.com/v4/tags?per_page=1000");
+    expect(init.headers["X-Kit-Api-Key"]).toBe(KEY);
+    // A read is a read: no method, no body.
+    expect(init.method).toBeUndefined();
+    expect(init.body).toBeUndefined();
+  });
+
+  it("follows the cursor to the end rather than showing a first page", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(page([{ id: 1, name: "A" }], "CURSOR1"))
+      .mockResolvedValueOnce(page([{ id: 2, name: "B" }]));
+    const kit = createKitClient(KEY, fetchSpy as unknown as typeof fetch);
+
+    const result = await kit.listTags();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.map((t) => t.id)).toEqual([1, 2]);
+    expect(String(fetchSpy.mock.calls[1][0])).toContain("after=CURSOR1");
+  });
+
+  it("stops rather than spinning if Kit keeps claiming another page", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(page([{ id: 1, name: "A" }], "X"));
+    const kit = createKitClient(KEY, fetchSpy as unknown as typeof fetch);
+
+    const result = await kit.listTags();
+
+    expect(result.ok).toBe(true);
+    expect(fetchSpy.mock.calls.length).toBeLessThanOrEqual(20);
+  });
+
+  it("surfaces a failure instead of an empty catalog", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(notOk(401, { errors: ["bad key"] }));
+    const kit = createKitClient(KEY, fetchSpy as unknown as typeof fetch);
+
+    const result = await kit.listTags();
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failureClass).toBe("auth");
+  });
+
+  it("lists what Kit says this person actually carries", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(page([{ id: 21784073, name: "MiniDD_Approved" }]));
+    const kit = createKitClient(KEY, fetchSpy as unknown as typeof fetch);
+
+    const result = await kit.subscriberTags("1256");
+
+    expect(result.ok).toBe(true);
+    expect(String(fetchSpy.mock.calls[0][0])).toBe(
+      "https://api.kit.com/v4/subscribers/1256/tags?per_page=1000",
+    );
+  });
+});
+
+describe("creating a tag", () => {
+  it("asks Kit by name and returns the id Kit chose", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(ok({ tag: { id: 26, name: "GYU_Jan2027" } }));
+    const kit = createKitClient(KEY, fetchSpy as unknown as typeof fetch);
+
+    const result = await kit.createTag("GYU_Jan2027");
+
+    expect(result).toEqual({
+      ok: true,
+      value: { id: 26, name: "GYU_Jan2027" },
+    });
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(String(url)).toBe("https://api.kit.com/v4/tags");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ name: "GYU_Jan2027" });
+  });
+
+  it("returns the existing tag when Kit already has that name", async () => {
+    // Kit's create is idempotent on name, case-insensitively: 200 with the
+    // existing tag rather than a duplicate. So the catalog cannot fork, and
+    // the id that comes back is the one to store.
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(
+        ok({ tag: { id: 24082722, name: "MiniDD_Applicant" } }),
+      );
+    const kit = createKitClient(KEY, fetchSpy as unknown as typeof fetch);
+
+    const result = await kit.createTag("minidd_applicant");
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.id).toBe(24082722);
+  });
+
+  it("refuses to report a tag Kit gave no id for", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(ok({}));
+    const kit = createKitClient(KEY, fetchSpy as unknown as typeof fetch);
+
+    expect((await kit.createTag("Whatever")).ok).toBe(false);
+  });
+
+  it("creating a tag attaches it to nobody", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(ok({ tag: { id: 26, name: "X" } }));
+    const kit = createKitClient(KEY, fetchSpy as unknown as typeof fetch);
+
+    await kit.createTag("X");
+
+    expect(fetchSpy.mock.calls).toHaveLength(1);
+    expect(String(fetchSpy.mock.calls[0][0])).not.toContain("/subscribers");
+  });
+
+  it("keeps the key out of a create failure too", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(notOk(422, { errors: [`rejected by ${KEY}`] }));
+    const kit = createKitClient(KEY, fetchSpy as unknown as typeof fetch);
+
+    const result = await kit.createTag("X");
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).not.toContain(KEY);
+  });
+});
+
 describe("what a failure means", () => {
   it.each([
     [401, "auth"],

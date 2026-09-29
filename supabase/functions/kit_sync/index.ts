@@ -25,7 +25,26 @@ import { processKitSyncOperations } from "./kitSyncProcessor.ts";
 // An unauthenticated caller — including the public application form, which
 // reaches `public_application` and nothing else — may do neither.
 
-type RetryBody = { action?: string; applicationId?: number | string };
+type RequestBody = {
+  action?: string;
+  applicationId?: number | string;
+  contactId?: number | string;
+  kitTagId?: number | string;
+  kitTagName?: string;
+  name?: string;
+};
+
+// The owner-only surface. Everything here is Leif choosing a tag or looking at
+// the catalog, so all of it requires his own Supabase session — the cron
+// secret proves a schedule, which is not a person, and a schedule has no
+// business creating a tag.
+const ownerOnly = new Set([
+  "retry",
+  "tags",
+  "create_tag",
+  "contact_tags",
+  "manual_tag",
+]);
 
 const jsonResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -97,9 +116,9 @@ Deno.serve(async (req: Request) =>
       return createErrorResponse(405, "Method Not Allowed");
     }
 
-    let body: RetryBody;
+    let body: RequestBody;
     try {
-      body = (await req.json()) as RetryBody;
+      body = (await req.json()) as RequestBody;
     } catch {
       return createErrorResponse(400, "Invalid JSON body");
     }
@@ -132,6 +151,105 @@ Deno.serve(async (req: Request) =>
     }
 
     try {
+      if (body.action && ownerOnly.has(body.action) && !isOwner) {
+        return createErrorResponse(403, "This requires a signed-in user.");
+      }
+
+      // The tag catalog, so Leif picks a real tag by name instead of copying
+      // a number out of Kit. A read; it changes nothing.
+      if (body.action === "tags") {
+        const apiKey = Deno.env.get("KIT_API_KEY");
+        if (!apiKey) return notConfigured();
+        const result = await createKitClient(apiKey).listTags();
+        if (!result.ok) {
+          return createErrorResponse(502, "Could not read the Kit tags.", {
+            failureClass: result.failureClass,
+            detail: result.reason,
+          });
+        }
+        return jsonResponse({ tags: result.value });
+      }
+
+      // Creating a tag attaches it to nobody — it only makes the tag exist so
+      // it can be chosen. Kit's own create is idempotent on name, so asking
+      // for one that exists returns the existing tag rather than a duplicate.
+      if (body.action === "create_tag") {
+        const apiKey = Deno.env.get("KIT_API_KEY");
+        if (!apiKey) return notConfigured();
+        const name = String(body.name ?? "").trim();
+        if (!name) return createErrorResponse(400, "A tag name is required.");
+        const result = await createKitClient(apiKey).createTag(name);
+        if (!result.ok) {
+          return createErrorResponse(502, "Kit would not create that tag.", {
+            failureClass: result.failureClass,
+            detail: result.reason,
+          });
+        }
+        return jsonResponse({ tag: result.value });
+      }
+
+      // What Kit says this person actually carries — the truest answer
+      // available, rather than the CRM quoting its own records back. Silent
+      // when the CRM has never seen them in Kit, which is itself the answer.
+      if (body.action === "contact_tags") {
+        const apiKey = Deno.env.get("KIT_API_KEY");
+        if (!apiKey) return notConfigured();
+        if (body.contactId == null) {
+          return createErrorResponse(400, "contactId is required.");
+        }
+        const { data: identity } = await supabaseAdmin
+          .from("contact_external_identities")
+          .select("external_user_id")
+          .eq("provider", "kit")
+          .eq("contact_id", body.contactId)
+          .maybeSingle();
+        if (!identity?.external_user_id) {
+          return jsonResponse({ tags: [], knownToKit: false });
+        }
+        const result = await createKitClient(apiKey).subscriberTags(
+          String(identity.external_user_id),
+        );
+        if (!result.ok) {
+          return createErrorResponse(
+            502,
+            "Could not read this person's Kit tags.",
+            {
+              failureClass: result.failureClass,
+              detail: result.reason,
+            },
+          );
+        }
+        return jsonResponse({ tags: result.value, knownToKit: true });
+      }
+
+      // Asking for one tag on one human. The database decides whether the
+      // request is allowed and records it durably; this function only carries
+      // it out, through the same worker as everything automatic.
+      if (body.action === "manual_tag") {
+        if (body.contactId == null || body.kitTagId == null) {
+          return createErrorResponse(
+            400,
+            "contactId and kitTagId are required.",
+          );
+        }
+        const { data: requested, error } = await supabaseAdmin.rpc(
+          "request_kit_manual_tag",
+          {
+            p_contact_id: body.contactId,
+            p_kit_tag_id: body.kitTagId,
+            p_kit_tag_name: body.kitTagName ?? null,
+            p_application_id: body.applicationId ?? null,
+          },
+        );
+        if (error) {
+          console.error("kit_sync manual_tag error:", error.message);
+          return createErrorResponse(500, "Could not record the tag request.");
+        }
+        const summary = await runProcessor();
+        if (summary === null) return notConfigured();
+        return jsonResponse({ requested, ...summary });
+      }
+
       if (body.action === "retry") {
         // Retrying is the owner's, not the schedule's: the cron job has no
         // application in front of it and no reason to single one out.
