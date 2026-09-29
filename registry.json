@@ -850,6 +850,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/offers/OfferKitSection.tsx",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/offers/OfferInputs.tsx",
           "type": "registry:component"
         },
@@ -1478,6 +1482,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/dashboard/useKitWorkQueue.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/dashboard/useComingUpItems.ts",
           "type": "registry:component"
         },
@@ -1535,6 +1543,10 @@
         },
         {
           "path": "src/components/atomic-crm/dashboard/LatestNotes.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/dashboard/KitNeedsAttention.tsx",
           "type": "registry:component"
         },
         {
@@ -1647,6 +1659,10 @@
         },
         {
           "path": "src/components/atomic-crm/contacts/PersonEmail.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/contacts/ManageKitTagsButton.tsx",
           "type": "registry:component"
         },
         {
@@ -1842,6 +1858,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/cohorts/CohortKitTagInput.tsx",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/cohorts/CohortInputs.tsx",
           "type": "registry:component"
         },
@@ -1946,7 +1966,15 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/applications/kitTagActions.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/applications/kitStatus.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/kitAutomationRisk.ts",
           "type": "registry:component"
         },
         {
@@ -1971,6 +1999,14 @@
         },
         {
           "path": "src/components/atomic-crm/applications/answerLabels.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/ManageKitTagsModal.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/KitTagPicker.tsx",
           "type": "registry:component"
         },
         {

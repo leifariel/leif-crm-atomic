@@ -56,6 +56,9 @@ export const createCrmDb = (overrides: Partial<Db> = {}): Db =>
     // Which Kit tag each programme's events mean, and when the integration
     // became live. Read by the Application's Kit strip on every render.
     kit_tag_mappings: [],
+    // The provider's tag catalog. FakeRest has no Kit, so the picker reads
+    // this stand-in and creating a tag adds to it.
+    kit_tags: [],
     kit_integration_settings: [],
     // The Won -> Enrollment mirror (ensureEnrollmentForWonDeal) reads this
     // collection, so it has to exist by default or marking a Deal Won

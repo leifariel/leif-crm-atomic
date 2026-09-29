@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useDataProvider, useGetList, useNotify, useRefresh } from "ra-core";
 
+import { Button } from "@/components/ui/button";
+
 import type {
   Application,
   Cohort,
@@ -9,6 +11,9 @@ import type {
 } from "../types";
 import { kitStatus } from "./kitStatus";
 import { KitSyncCard } from "./KitSyncCard";
+import { ManageKitTagsModal } from "./ManageKitTagsModal";
+import { addKitTag } from "./kitTagActions";
+import { NEEDS_HIGHER_CARE_EMAIL_NOTE } from "./kitAutomationRisk";
 import { retryKitSync } from "./retryKitSync";
 
 // Is Kit handling this application, or is it Leif's to do by hand?
@@ -38,6 +43,8 @@ export const KitStatusLine = ({
   const notify = useNotify();
   const refresh = useRefresh();
   const [retrying, setRetrying] = useState(false);
+  const [managing, setManaging] = useState(false);
+  const [addingRequired, setAddingRequired] = useState(false);
 
   // retry: false throughout — a provider without these resources must degrade
   // to saying nothing rather than hanging the page it sits on.
@@ -131,9 +138,65 @@ export const KitStatusLine = ({
     }
   };
 
+  // Deterministic: it adds exactly the tags this application's CURRENT state
+  // calls for and has not had confirmed. Leif never picks a decision tag from
+  // here, and a tag that already succeeded is never asked for again.
+  const onAddRequired = async () => {
+    const missing = status.required.filter((tag) => !tag.done);
+    setAddingRequired(true);
+    try {
+      for (const tag of missing) {
+        await addKitTag(dataProvider, {
+          contactId: application.contact_id,
+          kitTagId: tag.kitTagId,
+          kitTagName: tag.kitTagName,
+          applicationId: application.id,
+        });
+      }
+      notify(
+        missing.length === 1
+          ? `${missing[0].kitTagName} queued for Kit.`
+          : `${missing.length} tags queued for Kit.`,
+        { type: "info" },
+      );
+    } catch {
+      notify("Could not reach Kit just now. Try again in a moment.", {
+        type: "error",
+      });
+    } finally {
+      setAddingRequired(false);
+      refresh();
+    }
+  };
+
+  const manageButton = (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onClick={() => setManaging(true)}
+    >
+      Manage Kit tags
+    </Button>
+  );
+
+  const modal = managing ? (
+    <ManageKitTagsModal
+      contactId={application.contact_id}
+      applicationId={application.id}
+      onOpenChange={(open) => {
+        if (!open) setManaging(false);
+      }}
+    />
+  ) : null;
+
   if (status.kind === "attention") {
     return (
-      <KitSyncCard status={status} retrying={retrying} onRetry={onRetry} />
+      <>
+        <KitSyncCard status={status} retrying={retrying} onRetry={onRetry} />
+        <div className="flex pt-1">{manageButton}</div>
+        {modal}
+      </>
     );
   }
 
@@ -169,6 +232,32 @@ export const KitStatusLine = ({
           <span>Applied: {status.tags.join(", ")}.</span>
         </details>
       )}
+
+      {/* The one thing a Needs Higher Care decision must never let anybody
+          assume. The tag can land and still no email has gone: Leif has not
+          written that automation, and the CRM does not pretend otherwise. */}
+      {application.status === "needs_higher_care" && (
+        <span className="text-xs text-muted-foreground">
+          {NEEDS_HIGHER_CARE_EMAIL_NOTE}
+        </span>
+      )}
+
+      {status.kind !== "not-used" && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {status.required.some((tag) => !tag.done) && (
+            <Button
+              type="button"
+              size="sm"
+              disabled={addingRequired}
+              onClick={onAddRequired}
+            >
+              Add required tags
+            </Button>
+          )}
+          {manageButton}
+        </div>
+      )}
+      {modal}
     </div>
   );
 };

@@ -34,6 +34,13 @@ import {
   type ManualApplicationInput,
 } from "../../applications/createManualApplication";
 import { retryKitSyncMirror } from "../../applications/retryKitSync";
+import {
+  addKitTagMirror,
+  contactKitTagsMirror,
+  createKitTagMirror,
+  kitTagsMirror,
+  setProgramKitTagMirror,
+} from "../../applications/kitTagActions";
 import { completeAttendedSalesCallMirror } from "../../sales-calls/completeAttendedSalesCallMirror";
 import { acceptSaleMirror } from "../../deals/acceptSaleMirror";
 import { transferClientOfferMirrorEntry } from "../../enrollments/transferClientOfferMirrorEntry";
@@ -890,6 +897,26 @@ export const createDataProvider = ({
     // gets from its triggers.
     completeAttendedSalesCall: async (input) =>
       completeAttendedSalesCallMirror(dataProvider, input),
+    // There is no Kit here, so these mirror only the half that is real: the
+    // CRM's own durable records and an in-memory tag catalog. Nothing below
+    // pretends a provider confirmed anything.
+    kitTags: async () => kitTagsMirror(dataProvider),
+    createKitTag: async (name: string) =>
+      createKitTagMirror(dataProvider, name),
+    contactKitTags: async (contactId: Identifier) =>
+      contactKitTagsMirror(dataProvider, contactId),
+    addKitTag: async (input: {
+      contactId: Identifier;
+      kitTagId: number;
+      kitTagName: string;
+      applicationId?: Identifier | null;
+    }) => addKitTagMirror(dataProvider, input),
+    setProgramKitTag: async (input: {
+      offerId: Identifier;
+      event: "applicant" | "approved" | "needs_higher_care" | "not_fit";
+      kitTagId: number | null;
+      kitTagName: string | null;
+    }) => setProgramKitTagMirror(dataProvider, input),
     // Production asks the kit_sync Edge Function, which re-queues the failed
     // work and then runs the worker. There is no Kit here and nothing pretends
     // otherwise: this mirrors only the database half — failed work returns to

@@ -6,6 +6,7 @@ import { RadioButtonGroupInput } from "@/components/admin/radio-button-group-inp
 import { TextInput } from "@/components/admin/text-input";
 
 import { offerTypeLabels } from "./offerConstants";
+import { OfferKitSection } from "./OfferKitSection";
 
 const offerTypeChoices = [
   { id: "individual", name: offerTypeLabels.individual },
@@ -55,6 +56,7 @@ export const OfferInputs = () => {
         defaultValue={true}
         helperText={false}
       />
+      <OfferKitSection />
     </div>
   );
 };

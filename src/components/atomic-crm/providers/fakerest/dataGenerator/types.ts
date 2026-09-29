@@ -54,6 +54,7 @@ export interface Db {
   deal_offer_events: DealOfferEvent[];
   kit_sync_operations: KitSyncOperation[];
   kit_tag_mappings: KitTagMapping[];
+  kit_tags: Array<{ id: number; name: string }>;
   kit_integration_settings: Array<{ id: number; not_before: string }>;
   applications: Application[];
   application_responses: ApplicationResponse[];

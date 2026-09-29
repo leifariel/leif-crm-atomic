@@ -8,6 +8,7 @@ import { CompletedTodayTasks } from "./CompletedTodayTasks";
 import { DashboardActivityLog } from "./DashboardActivityLog";
 import { DashboardApplicationsForReview } from "./DashboardApplicationsForReview";
 import { DashboardTasks } from "./DashboardTasks";
+import { KitNeedsAttention } from "./KitNeedsAttention";
 import { NeedsOnboarding } from "./NeedsOnboarding";
 import { OutstandingScholarshipReservations } from "./OutstandingScholarshipReservations";
 import { PeopleDeciding } from "./PeopleDeciding";
@@ -73,6 +74,11 @@ export const Dashboard = () => {
       </div>
 
       <DashboardTasks />
+
+      {/* One item for everything Kit still needs, derived rather than stored:
+          five people needing a tag is one thing to do, and a Task each would
+          bury the rest of Needs Attention under work that resolves itself. */}
+      <KitNeedsAttention />
 
       <DashboardApplicationsForReview />
 

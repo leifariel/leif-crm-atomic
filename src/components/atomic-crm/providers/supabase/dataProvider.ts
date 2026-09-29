@@ -20,6 +20,7 @@ import {
   refuseContactDelete,
   refuseContactMerge,
 } from "../../contacts/contactSafety";
+import type { AddKitTagResult } from "../../applications/kitTagActions";
 import { ATTACHMENTS_BUCKET } from "../commons/attachments";
 import { getIsInitialized } from "./authProvider";
 import { getSupabaseClient } from "./supabase";
@@ -351,6 +352,98 @@ const getDataProviderWithCustomMethods = () => {
         throw new Error("Failed to repair this client's onboarding");
       }
       return data as Record<string, unknown>;
+    },
+    // The account's tag catalog, so Leif chooses a real tag by name instead of
+    // copying a number out of Kit. Owner-only, server-side, and a read.
+    async kitTags() {
+      const { data, error } = await getSupabaseClient().functions.invoke<{
+        tags: Array<{ id: number; name: string }>;
+      }>("kit_sync", { method: "POST", body: { action: "tags" } });
+      if (error || !data) {
+        console.error("kit_sync.tags.error", error);
+        throw new Error("Failed to read the Kit tags");
+      }
+      return data.tags ?? [];
+    },
+    // Creating a tag attaches it to nobody. Kit's create is idempotent on
+    // name, so asking for one that exists returns the existing tag.
+    async createKitTag(name: string) {
+      const { data, error } = await getSupabaseClient().functions.invoke<{
+        tag: { id: number; name: string };
+      }>("kit_sync", { method: "POST", body: { action: "create_tag", name } });
+      if (error || !data?.tag) {
+        console.error("kit_sync.create_tag.error", error);
+        throw new Error("Failed to create the Kit tag");
+      }
+      return data.tag;
+    },
+    // What Kit reports for this person — the provider's own answer rather
+    // than the CRM quoting its records back.
+    async contactKitTags(contactId: Identifier) {
+      const { data, error } = await getSupabaseClient().functions.invoke<{
+        tags: Array<{ id: number; name: string }>;
+        knownToKit: boolean;
+      }>("kit_sync", {
+        method: "POST",
+        body: { action: "contact_tags", contactId },
+      });
+      if (error || !data) {
+        console.error("kit_sync.contact_tags.error", error);
+        throw new Error("Failed to read this person's Kit tags");
+      }
+      return { tags: data.tags ?? [], knownToKit: Boolean(data.knownToKit) };
+    },
+    // Ask for one tag on one human. The database decides whether it is
+    // allowed and records it durably; the worker carries it out.
+    async addKitTag(input: {
+      contactId: Identifier;
+      kitTagId: number;
+      kitTagName: string;
+      applicationId?: Identifier | null;
+    }): Promise<AddKitTagResult> {
+      const { data, error } = await getSupabaseClient().functions.invoke<{
+        requested: { status: string; operation_id?: number };
+      }>("kit_sync", {
+        method: "POST",
+        body: {
+          action: "manual_tag",
+          contactId: input.contactId,
+          kitTagId: input.kitTagId,
+          kitTagName: input.kitTagName,
+          applicationId: input.applicationId ?? null,
+        },
+      });
+      if (error || !data?.requested) {
+        console.error("kit_sync.manual_tag.error", error);
+        throw new Error("Failed to request the Kit tag");
+      }
+      return {
+        status: data.requested.status as AddKitTagResult["status"],
+        operationId: data.requested.operation_id,
+      };
+    },
+    // Which tag a programme's event applies, from now on. Validating
+    // authority; it never touches an operation that already exists.
+    async setProgramKitTag(input: {
+      offerId: Identifier;
+      event: string;
+      kitTagId: number | null;
+      kitTagName: string | null;
+    }) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "set_program_kit_tag",
+        {
+          p_offer_id: input.offerId,
+          p_event: input.event,
+          p_kit_tag_id: input.kitTagId,
+          p_kit_tag_name: input.kitTagName,
+        },
+      );
+      if (error) {
+        console.error("set_program_kit_tag.error", error);
+        throw new Error("Failed to save the Kit tag for this programme");
+      }
+      return data as { status: string };
     },
     // Asking Kit again for one application's failed work.
     //

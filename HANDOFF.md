@@ -1993,14 +1993,13 @@ automations**, so a green sync there does not mean an email went out and the
 CRM never claims it did. Nothing in this repository changes when he attaches
 them.
 
-## 8b-kit-owner. KIT OWNER CONTROLS — FOUNDATION BUILT 2026-09-29, UI PART-DONE
+## 8b-kit-owner. KIT OWNER CONTROLS — BUILT 2026-09-29
 
-**Three commits, none pushed.** `288da40b` schema and authorities, `36aadfef`
-the Kit v4 catalog, and — on top of those two — *say which Kit tags are still
-Leif’s to add, in a container*, which carries the manual-mode status and the
-presentation fix. (Named rather than hashed: amending it would move the hash.)
-**The owner-facing UI is deliberately NOT finished — see "What is still to
-build" at the end, which is the operative part of this section.**
+**Five commits, none pushed.** `288da40b` schema and authorities, `36aadfef`
+the Kit v4 catalog, then the manual-mode status and presentation fix, and the
+owner-facing surfaces on top of them.
+**The owner-facing surfaces are now built** — see the end of this section for
+the one that was deliberately deferred.
 
 ### Why this slice exists
 
@@ -2112,45 +2111,89 @@ cards. The actionable failure state still expands into the existing rounded
 card with **Retry Kit sync**. Two tests assert the housing and the placement,
 so the floating version cannot come back.
 
-### WHAT IS STILL TO BUILD — the rest of this slice
+### THE OWNER-FACING SURFACES — BUILT 2026-09-29
 
-**The foundation is done and proved; the owner-facing surfaces are not.**
-Nothing below is started, and the CRM today still gives Leif no button to add
-a tag. In rough dependency order:
+The seven surfaces the foundation existed for. **Leif can now configure and
+operate Kit from the CRM without a code change.**
 
-1. **Shared Kit tag picker** — search the catalog, create a tag without
-   leaving the CRM, choose by id. The Edge Function actions it needs
-   (`tags`, `create_tag`) are built and tested.
-2. **Contact "Manage Kit tags" modal** — the canonical person-level manager,
-   adding only (no removal, no bulk), with the persistent warning *"Adding a
-   Kit tag may trigger an automation connected to that tag."* The authority
-   (`request_kit_manual_tag`) and the Edge Function action (`manual_tag`,
-   `contact_tags`) are built and tested.
-3. **Application "Manage Kit tags"** — the same modal, reached from the
-   Application, never a second tag universe.
-4. **Programme Kit section** in the Offer create/edit form — the four tags,
-   using the picker, saving through `set_program_kit_tag`.
-5. **Cohort Kit tag field** in `CohortInputs` — one optional tag.
-6. **Aggregate Dashboard item** — `Kit needs attention · N` as a derived
-   section (the repo's `OutstandingScholarshipReservations` /
-   `NeedsOnboarding` pattern, **not** Task rows), opening a lightbox with the
-   manual worklist and the failed-sync list, reusing the existing retry.
-   `Dashboard.tsx` carries 6 lines of parked-builder dirt at two hunks —
-   stage by content, as the schema files were.
-7. **Manual Application creation** — show the programme's Kit configuration
-   and allow extra tags through the picker.
+**Shared tag picker** (`applications/KitTagPicker.tsx`). Loads his real tag
+catalog through the Edge Function, searches it by name, selects **by provider
+id**, and creates a tag without leaving the CRM. Kit's create is idempotent on
+name, case-insensitively, so an existing name comes back as the existing tag
+and is simply selected — the button is offered only when nothing already
+carries that exact name, because otherwise it would describe something that is
+not about to happen. Loading and provider-failure states are explicit; a failed
+catalog says so rather than showing an empty list. **No numeric tag id is ever
+typed again.**
 
-**Decision-tag safety, unchanged and still required when those land:** adding
-Approved or Not Fit may fire Leif's existing automations; **Needs Higher Care
-has no automation attached**, so the UI must say the tag landed *and* the
-email still has to be sent by hand, and must never claim an email was sent.
-Do Not Engage gets no Kit work at all.
+**Contact — Manage Kit tags** (`contacts/ManageKitTagsButton.tsx` →
+`applications/ManageKitTagsModal.tsx`). A lightbox over the Contact. Shows what
+**Kit reports** for that person — fetched on demand, only while the modal is
+open, so no ordinary page render depends on the provider being up — alongside
+what the **CRM has queued or failed to deliver**. Those two are named
+separately rather than blended. Adding a tag creates a durable manual
+operation; the modal **stays open**, because the tag is queued and not yet
+done. The button is absent for a Do Not Engage contact, whose manual tag the
+database refuses anyway.
 
-**Still not in scope:** bulk tagging, tag removal, renaming or deleting tags
-in Kit, and any automatic adoption of the five pre-boundary applicants.
-Manual tagging is **not** automatic adoption: tagging Michelle by hand records
-provider-confirmed manual evidence and does **not** make her Application
-eligible for the automatic decision trigger.
+**Application — the same manager.** Not a second tag universe: the Application
+reaches the identical modal with its own id attached for provenance. A manual
+tag belongs to the human either way.
+
+**Programme Kit configuration** (`offers/OfferKitSection.tsx`) in the existing
+Offer form. Four events, each through the picker, saved by
+`set_program_kit_tag` — change, choose, or clear. Incomplete configuration
+says **"Kit automation not fully configured"** rather than looking finished,
+and the section carries the rule in one line: *"Changes apply to future Kit
+actions. Existing applicants are not retagged."* On a programme that does not
+exist yet it says to save first and configure immediately after, rather than
+contorting the create transaction into a multi-write illusion.
+
+**Cohort Kit tag** (`cohorts/CohortKitTagInput.tsx`), optional, both-or-neither,
+with the same future-only sentence. Empty is normal.
+
+**One aggregate Dashboard item** (`dashboard/KitNeedsAttention.tsx` +
+`useKitWorkQueue.ts`) — **`Kit needs attention · N`**, derived, never stored.
+**No Task row per person:** five people needing a tag is one thing to do, and a
+Task each would bury the rest of Needs Attention under work that resolves
+itself. It disappears at zero. Clicking opens a modal **over** the Dashboard
+with two sections — **Manual Kit work** (name, programme/cohort, application
+status, each required tag as `✓` or `○`, and **Add required tags**) and **Sync
+problems** (reusing the existing retry authority, no duplicated retry code).
+
+**Add required tags** is deterministic, not a checkbox. It enqueues exactly the
+tags the application's **current** state calls for and has not had confirmed —
+never a tag that already succeeded, and Leif never picks a decision tag from
+it. Rows leave the queue because the evidence changed, not because anything was
+ticked.
+
+**Automation safety** (`applications/kitAutomationRisk.ts`). The CRM cannot read
+Kit's automations, so it reports what the *configuration* implies and never
+invents provider evidence: an **approved** or **not fit** tag gets one concise
+confirmation — *"Add MiniDD_Denied? This tag is connected to one of your Kit
+email automations."* — and applicant and cohort tags add silently. **Needs
+Higher Care** says the opposite out loud: the tag lands and
+**"Needs Higher Care email still needs to be sent manually."** appears on the
+Application, because Leif has not written that automation. Tag success is never
+presented as email success.
+
+**One derivation everywhere.** The Application strip, the Dashboard queue and
+Add required tags all ask `kitStatus` / `requiredKitTags`; a contract test
+refuses any second production module that decides those labels.
+
+**Manual Application creation — DEFERRED, deliberately.** The dialog is
+builder-clean, but the slice was already at its limit and this is the one
+surface whose value is smallest (Leif creates few manual applications, and the
+programme's Kit configuration is inherited automatically either way). When it
+is wired it must reuse `KitTagPicker` for the optional extra tags and
+`addKitTag` for the durable operations — **not** a new mechanism, and **not** a
+programme-mapping editor inside Application Create.
+
+**Still not in scope:** bulk tagging, tag removal, renaming or deleting tags in
+Kit, and any automatic adoption or backfill. **Manual tagging is not automatic
+adoption:** tagging Michelle by hand records provider-confirmed manual evidence
+and does **not** make her Application eligible for the automatic decision
+trigger.
 
 **Unchanged:** the Gmail takeover sequence (§8b-kit-gmail) — make Kit's
 decision automations safe FIRST, only then backfill. And the next genuine

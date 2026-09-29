@@ -1,4 +1,5 @@
 import { required } from "ra-core";
+import { CohortKitTagInput } from "./CohortKitTagInput";
 import { AutocompleteInput } from "@/components/admin/autocomplete-input";
 import { DateInput } from "@/components/admin/date-input";
 import { NumberInput } from "@/components/admin/number-input";
@@ -66,5 +67,6 @@ export const CohortInputs = () => (
         helperText={false}
       />
     </div>
+    <CohortKitTagInput />
   </div>
 );
