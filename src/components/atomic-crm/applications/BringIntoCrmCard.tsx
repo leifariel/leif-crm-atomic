@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useDataProvider, useNotify, useRefresh } from "ra-core";
+import { useDataProvider, useGetList, useNotify, useRefresh } from "ra-core";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -9,13 +9,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-import type { Application, Cohort } from "../types";
+import type { Application, Cohort, Deal } from "../types";
 import {
   adoptImportedApplication,
   type AdoptionResult,
 } from "./adoptApplication";
 import {
   applicationAdoption,
+  adoptionConflict,
   adoptionRefusalSentence,
 } from "./applicationAdoption";
 
@@ -44,8 +45,33 @@ export const BringIntoCrmCard = ({
   const [open, setOpen] = useState(false);
   const [working, setWorking] = useState(false);
 
+  // The person's other Opportunities, so the page does not offer an action
+  // that today's data already says will be refused.
+  const { data: deals } = useGetList<Deal>(
+    "deals",
+    {
+      filter: { contact_id: application.contact_id },
+      pagination: { page: 1, perPage: 100 },
+      sort: { field: "id", order: "ASC" },
+    },
+    { retry: false },
+  );
+
   const eligibility = applicationAdoption(application, cohort);
   if (!eligibility.canAdopt) return null;
+
+  const conflict = adoptionConflict(application, deals ?? []);
+  if (conflict) {
+    // Named, not hidden. There is a live sales conversation for this
+    // programme, and which one this application belongs to is Leif's call.
+    return (
+      <div className="rounded-md border px-3 py-2">
+        <span className="text-sm text-muted-foreground">
+          {adoptionRefusalSentence(conflict)}
+        </span>
+      </div>
+    );
+  }
 
   const bringIn = async () => {
     setWorking(true);

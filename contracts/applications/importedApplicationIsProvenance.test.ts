@@ -156,6 +156,25 @@ describe("the authority is safe to replay", () => {
     );
   });
 
+  test("one opportunity is one claim on one decision", () => {
+    // Found by the adversarial pre-use gate: the first version reused an
+    // Opportunity that already carried a pending Application, so approving
+    // either would move the shared Opportunity and leave the other reading
+    // pending against a decision already made. 20260930180000 closes it, in
+    // the same words create_manual_application() already used.
+    const repair = read(
+      "supabase/migrations/20260930180000_one_opportunity_is_one_claim_on_a_decision.sql",
+    );
+    const body = code(repair);
+    expect(body).toMatch(/'already-pending'/);
+    expect(body).toMatch(/a\.opportunity_id = v_deal\.id/);
+    expect(body).toMatch(/a\.status = 'pending'/);
+    expect(body).toMatch(/a\.id <> v_app\.id/);
+    // The repair is still the same authority in every other respect.
+    expect(body).toMatch(/pg_advisory_xact_lock/);
+    expect(body).not.toMatch(/insert\s+into\s+kit_sync_operations/i);
+  });
+
   test("it refuses rather than opening a second live opportunity", () => {
     const body = AUTHORITY;
     expect(body).toMatch(/'other-active-sale'/);

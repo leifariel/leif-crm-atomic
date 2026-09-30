@@ -1,4 +1,5 @@
-import type { Application, Cohort } from "../types";
+import type { Application, Cohort, Deal } from "../types";
+import { isActiveOpportunity } from "../deals/dealActivity";
 
 // Whether an imported Application can be brought into the CRM, and why not.
 //
@@ -57,6 +58,59 @@ export const applicationAdoption = (
 };
 
 /**
+ * A refusal that is already knowable from the person's Opportunities.
+ *
+ * The database is still the authority and still decides under its lock — this
+ * only stops the page OFFERING an action that today's data already says will
+ * be refused. Samantha Herold and Celia are both in this shape: a live
+ * Growing Yourself Up conversation at `call_booked` carrying no cohort, which
+ * adoption refuses rather than opening a second Opportunity beside.
+ *
+ * State can still change between render and click, and the authority will
+ * refuse then too. That is a race, and a race is allowed. Offering a button
+ * for a conflict that is visible on screen is not.
+ */
+export const adoptionConflict = (
+  application: Pick<Application, "offer_id" | "contact_id"> & {
+    intended_cohort_id?: number | string | null;
+  },
+  deals: ReadonlyArray<
+    Pick<Deal, "id" | "offer_id" | "cohort_id" | "stage" | "outcome"> & {
+      archived_at?: string | null;
+    }
+  >,
+):
+  | AdoptionBlock
+  | "later-stage"
+  | "other-active-sale"
+  | "ambiguous-opportunity"
+  | null => {
+  const forOffer = deals.filter(
+    (deal) =>
+      String(deal.offer_id) === String(application.offer_id) &&
+      isActiveOpportunity(deal),
+  );
+  const atThisRound = forOffer.filter(
+    (deal) =>
+      String(deal.cohort_id ?? "") === String(application.intended_cohort_id),
+  );
+  if (atThisRound.length > 1) return "ambiguous-opportunity";
+  if (atThisRound.length === 1) {
+    return REVIEWABLE_STAGES.includes(atThisRound[0].stage)
+      ? null
+      : "later-stage";
+  }
+  return forOffer.length > 0 ? "other-active-sale" : null;
+};
+
+/** The stages a review still speaks to — the authority's own list. */
+const REVIEWABLE_STAGES: readonly string[] = [
+  "interested",
+  "application_received",
+  "approved",
+];
+
+/**
  * What the owner is told when the transaction refuses.
  *
  * Every one of these names a real thing to look at rather than a code. The
@@ -68,6 +122,8 @@ export const ADOPTION_REFUSALS: Record<string, string> = {
     "There is already a sales conversation for this programme, further along than an application decision. Open the opportunity instead.",
   "other-active-sale":
     "There is already a live sales conversation with this person for this programme. Open that opportunity rather than starting a second one.",
+  "already-pending":
+    "There is already an application waiting on a decision for this person and programme. Have a look at that one first — these may be the same person twice.",
   "ambiguous-opportunity":
     "This person has more than one live opportunity for this programme, so which one this application belongs to is not clear. Have a look before bringing them in.",
   "status-unsupported":

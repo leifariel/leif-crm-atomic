@@ -2557,6 +2557,142 @@ with `tsc -p tsconfig.json`; CI runs `npm run typecheck`, which is
 `tsconfig.app.json`, and only that config includes the test files. **Run
 `npm run typecheck`, never a hand-rolled tsc.** Fixed in this slice.
 
+## 8b-signup. PUBLIC SIGNUP WAS OPEN — CONTAINED 2026-09-30
+
+**Found during the adversarial pre-use gate on the adoption authority, and it
+had nothing to do with adoption.**
+
+Production Auth reported `disable_signup: false`. Anyone on the internet could
+sign up, confirm an email, and receive an `authenticated` JWT. That role holds
+`GRANT ALL` on `deals`, `applications`, `contact_notes`, `tasks`, `enrollments`
+and `sales`, plus `SELECT/INSERT/UPDATE` on `contacts`, and **every RLS policy
+reads `USING (true) WITH CHECK (true)`**. `handle_new_user()` gates nobody: it
+inserts a `sales` row for any new auth user, `administrator = false` after the
+first — and `administrator` is an **application** flag the database does not
+enforce.
+
+So a stranger could have read and written every client record through
+PostgREST without ever loading the app. `anon` was correctly blocked
+throughout (verified: 401 on every table and on the RPC).
+
+### Containment
+
+`supabase config push` from the repo root would have been a disaster — the
+repo's `config.toml` is a LOCAL config, and a push would have set `site_url` to
+`localhost`, dropped the production redirect URL, turned email confirmations
+OFF and set `db.major_version` to 15. **Twenty-nine changes.**
+
+Instead: a throwaway workdir containing a config declaring **only**
+`[auth] enable_signup = false`. `config push` writes only what a file
+*declares*, so `config diff` showed exactly one update and the push reported
+`1 property pushed`, auth only.
+
+Verified after: `disable_signup: true`; a signup attempt returns
+`422 signup_disabled` and creates nothing; existing sign-in still answers
+`400 invalid_credentials` to a wrong password, so login is untouched; the one
+CRM account is unchanged; `anon` still blocked; the CRM still serves 200.
+
+### The repo can no longer put it back
+
+All three `enable_signup` occurrences in `supabase/config.toml` are now
+`false`, each saying why. CI never pushes auth config — only `db push`,
+`secrets set` and `functions deploy` — so the drift risk was a human running
+`config push`, and that is now closed at the source.
+
+`contracts/security/publicSignupIsForbidden.test.ts` fails if any of them
+returns to `true`, if the rule stops being stated in the file, or if a workflow
+starts pushing auth config. Proven to fail on the old state before being
+accepted.
+
+**Local first run:** the first admin is normally created through the sign-up
+page (`handle_new_user` makes the first account administrator). With signup off
+that path is gone, so on a fresh local stack set `[auth] enable_signup = true`,
+create your admin, and set it back.
+
+### HIGH PRIORITY — NOT DONE: authenticated-role least privilege + real RLS
+
+Closing signup is **containment, not the fix**. It works because Leif is the
+sole account. The underlying posture is unchanged: any account that reaches
+`authenticated` still holds near-total access.
+
+Deliberately not attempted in that slice — [a missing grant once signed Leif
+out](403-from-the-database-is-not-a-logout.md), and the CRM had to stay
+working. It needs, in order:
+
+1. a complete frontend/data-provider operation census
+2. a table + function permission matrix
+3. staged policy replacement, not a big-bang revoke
+4. a lockout/recovery plan before any of it is applied
+5. tests under owner vs non-owner principals
+6. production acceptance
+
+## 8b-adopt-gate. ADVERSARIAL PRE-USE GATE ON ADOPTION — 2026-09-30
+
+Run before any human used `adopt_imported_application()`. It found one real
+defect, which is the whole reason for running it.
+
+### BLOCKER (found, fixed): two claims on one decision
+
+The authority reused an existing reviewable Opportunity — correct — but never
+asked whether that Opportunity **already carried a pending Application**. Two
+pending Applications could therefore point at one Opportunity. Since
+`reviewApplication.ts` writes the outcome to the Application AND its
+Opportunity, approving either would move the shared Opportunity and leave the
+other reading `pending` against a decision already made.
+
+`create_manual_application()` refuses exactly this, in exactly these words:
+*"a second pending Application against one live sale is two claims on the same
+decision."* Adoption did not. `20260930180000` makes it refuse
+`already-pending`, naming the Application already waiting, with zero writes —
+and the Opportunity becomes reusable again once that one is decided.
+
+**Not reachable in production today:** the branch needs an existing active deal
+at the same offer+cohort scope, and all four adoptable January applicants have
+no deals at all. Found by the gate, not by a person.
+
+### IMPORTANT (fixed): the page offered what the data would refuse
+
+Samantha Herold and Celia each have a live GYU conversation at `call_booked`
+carrying no cohort. The page offered them **Bring into CRM** and only explained
+the refusal after the click. It now names the conflict instead of offering the
+action. A refusal caused by state changing *after* render is still a race and
+still acceptable; offering a button for a conflict visible on screen was not.
+
+### IMPORTANT (reported, NOT fixed): the review path is not transactional
+
+`reviewApplication.ts` is check-then-act across four separate writes with no
+transaction: it re-reads the Application and returns `already-reviewed` if it
+is no longer pending, then updates the Application, then the Opportunity. Two
+genuinely concurrent reviews could interleave and leave the Application and its
+Opportunity disagreeing about the outcome.
+
+**Pre-existing, not introduced by adoption, and not touched here.** One
+operator, one browser, buttons disabled during the mutation — the window is
+milliseconds. Worth making transactional when the review path is next opened.
+
+### MINOR (mine, fixed): a test asserted absolute zero for pg_net
+
+The Kit side-effect check asserted `net._http_response = 0`. The clean room
+runs its own cron jobs, which legitimately answer HTTP. Corrected to measure
+the **delta** around adoption, which is 0 queued and 0 responses.
+
+### What passed
+
+| | |
+|---|---|
+| Authorization | `anon` refused everywhere; function is SECURITY INVOKER with pinned `search_path`, no dynamic SQL, no `SET ROLE`, writes scoped to one id — it grants nothing the caller lacks |
+| Concurrency | 3-way and 4-way bursts: one `adopted`, the rest `already-adopted`, exactly one Opportunity, no deadlock |
+| Rollback | fault injected after the Opportunity insert: zero orphan deals, `crm_adopted_at` null, no Kit work; retry then succeeds |
+| Stale state | approved / denied / waitlist / closed cohort / do-not-engage all refuse under the lock, zero writes |
+| Collision matrix | 10 shapes: create, reuse, later-stage, other-offer, lost-sale, ambiguous, already-pending, cohort mismatch |
+| Integrity | source, status, `submitted_at`, `reviewed_at`, cohort, answers and all `application_responses` unchanged; no duplicate Application or Contact |
+| Review tasks | a cron-reconciled projection; adoption never touches them; reconciling three times created 2, then 0, then 0 |
+| Kit | zero operations, zero identities, zero queued HTTP — measured, not inferred |
+| Property matrix | **45 shapes** (3 sources × 5 statuses × 3 cohort states): only imported + pending + open-cohort may transition; every other shape refuses with zero writes |
+
+**Residual security model, stated plainly:** only provisioned CRM users can
+become `authenticated` now — but `authenticated` remains highly privileged.
+
 ## 8b-builder. APPLICATION FORM BUILDER — PARKED
 
 Still **uncommitted**, parked in a stash while the three commits above were

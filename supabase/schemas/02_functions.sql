@@ -4299,6 +4299,7 @@ DECLARE
   v_exact_count integer;
   v_other deals%ROWTYPE;
   v_reused boolean := false;
+  v_pending_app_id bigint;
 BEGIN
   SELECT * INTO v_app FROM applications WHERE id = p_application_id;
   IF v_app.id IS NULL THEN
@@ -4426,6 +4427,34 @@ BEGIN
         'status', 'later-stage',
         'opportunity_id', v_deal.id,
         'stage', v_deal.stage
+      );
+    END IF;
+
+    -- One Opportunity is one claim on one decision.
+    --
+    -- Found by the adversarial pre-use gate. create_manual_application()
+    -- refuses exactly this shape and says why: "a second pending Application
+    -- against one live sale is two claims on the same decision". Adoption
+    -- reused the Opportunity regardless, so two pending Applications could end
+    -- up pointing at it — and approving either one moves the shared
+    -- Opportunity, leaving the other reading pending against a decision that
+    -- has already been made.
+    --
+    -- Refused by name instead, with the Application already waiting, so Leif
+    -- can see whether these are two records of the same person.
+    SELECT a.id INTO v_pending_app_id
+      FROM applications a
+     WHERE a.opportunity_id = v_deal.id
+       AND a.status = 'pending'
+       AND a.id <> v_app.id
+     ORDER BY a.id DESC
+     LIMIT 1;
+
+    IF v_pending_app_id IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'status', 'already-pending',
+        'application_id', v_pending_app_id,
+        'opportunity_id', v_deal.id
       );
     END IF;
 

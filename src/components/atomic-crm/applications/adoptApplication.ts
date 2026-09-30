@@ -28,6 +28,7 @@ export type AdoptionStatus =
   | "do-not-engage"
   | "later-stage"
   | "other-active-sale"
+  | "already-pending"
   | "ambiguous-opportunity";
 
 export type AdoptionResult = {
@@ -144,6 +145,27 @@ export const adoptImportedApplicationMirror = async (
 
   if (atThisRound.length === 1) {
     const deal = atThisRound[0];
+    // One Opportunity is one claim on one decision. Reusing one that already
+    // carries a pending Application would let approving either move the shared
+    // Opportunity, leaving the other pending against a decision already made.
+    const { data: waiting } = await dataProvider.getList<Application>(
+      "applications",
+      {
+        filter: { opportunity_id: deal.id, status: "pending" },
+        pagination: { page: 1, perPage: 10 },
+        sort: { field: "id", order: "DESC" },
+      },
+    );
+    const other = (waiting ?? []).find(
+      (one) => String(one.id) !== String(application.id),
+    );
+    if (other) {
+      return {
+        status: "already-pending",
+        application_id: other.id,
+        opportunity_id: deal.id,
+      };
+    }
     if (!REVIEWABLE_STAGES.includes(deal.stage)) {
       return {
         status: "later-stage",

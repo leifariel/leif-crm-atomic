@@ -374,6 +374,70 @@ describe("bringing an imported application into the CRM", () => {
     expect(deals).toHaveLength(1);
   });
 
+  // Found by the adversarial pre-use gate. create_manual_application() refuses
+  // exactly this shape — "a second pending Application against one live sale is
+  // two claims on the same decision" — and adoption did not. Approving one of
+  // the two would move the shared Opportunity, leaving the other reading
+  // pending against a decision that has already been made.
+  it("refuses to link an opportunity that already carries a pending application", async () => {
+    const { dataProvider } = build({
+      applications: [
+        taylor(),
+        {
+          id: 300,
+          contact_id: 3,
+          opportunity_id: 77,
+          offer_id: 2,
+          intended_cohort_id: 4,
+          status: "pending",
+          source: "public_form",
+          raw_answers: {},
+          submitted_at: IMPORTED_AT,
+          reviewed_at: null,
+          crm_adopted_at: null,
+          created_at: IMPORTED_AT,
+          updated_at: IMPORTED_AT,
+        },
+      ],
+      deals: [
+        {
+          id: 77,
+          contact_id: 3,
+          offer_id: 2,
+          cohort_id: 4,
+          stage: "application_received",
+          outcome: null,
+          archived_at: null,
+          name: "Taylor Carr",
+          amount: 2000,
+          index: 0,
+          sales_id: 0,
+          created_at: IMPORTED_AT,
+          updated_at: IMPORTED_AT,
+        },
+      ],
+    });
+
+    const result = await adoptImportedApplicationMirror(dataProvider, 148);
+    expect(result.status).toBe("already-pending");
+
+    // And nothing was written.
+    const { data } = await dataProvider.getOne<Application>("applications", {
+      id: 148,
+    });
+    expect(data.crm_adopted_at ?? null).toBeNull();
+    expect(data.opportunity_id ?? null).toBeNull();
+    const { data: sharing } = await dataProvider.getList<Application>(
+      "applications",
+      {
+        filter: { opportunity_id: 77 },
+        pagination: { page: 1, perPage: 50 },
+        sort: { field: "id", order: "ASC" },
+      },
+    );
+    expect(sharing).toHaveLength(1);
+  });
+
   it("creates no Kit work at all", async () => {
     const { dataProvider } = build();
     await adoptImportedApplicationMirror(dataProvider, 148);
@@ -475,6 +539,69 @@ describe("the Application page", () => {
       sort: { field: "id", order: "ASC" },
     });
     expect(deals).toHaveLength(0);
+  });
+
+  // Samantha Herold and Celia are both in this shape in production. The page
+  // must not offer an action that today's data already says will be refused —
+  // it names the conflict instead.
+  it("names a live sales conflict instead of offering adoption", async () => {
+    await page.viewport(1280, 1200);
+    const { element } = build({
+      deals: [
+        {
+          id: 268,
+          contact_id: 3,
+          offer_id: 2,
+          cohort_id: null,
+          stage: "call_booked",
+          outcome: null,
+          archived_at: null,
+          name: "Taylor Carr",
+          amount: 2000,
+          index: 0,
+          sales_id: 0,
+          created_at: IMPORTED_AT,
+          updated_at: IMPORTED_AT,
+        },
+      ],
+    });
+    const screen = await render(element);
+
+    await expect
+      .element(screen.getByText(/already a live sales conversation/))
+      .toBeVisible();
+    const buttons = Array.from(document.body.querySelectorAll("button")).map(
+      (node) => node.textContent?.trim(),
+    );
+    expect(buttons).not.toContain("Bring into CRM");
+  });
+
+  it("still offers adoption when the only opportunity is one a review speaks to", async () => {
+    await page.viewport(1280, 1200);
+    const { element } = build({
+      deals: [
+        {
+          id: 79,
+          contact_id: 3,
+          offer_id: 2,
+          cohort_id: 4,
+          stage: "interested",
+          outcome: null,
+          archived_at: null,
+          name: "Taylor Carr",
+          amount: 2000,
+          index: 0,
+          sales_id: 0,
+          created_at: IMPORTED_AT,
+          updated_at: IMPORTED_AT,
+        },
+      ],
+    });
+    const screen = await render(element);
+
+    await expect
+      .element(screen.getByRole("button", { name: "Bring into CRM" }))
+      .toBeVisible();
   });
 
   it("does not offer it on an imported record that is real history", async () => {

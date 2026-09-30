@@ -228,6 +228,17 @@ export const REVIEWED_DETERMINISTIC = {
   // is history, which is the distinction the column exists to carry.
   20260930120000:
     "synthetic proof rows, rolled back; owns applications.crm_adopted_at and adopt_imported_application()'s definition",
+  // Same shape as the one above, and flagged for the same reason: the header
+  // explains a defect using the vocabulary of real applications. It reads and
+  // writes no real row — its proof builds its own Offer, Cohort, Contact and
+  // two Applications inside a subtransaction that ends by raising.
+  //
+  // It cannot be skipped: it owns the CURRENT definition of
+  // adopt_imported_application(). A database rebuilt without it has the
+  // version that will link an Opportunity already carrying a pending
+  // Application, which is the defect this migration exists to close.
+  20260930180000:
+    "synthetic proof rows, rolled back; owns the current adopt_imported_application() definition",
 };
 
 /**
