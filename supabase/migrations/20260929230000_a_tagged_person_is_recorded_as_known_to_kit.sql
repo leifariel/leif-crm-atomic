@@ -107,6 +107,16 @@ DECLARE
   v_recorded integer;
   v_refused boolean := false;
   v_le constant bigint := 1;
+  -- Kit issues decimal integer subscriber ids, so a value carrying a hyphen
+  -- cannot be one. That is the entire point of choosing it. The first version
+  -- of this proof borrowed Terry's real id, and on MAIN the sweep legitimately
+  -- recorded that id against the real Terry first — whereupon the fixture hit
+  -- contact_external_identities_global_key, record_external_identity() quite
+  -- correctly answered 'known' about somebody else, no row appeared for the
+  -- fixture, and the proof concluded the repair had failed. It had not. A
+  -- fixture must never borrow a real person's identifier, so these cannot.
+  v_subscriber constant text := 'proof-kit-subscriber-20260929230000';
+  v_shared_subscriber constant text := 'proof-kit-shared-20260929230000';
 BEGIN
   -- The grant itself, read from the live catalogue rather than assumed.
   IF NOT has_function_privilege('service_role',
@@ -140,7 +150,7 @@ BEGIN
       v_le, null, 'Identity', 'Proof', 'identity.proof@example.com', null, '{}'::jsonb);
     v_app := (v_result ->> 'application_id')::bigint;
     UPDATE kit_sync_operations
-       SET status = 'succeeded', succeeded_at = now(), kit_subscriber_id = '4315021388'
+       SET status = 'succeeded', succeeded_at = now(), kit_subscriber_id = v_subscriber
      WHERE application_id = v_app;
     IF EXISTS (SELECT 1 FROM contact_external_identities
                 WHERE contact_id = v_contact AND provider = 'kit') THEN
@@ -155,7 +165,7 @@ BEGIN
     IF NOT EXISTS (
       SELECT 1 FROM contact_external_identities
        WHERE contact_id = v_contact AND provider = 'kit'
-         AND external_user_id = '4315021388'
+         AND external_user_id = v_subscriber
     ) THEN
       RAISE EXCEPTION 'the identity was not recorded from the stored subscriber id';
     END IF;
@@ -166,10 +176,18 @@ BEGIN
     END IF;
 
     -- Running it again is a no-op, and cannot fork a second identity.
-    SELECT count(*) INTO v_before FROM contact_external_identities WHERE provider = 'kit';
+    -- Counted on the fixture's own identity, never on every Kit identity in
+    -- the database: real people legitimately have those, and on MAIN this very
+    -- sweep is expected to create some on the way past.
+    SELECT count(*) INTO v_before FROM contact_external_identities
+     WHERE provider = 'kit' AND external_user_id = v_subscriber;
+    IF v_before <> 1 THEN
+      RAISE EXCEPTION 'the fixture identity is not the single row the rest of this assumes';
+    END IF;
     PERFORM public.reconcile_kit_identities();
     PERFORM public.reconcile_kit_identities();
-    IF (SELECT count(*) FROM contact_external_identities WHERE provider = 'kit') <> v_before THEN
+    IF (SELECT count(*) FROM contact_external_identities
+         WHERE provider = 'kit' AND external_user_id = v_subscriber) <> v_before THEN
       RAISE EXCEPTION 'repeating the sweep created another identity';
     END IF;
     IF (SELECT count(*) FROM contact_external_identities
@@ -194,7 +212,7 @@ BEGIN
       (contact_id, kind, origin, email, kit_tag_id, kit_tag_name, status,
        succeeded_at, kit_subscriber_id)
     VALUES (v_second, 'manual', 'manual_owner', 'shared.address@example.com',
-            24082722, 'MiniDD_Applicant', 'succeeded', now(), '999888777');
+            24082722, 'MiniDD_Applicant', 'succeeded', now(), v_shared_subscriber);
     PERFORM public.reconcile_kit_identities();
     IF EXISTS (SELECT 1 FROM contact_external_identities
                 WHERE contact_id = v_second AND provider = 'kit') THEN

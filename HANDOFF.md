@@ -2037,6 +2037,45 @@ address is left unresolved.
 **Watch for it in the cron response body:** the pass that repairs him will
 report `"identitiesRepaired":1`.
 
+### THE FIRST DEPLOY ATTEMPT FAILED, AND THE PROOF WAS AT FAULT
+
+`e6d703ad` was pushed on 2026-09-29 and **did not deploy**. `📡 Push supabase
+migrations` failed, so the function deploy and everything after it were
+skipped; the whole migration rolled back in its own transaction. Production
+stayed on **145** applied migrations, newest `20260929120000`, `kit_sync` on
+the previous build. No partial state, no second Kit operation, and Terry
+still unrepaired. The Check run was green throughout, e2e included.
+
+**Nothing was wrong with the repair. The fixture was wrong.** The proof block
+built its fixture with Terry's *real* subscriber id, `4315021388`. On MAIN the
+sweep does its job and records that id against the real Terry first, so when it
+reached the fixture, `contact_external_identities_global_key` — `unique
+(provider, external_user_id) where provider_account_id is null`, one provider
+identity naming at most one human — made `record_external_identity()` answer
+`'known'` about *Terry*, and no row appeared for the fixture. The assertion
+then raised a plain error, which is not the `restrict_violation` sentinel the
+block catches, so it escaped and aborted the push.
+
+The correction is the fixture and nothing else: synthetic subscriber ids
+(`proof-kit-subscriber-20260929230000`, `proof-kit-shared-20260929230000`) that
+cannot name a real person, because Kit only ever issues decimal integer ids and
+these carry a hyphen. The idempotency check is also now counted on the
+fixture's own identity rather than on every Kit identity in the database —
+counting rows real people legitimately own was what made a fixture answerable
+to production data in the first place.
+
+**The lesson, which outlives this migration:** a self-proving migration runs
+against MAIN's real rows, so a fixture that borrows a real identifier is not a
+fixture — it is a collision waiting for the one environment that matters. Test
+data must be unmistakably synthetic *by construction*, not merely unused.
+
+Proved against the production shape the first clean room failed to model: a
+seeded Terry-like row carrying `4315021388` with no identity, at the exact
+pre-state (`record_external_identity` ACL `postgres=X` only, no sweep). The old
+file fails there with the identical error and line; the corrected file applies,
+and the real row then repairs to `4315021388` while the fixture repairs to its
+own synthetic id, neither colliding, the operation untouched, no provider call.
+
 ## 8b-kit-gmail. GMAIL TAKEOVER — A SEQUENCE THAT MUST NOT BE IMPROVISED
 
 **This is a hard prerequisite for the Gmail integration (§9) and it must
