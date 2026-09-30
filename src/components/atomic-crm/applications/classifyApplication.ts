@@ -35,7 +35,7 @@ export type ApplicationBucket =
 
 export type ClassifiableApplication = Pick<
   Application,
-  "status" | "source" | "reviewed_at"
+  "status" | "source" | "reviewed_at" | "crm_adopted_at"
 >;
 
 /**
@@ -84,6 +84,17 @@ export const classifyApplication = (
     if (
       application.source === "historical_import" &&
       context.cohort?.status === "applications_open"
+    ) {
+      return "needs-review";
+    }
+    // The owner said so. Bringing an imported record into the CRM is an
+    // explicit act, and it outlives the round that made it offerable: once
+    // January 2027 closes, an applicant Leif adopted and has not yet decided
+    // on is still a decision he owes, not history. Without this she would
+    // drop into Pre-CRM the day the cohort closed, still undecided.
+    if (
+      application.source === "historical_import" &&
+      application.crm_adopted_at != null
     ) {
       return "needs-review";
     }

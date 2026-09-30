@@ -2428,6 +2428,135 @@ survives; future-only semantics unchanged.
 **No migration.** Production behaviour, eligibility and tag mappings are
 untouched — this slice moves and contains UI, and repairs one component's API.
 
+## 8b-import. `historical_import` IS PROVENANCE, NOT LIFECYCLE — 2026-09-30
+
+**Read this before touching anything that branches on `source`.**
+
+`source = 'historical_import'` says **how a record arrived**: through the
+Notion migration. It has never said **when it belongs to**. Conflating the two
+is a defect that has now cost real work twice.
+
+Taylor Carr applied to Growing Yourself Up — January 2027 on 28 August. Her
+four answers are real, current and on the screen. Her cohort is still taking
+applications. And her Application page could only say *"No sales opportunity is
+linked to this application, so a decision cannot be recorded here yet"* —
+because the import never gave her the Opportunity that every review outcome
+writes to alongside the Application (`reviewApplication.ts`).
+
+`reviewApplication` has **no source check at all**. Nothing was gatekeeping her
+on provenance. The single missing thing was the Opportunity.
+
+### The app already knew she was current work
+
+`classifyApplication()` puts an imported **pending** Application aimed at a
+cohort **still taking applications** into `needs-review`, and its own comment
+names the case: *"the six January 2027 records"*. That classification is
+reused here rather than replaced — it is the canonical current-vs-historical
+distinction and it is correct.
+
+### What was genuinely missing: `applications.crm_adopted_at`
+
+One nullable timestamp, and it is **not** a second classification. It answers
+the one question nothing else could: **has the owner deliberately brought this
+imported record into current operations?**
+
+- *"Has an Opportunity"* cannot answer it — four already-approved January
+  imports have one and must stay out of today's queues.
+- *"Is classified needs-review"* cannot either — that is already true of Taylor
+  **before** anybody decides anything. It is the condition for OFFERING the
+  act, not evidence of it.
+
+**`source` stays `historical_import` forever.** Rewriting it to `manual` would
+claim Leif typed answers the applicant wrote herself.
+
+### The authority — `adopt_imported_application(application_id)`
+
+`20260930120000`. One transaction, SECURITY INVOKER, advisory lock, mirroring
+`create_manual_application()`'s invariants rather than its signature: same
+`deal_is_active()` predicate, same reviewable-stage rule, same
+`application_received` stage, same `entry_path = 'other'`.
+
+Eligible only when: imported · `pending` · not already adopted · no Opportunity
+· intended cohort `applications_open`.
+
+| Situation | What it does |
+|---|---|
+| no active Opportunity for this person+programme | **creates** one at `application_received` |
+| exactly one, at `interested`/`application_received`/`approved` | **links** it, never duplicates |
+| one at `call_booked`/`decision` | **refuses** `later-stage` |
+| an active sale on another footing (e.g. no cohort) | **refuses** `other-active-sale` |
+| more than one active | **refuses** `ambiguous-opportunity` |
+| replay / double click | **`already-adopted`**, writes nothing |
+
+**Stricter than `create_manual_application` on purpose:** an Application
+already carries the person, programme and round, so nothing has to be inferred
+— and anything not certain is refused rather than guessed. *Atomic handles
+certainty; Leif handles ambiguity.*
+
+### Adoption reaches NO provider, and that is structural
+
+Not remembered — guaranteed by triggers that already exist:
+`on_application_kit_receipt` fires **AFTER INSERT** only (adoption updates),
+and `on_application_kit_decision` fires only **when status changes** and only
+when an applicant operation already exists. Adoption does neither.
+
+The Kit migration's own comment says why this is right: an imported receipt was
+never Kit-managed, so *"adopting them stays a deliberate act"*.
+
+**After adoption Kit is MANUAL**, never automatic: `Manual — action needed`,
+requiring `GYU-Applicant` (plus the cohort tag only if one is configured — both
+live cohorts have none). Approve her later and `GYU-Approved` joins the
+requirement, with the existing automation warning. She joins the **one
+aggregate** Kit needs-attention row; no Task is created for her.
+
+### January 2027 census — 16 applications, 11 imported
+
+| | |
+|---|---|
+| **CURRENT IMPORTED — PENDING, adoptable now (4)** | **Taylor Carr (148)**, Jessie (96), Lena (145), Cristina Luca (147) |
+| **CURRENT IMPORTED — PENDING, refused pending Leif (2)** | Samantha Herold (97) → live GYU deal 268 at `call_booked`, no cohort · Celia (146) → live GYU deal 267 at `call_booked`, no cohort |
+| **CURRENT IMPORTED — ALREADY APPROVED, already in pipeline (4)** | Lara Spagnola (72, deal 149 `won`), Brea Burkard (95, deal 210), Lena Bosnjakovic (99, deal 214), Raghavan Narasimhan (100, deal 213) — **not blocked, no adoption needed** |
+| **AMBIGUOUS — DEFERRED (1)** | **Elin Hilgemann (144)** — approved, no Opportunity, no deals at all |
+| Live public-form applicants in the same cohort (5) | 189, 192, 204, 211, 212 — unaffected |
+
+### Approved imports: explicitly deferred, and why
+
+`reviewed_at` is **null on all 59** imported approvals — types.ts is explicit
+that *"a decided status with no timestamp is valid history, never 'not
+reviewed'"*. So adopting an approved import would need a live pipeline stage
+for a decision made outside this system at an unknown time. That is a business
+question, not a derivation, so `status-unsupported` refuses it by name.
+
+**Only Elin Hilgemann (144) is actually blocked by this.** The other four
+approved January imports already have their Opportunity and can be reviewed
+today. Leif decides what Elin's stage should be; nothing is guessed.
+
+`waitlist` and `denied` are refused for the same reason — old vocabulary is
+never translated into a modern outcome.
+
+### Taylor's production acceptance plan
+
+1. Open Taylor Carr's Application · 2. answers intact · 3. **Bring into CRM**
+offered · 4. click · 5. modal over the page · 6. confirm · 7. same page ·
+8. Review Decision now works · 9. exactly one Opportunity · 10. pipeline shows
+her at Application Received · 11. she is in the normal review surface ·
+12. `source` still `historical_import` · 13. cohort still January 2027 ·
+14. Kit reads **Manual — action needed** · 15. `○ GYU-Applicant` required ·
+16. Dashboard Kit underlying count **+1** (4 → 5) · 17. **no** Kit operation,
+identity or tag created by adoption.
+
+**No bulk adoption.** One explicit click per real current applicant. Leif is
+opening these to read them anyway. Batch can later call the same authority
+unchanged, once this is proven — recorded as a convenience, not a blocker.
+
+### One process note, recorded because it cost a red main
+
+`f6b4663a` shipped with a red **Typecheck** job: a test fixture used
+`type: "cohort"` where `OfferType` is `"individual" | "group"`. I had verified
+with `tsc -p tsconfig.json`; CI runs `npm run typecheck`, which is
+`tsconfig.app.json`, and only that config includes the test files. **Run
+`npm run typecheck`, never a hand-rolled tsc.** Fixed in this slice.
+
 ## 8b-builder. APPLICATION FORM BUILDER — PARKED
 
 Still **uncommitted**, parked in a stash while the three commits above were

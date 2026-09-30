@@ -1892,6 +1892,10 @@ alter table public.historical_application_source_snapshots enable row level secu
 -- Columns added to already-declared tables
 -- applications.source_page_id
 alter table public.applications add column if not exists source_page_id text;
+-- applications.crm_adopted_at — when the owner brought an IMPORTED
+-- Application into current operations. `source` says how a record arrived
+-- and never changes; this says whether it is work now (20260930120000).
+alter table public.applications add column if not exists crm_adopted_at timestamptz;
 -- deal_payment_schedule_items.verified_by_stripe_at
 alter table public.deal_payment_schedule_items add column if not exists verified_by_stripe_at timestamp with time zone;
 -- deal_payment_schedule_items.satisfied_by_payment_intent_id

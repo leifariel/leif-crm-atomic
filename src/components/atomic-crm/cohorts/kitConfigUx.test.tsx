@@ -35,7 +35,7 @@ const CATALOG = [
 const GYU: Offer = {
   id: 2,
   name: "Growing Yourself Up",
-  type: "cohort",
+  type: "group",
   duration: "8 weeks",
   current_price: 2000,
   is_active: true,

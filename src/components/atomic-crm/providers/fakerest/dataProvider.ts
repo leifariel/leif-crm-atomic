@@ -34,6 +34,7 @@ import {
   type ManualApplicationInput,
 } from "../../applications/createManualApplication";
 import { retryKitSyncMirror } from "../../applications/retryKitSync";
+import { adoptImportedApplicationMirror } from "../../applications/adoptApplication";
 import {
   addKitTagMirror,
   contactKitTagsMirror,
@@ -923,6 +924,12 @@ export const createDataProvider = ({
     // pending, exactly as retry_kit_application_sync() does.
     retryKitSync: async (applicationId: Identifier) =>
       retryKitSyncMirror(dataProvider, applicationId),
+    // Bringing an imported Application into current operations. The mirror
+    // makes the same decisions in the same order; what it cannot reproduce is
+    // the single transaction and the advisory lock, which is exactly why
+    // production runs the database authority instead.
+    adoptImportedApplication: async (applicationId: Identifier) =>
+      adoptImportedApplicationMirror(dataProvider, applicationId),
     createManualApplication: async (input: ManualApplicationInput) => {
       const result = await createManualApplicationMirror(dataProvider, input);
       // Shaped exactly like the RPC's jsonb, field for field — a key

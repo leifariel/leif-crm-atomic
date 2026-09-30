@@ -216,6 +216,18 @@ export const REVIEWED_DETERMINISTIC = {
   // rebuilt without it tags people in Kit and never records that it did.
   20260929230000:
     "synthetic proof rows, rolled back; owns the service_role grant on record_external_identity and reconcile_kit_identities()'s definition",
+  // Flagged by the heuristic because its header names Taylor Carr and Samantha
+  // Herold. It reads and writes neither: they are named to explain WHY an
+  // imported Application can be current work, which is the whole point of the
+  // migration. Every row it touches in the proof is one it created, inside a
+  // subtransaction that ends by raising, so all of them roll back.
+  //
+  // It cannot be skipped: it owns applications.crm_adopted_at and
+  // adopt_imported_application()'s definition. A database rebuilt without it
+  // has no way to tell an imported record that is current work from one that
+  // is history, which is the distinction the column exists to carry.
+  20260930120000:
+    "synthetic proof rows, rolled back; owns applications.crm_adopted_at and adopt_imported_application()'s definition",
 };
 
 /**

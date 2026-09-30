@@ -18,6 +18,7 @@ import {
   applicationStatusLabels,
 } from "./applicationConstants";
 import { ApplicationReviewActions } from "./ApplicationReviewActions";
+import { BringIntoCrmCard } from "./BringIntoCrmCard";
 import { KitStatusLine } from "./KitStatusLine";
 import { useApplicationReviewData } from "./useApplicationReviewData";
 
@@ -162,11 +163,23 @@ const ApplicationShowContent = () => {
                 applicantName={applicantName}
               />
             ) : (
-              <p className="text-sm text-muted-foreground">
-                {translate("resources.applications.review.no_opportunity", {
-                  _: "No sales opportunity is linked to this application, so a decision cannot be recorded here yet.",
-                })}
-              </p>
+              <>
+                {/* An imported application to a round still taking
+                    applications is current work that has never been given
+                    the Opportunity a decision is recorded against. That is
+                    fixable, by one explicit act, so the page offers it
+                    instead of only explaining the problem. */}
+                <BringIntoCrmCard
+                  application={record}
+                  cohort={cohort}
+                  applicantName={applicantName}
+                />
+                <p className="text-sm text-muted-foreground">
+                  {translate("resources.applications.review.no_opportunity", {
+                    _: "No sales opportunity is linked to this application, so a decision cannot be recorded here yet.",
+                  })}
+                </p>
+              </>
             )}
 
             {/* Is Kit handling this application, or is it Leif's to do by

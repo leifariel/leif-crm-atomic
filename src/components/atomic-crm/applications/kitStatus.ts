@@ -100,7 +100,13 @@ const outstanding = (operation: KitSyncOperation) =>
 type StatusInput = {
   application: Pick<
     Application,
-    "id" | "contact_id" | "status" | "source" | "created_at" | "offer_id"
+    | "id"
+    | "contact_id"
+    | "status"
+    | "source"
+    | "created_at"
+    | "offer_id"
+    | "crm_adopted_at"
   > & { intended_cohort_id?: number | string | null };
   // Every operation that could speak about this application: its own automatic
   // rows, plus this person's manual rows.
@@ -231,9 +237,19 @@ export const kitStatus = ({
   if (application.status === "do_not_engage") return say("not-used");
 
   // An imported record and a live applicant can both have no operations and
-  // mean opposite things. Source is the discriminator, and history must never
-  // read as outstanding work.
-  if (!TERMINAL_SOURCES.includes(application.source)) return say("historical");
+  // mean opposite things, and history must never read as outstanding work.
+  //
+  // Source alone used to decide it, which was right until an imported record
+  // could be current work. Provenance still cannot make something operational
+  // — 99 old questionnaires stay silent here forever — but an imported
+  // Application the owner deliberately brought into the CRM is exactly as
+  // current as a live one, and owes the same tags. It reaches manual mode
+  // below rather than automatic: its receipt was never Kit-managed, so no
+  // automatic operation exists and none is invented.
+  const operational =
+    TERMINAL_SOURCES.includes(application.source) ||
+    application.crm_adopted_at != null;
+  if (!operational) return say("historical");
 
   // Automatic: the application is Kit-managed exactly when the integration
   // created work for it.

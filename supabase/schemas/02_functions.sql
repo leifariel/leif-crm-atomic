@@ -4285,3 +4285,203 @@ begin
   return v_recorded;
 end;
 $$;
+
+CREATE OR REPLACE FUNCTION "public"."adopt_imported_application"("p_application_id" bigint) RETURNS "jsonb"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_app applications%ROWTYPE;
+  v_offer offers%ROWTYPE;
+  v_contact contacts%ROWTYPE;
+  v_cohort cohorts%ROWTYPE;
+  v_deal deals%ROWTYPE;
+  v_exact_count integer;
+  v_other deals%ROWTYPE;
+  v_reused boolean := false;
+BEGIN
+  SELECT * INTO v_app FROM applications WHERE id = p_application_id;
+  IF v_app.id IS NULL THEN
+    RETURN jsonb_build_object('status', 'application-invalid');
+  END IF;
+
+  -- Adoption is a statement about an IMPORTED record. A live submission is
+  -- already current by construction and has nothing to adopt.
+  IF v_app.source <> 'historical_import' THEN
+    RETURN jsonb_build_object('status', 'not-imported', 'source', v_app.source);
+  END IF;
+
+  -- Idempotent, and the first thing checked after provenance: a replay, a
+  -- double click and a retry all land here and write nothing.
+  IF v_app.crm_adopted_at IS NOT NULL THEN
+    RETURN jsonb_build_object(
+      'status', 'already-adopted',
+      'application_id', v_app.id,
+      'opportunity_id', v_app.opportunity_id,
+      'adopted_at', v_app.crm_adopted_at
+    );
+  END IF;
+
+  -- Only statuses whose mapping to the current lifecycle is PROVEN. 'pending'
+  -- maps to the CRM's own first pipeline stage and nothing has to be invented.
+  -- An imported 'approved' would need a stage for a decision made outside this
+  -- system at an unknown time (reviewed_at is null on all 59 of them), and
+  -- 'denied' and 'waitlist' are old vocabulary with no modern equivalent that
+  -- is not a guess. Refused by name so the UI can say which.
+  IF v_app.status <> 'pending' THEN
+    RETURN jsonb_build_object('status', 'status-unsupported', 'application_status', v_app.status);
+  END IF;
+
+  -- The same narrow condition classifyApplication() uses to call an imported
+  -- record current work. Without it, 99 old questionnaires become adoptable.
+  IF v_app.intended_cohort_id IS NULL THEN
+    RETURN jsonb_build_object('status', 'no-open-cohort');
+  END IF;
+  SELECT * INTO v_cohort FROM cohorts WHERE id = v_app.intended_cohort_id;
+  IF v_cohort.id IS NULL OR v_cohort.status <> 'applications_open' THEN
+    RETURN jsonb_build_object('status', 'no-open-cohort', 'cohort_status', v_cohort.status);
+  END IF;
+
+  SELECT * INTO v_offer FROM offers WHERE id = v_app.offer_id AND is_active;
+  IF v_offer.id IS NULL THEN
+    RETURN jsonb_build_object('status', 'offer-invalid');
+  END IF;
+
+  SELECT * INTO v_contact FROM contacts WHERE id = v_app.contact_id;
+  IF v_contact.id IS NULL THEN
+    RETURN jsonb_build_object('status', 'contact-invalid');
+  END IF;
+
+  -- The same durable "no future direct sales" gate every path that would
+  -- start a sales process honours.
+  IF v_contact.sales_eligibility = 'do_not_engage' THEN
+    RETURN jsonb_build_object('status', 'do-not-engage');
+  END IF;
+
+  -- Serialize this person+programme+round for the rest of the transaction, so
+  -- two clicks cannot both read "no Opportunity" and both create one.
+  PERFORM pg_advisory_xact_lock(
+    hashtext('adopt_imported_application:' || v_app.contact_id || ':' || v_app.offer_id
+             || ':' || v_app.intended_cohort_id)
+  );
+
+  -- Re-read under the lock: the other transaction may have just adopted it.
+  SELECT * INTO v_app FROM applications WHERE id = p_application_id;
+  IF v_app.crm_adopted_at IS NOT NULL THEN
+    RETURN jsonb_build_object(
+      'status', 'already-adopted',
+      'application_id', v_app.id,
+      'opportunity_id', v_app.opportunity_id,
+      'adopted_at', v_app.crm_adopted_at
+    );
+  END IF;
+
+  IF v_app.opportunity_id IS NOT NULL THEN
+    -- Nothing was blocked; it already had its Opportunity. Record the act and
+    -- touch nothing else.
+    UPDATE applications SET crm_adopted_at = now() WHERE id = v_app.id;
+    RETURN jsonb_build_object(
+      'status', 'adopted',
+      'application_id', v_app.id,
+      'opportunity_id', v_app.opportunity_id,
+      'created_opportunity', false,
+      'reused_opportunity', true
+    );
+  END IF;
+
+  -- One active sales attempt per person per Offer per Cohort, via the same
+  -- canonical predicate every other path uses.
+  SELECT count(*) INTO v_exact_count
+  FROM deals d
+  WHERE d.contact_id = v_app.contact_id
+    AND d.offer_id = v_app.offer_id
+    AND d.cohort_id = v_app.intended_cohort_id
+    AND public.deal_is_active(d.archived_at, d.stage, d.outcome);
+
+  IF v_exact_count > 1 THEN
+    -- The invariant says this cannot happen. If it ever does, ownership of the
+    -- Application is a question about the business, so nobody guesses.
+    RETURN jsonb_build_object('status', 'ambiguous-opportunity', 'candidates', v_exact_count);
+  END IF;
+
+  IF v_exact_count = 1 THEN
+    SELECT * INTO v_deal
+    FROM deals d
+    WHERE d.contact_id = v_app.contact_id
+      AND d.offer_id = v_app.offer_id
+      AND d.cohort_id = v_app.intended_cohort_id
+      AND public.deal_is_active(d.archived_at, d.stage, d.outcome);
+
+    -- Already past the point a review speaks to. Approving writes
+    -- stage='approved' onto the Opportunity, which from call_booked or
+    -- decision would drag a live sale BACKWARD. Same rule, same list, same
+    -- refusal create_manual_application() makes.
+    IF coalesce(
+         array_position(
+           array['interested', 'application_received', 'approved', 'call_booked', 'decision'],
+           v_deal.stage),
+         0) NOT BETWEEN 1 AND 3
+    THEN
+      RETURN jsonb_build_object(
+        'status', 'later-stage',
+        'opportunity_id', v_deal.id,
+        'stage', v_deal.stage
+      );
+    END IF;
+
+    v_reused := true;
+  ELSE
+    -- No Opportunity at this round's scope. Before opening one, check the
+    -- person is not already being sold this same programme on another
+    -- footing: deals 267 and 268 are live GYU conversations carrying no
+    -- cohort at all, and opening a second live Opportunity beside one of them
+    -- would be a duplicate in everything but the letter of the invariant.
+    -- Refused, named, and left for Leif.
+    SELECT * INTO v_other
+    FROM deals d
+    WHERE d.contact_id = v_app.contact_id
+      AND d.offer_id = v_app.offer_id
+      AND public.deal_is_active(d.archived_at, d.stage, d.outcome)
+    ORDER BY d.id ASC
+    LIMIT 1;
+
+    IF v_other.id IS NOT NULL THEN
+      RETURN jsonb_build_object(
+        'status', 'other-active-sale',
+        'opportunity_id', v_other.id,
+        'stage', v_other.stage
+      );
+    END IF;
+
+    -- The canonical Application Received Opportunity, the same shape
+    -- create_manual_application() writes. entry_path is 'other': no public
+    -- form produced this, and the offer/cohort validation, commercial
+    -- snapshot, Contact-derived name, stage_entered_at, stage event and
+    -- waitlist conversion are all written by the deals triggers, which is why
+    -- this is a plain INSERT and not a second copy of those rules.
+    INSERT INTO deals (
+      contact_id, offer_id, cohort_id, stage, outcome, owner_decision,
+      amount, entry_path, description
+    ) VALUES (
+      v_app.contact_id, v_app.offer_id, v_app.intended_cohort_id,
+      'application_received', NULL, NULL, v_offer.current_price, 'other', ''
+    ) RETURNING * INTO v_deal;
+  END IF;
+
+  -- The only columns adoption is allowed to touch. Status, source,
+  -- raw_answers, submitted_at, reviewed_at, offer and cohort are all left
+  -- exactly as imported.
+  UPDATE applications
+     SET opportunity_id = v_deal.id,
+         crm_adopted_at = now()
+   WHERE id = v_app.id;
+
+  RETURN jsonb_build_object(
+    'status', 'adopted',
+    'application_id', v_app.id,
+    'opportunity_id', v_deal.id,
+    'created_opportunity', NOT v_reused,
+    'reused_opportunity', v_reused
+  );
+END;
+$$;

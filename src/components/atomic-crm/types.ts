@@ -304,6 +304,14 @@ export type Application = {
   form_label?: string | null;
   summary?: string | null;
   source: ApplicationSource;
+  // When the owner brought an IMPORTED Application into current operations.
+  //
+  // `source` says how a record arrived and never changes; this says whether
+  // it is work now. They are different questions, and conflating them is what
+  // left a live January 2027 applicant on a page that could not record a
+  // decision about her. Null on every record nobody adopted — including every
+  // live submission, which never needed adopting.
+  crm_adopted_at?: string | null;
   created_at: string;
   updated_at: string;
 } & Pick<RaRecord, "id">;

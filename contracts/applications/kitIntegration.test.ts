@@ -38,6 +38,7 @@ const sourceFiles = (dir: string): string[] =>
 
 const STATUS = read("src/components/atomic-crm/applications/kitStatus.ts");
 const LINE = read("src/components/atomic-crm/applications/KitStatusLine.tsx");
+const QUEUE = read("src/components/atomic-crm/dashboard/useKitWorkQueue.ts");
 const CARD_UI = read("src/components/atomic-crm/applications/KitSyncCard.tsx");
 const MIGRATION_ADMIN = read(
   "supabase/migrations/20260929120000_kit_is_leifs_to_configure.sql",
@@ -363,15 +364,34 @@ describe('one shared answer to "is Kit handling this?"', () => {
   });
 
   test("an imported record can never be presented as unsynced work", () => {
-    // Source is the discriminator: only a live application can be manual work.
+    // Provenance alone still cannot make something operational, and this is
+    // still the gate that says so. What changed (20260930120000) is that it is
+    // no longer the ONLY way in: an imported Application the owner explicitly
+    // brought into the CRM is current work and owes the same tags.
+    //
+    // The guarantee this test exists for is unchanged and asserted below: an
+    // import nobody adopted is historical, and the page shows nothing for it.
+    // 99 old questionnaires must never appear in a Kit queue.
     expect(code(STATUS)).toMatch(
-      /if \(!TERMINAL_SOURCES\.includes\(application\.source\)\) return say\("historical"\)/,
+      /TERMINAL_SOURCES\.includes\(application\.source\) \|\|\s*application\.crm_adopted_at != null/,
+    );
+    expect(code(STATUS)).toMatch(
+      /if \(!operational\) return say\("historical"\)/,
     );
     expect(code(STATUS)).toMatch(
       /TERMINAL_SOURCES = \["public_form", "manual"\]/,
     );
     // And the page renders nothing at all for it.
     expect(code(LINE)).toMatch(/status\.kind === "historical"\) return null/);
+  });
+
+  test("only an explicit owner act can make an import operational", () => {
+    // Never a date, never a cohort being open, never the mere existence of an
+    // Opportunity — four already-approved January imports have one and must
+    // stay out of today's queues. One column, written by one authority.
+    expect(code(STATUS)).toMatch(/application\.crm_adopted_at != null/);
+    expect(code(QUEUE)).toMatch(/crm_adopted_at != null/);
+    expect(code(STATUS)).not.toMatch(/opportunity_id/);
   });
 
   test("a decided application is not Tagged until its outcome tag has landed", () => {
@@ -434,11 +454,20 @@ describe('one shared answer to "is Kit handling this?"', () => {
     );
   });
 
-  test("no adoption or backfill action exists yet", () => {
-    // Deliberate: the live Kit path has not been human-accepted on a real
-    // post-boundary application, so nothing offers to sync an old applicant.
+  test("nothing backfills anybody into Kit", () => {
+    // This used to forbid adoption outright, because the live Kit path had not
+    // been accepted on a real post-boundary application. It has been since:
+    // Terry Robinson Whitney and two others, sealed, and Michelle Smith's
+    // manual tag accepted by hand.
+    //
+    // So bringing an imported Application into the CRM is now a real act — but
+    // it is a CRM lifecycle act, NOT a Kit one, and the distinction is the
+    // whole point. Adoption puts somebody into MANUAL Kit mode, where Leif
+    // decides tag by tag. It never syncs, never adopts INTO Kit, and there is
+    // still no bulk anything.
     for (const source of [STATUS, LINE, CARD_UI]) {
-      expect(source).not.toMatch(/Add to Kit|Adopt|Backfill|Sync old/i);
+      expect(source).not.toMatch(/Add to Kit|Backfill|Sync old/i);
+      expect(source).not.toMatch(/Adopt all|Bring all|bulk/i);
     }
     expect(MIGRATION).not.toMatch(/adopt_application_into_kit/);
   });

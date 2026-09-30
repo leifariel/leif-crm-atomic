@@ -105,6 +105,13 @@ revoke all on function public.create_manual_application(bigint, bigint, bigint) 
 grant execute on function public.create_manual_application(bigint, bigint, bigint) to authenticated;
 grant execute on function public.create_manual_application(bigint, bigint, bigint) to service_role;
 
+-- Bringing an imported Application into current operations. Leif does this
+-- signed in as `authenticated`; anon never (20260930120000).
+revoke all on function public.adopt_imported_application(bigint) from public;
+revoke all on function public.adopt_imported_application(bigint) from anon;
+grant execute on function public.adopt_imported_application(bigint) to authenticated;
+grant execute on function public.adopt_imported_application(bigint) to service_role;
+
 -- Table grants
 grant all on table public.companies to anon;
 grant all on table public.companies to authenticated;

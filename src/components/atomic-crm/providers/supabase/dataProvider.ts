@@ -271,6 +271,23 @@ const getDataProviderWithCustomMethods = () => {
       }
       return data as Record<string, unknown>;
     },
+    // Bringing an imported Application into current operations. One
+    // transaction for the same reason as above: the Opportunity a decision
+    // needs and the record that the owner brought this person in are one
+    // piece of lifecycle truth, and a half-applied version of it is an
+    // Application that still cannot be reviewed. It touches no Kit state
+    // and makes no provider call. See applications/adoptApplication.ts.
+    async adoptImportedApplication(applicationId: Identifier) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "adopt_imported_application",
+        { p_application_id: applicationId },
+      );
+      if (error) {
+        console.error("adopt_imported_application.error", error);
+        throw new Error("Failed to bring the application into the CRM");
+      }
+      return data as Record<string, unknown>;
+    },
     // Recording an attended call's outcome changes the Sales Call, the
     // Opportunity, the Contact and — on a yes — the Enrollment, its
     // onboarding checklist and its Tasks. Becky Schmauch's sale is why

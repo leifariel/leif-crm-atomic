@@ -49,6 +49,19 @@ export type KitWorkQueue = {
 
 const TERMINAL = ["completed", "withdrawn", "ended"];
 
+// Whether this Application is current operational work at all.
+//
+// An imported record is finished history and has no Kit work — unless the
+// owner deliberately brought it into the CRM, which is the one thing that can
+// make provenance stop deciding currentness. Same rule kitStatus applies, so
+// the Dashboard and the Application page cannot disagree about who is owed a
+// tag.
+const isOperationalApplication = (
+  application: Pick<Application, "source" | "crm_adopted_at">,
+): boolean =>
+  application.source !== "historical_import" ||
+  application.crm_adopted_at != null;
+
 export const useKitWorkQueue = (): KitWorkQueue => {
   const { data: applications, isPending: loadingApplications } =
     useGetList<Application>(
@@ -113,7 +126,7 @@ export const useKitWorkQueue = (): KitWorkQueue => {
   const named = [
     ...new Set([
       ...(applications ?? [])
-        .filter((application) => application.source !== "historical_import")
+        .filter(isOperationalApplication)
         .map((application) => String(application.contact_id)),
       ...(operations ?? [])
         .filter((operation) => operation.status === "failed")
@@ -140,9 +153,7 @@ export const useKitWorkQueue = (): KitWorkQueue => {
 
   const manual: KitManualRow[] = [];
   for (const application of applications ?? []) {
-    // An imported record is finished history. It has no Kit work and must
-    // never look like current operational work.
-    if (application.source === "historical_import") continue;
+    if (!isOperationalApplication(application)) continue;
     if (TERMINAL.includes(application.status)) continue;
 
     const cohort = (cohorts ?? []).find(
