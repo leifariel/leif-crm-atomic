@@ -15,14 +15,30 @@ import { createKitTag, kitTags, type KitTag } from "./kitTagActions";
 //
 // The browser never reaches Kit. The catalog arrives through the kit_sync
 // Edge Function, which is the only thing holding the credential.
+//
+// `active` is the selection mode, and it is off by default on purpose.
+//
+// This component used to fetch the catalog the moment it mounted and, with an
+// empty search box, render the first eight tags it got back. Mounted on a
+// passive configuration form, that meant opening Cohort Edit printed a list of
+// somebody's Kit tags — GYU-NeedsHigherCare, MiniDD_Applicant, "Imported
+// September 13th…" — under a heading that had asked for nothing. It looked
+// random; it was the unfiltered head of the catalog.
+//
+// Rendering a catalog is now something a caller has to ASK for, which is a
+// property of the API rather than of where it happens to be placed: a passive
+// mount fetches nothing and shows nothing, so the defect cannot come back by
+// somebody reusing the picker somewhere new.
 export const KitTagPicker = ({
   value,
   onChange,
   disabled,
+  active = false,
 }: {
   value: KitTag | null;
   onChange: (tag: KitTag | null) => void;
   disabled?: boolean;
+  active?: boolean;
 }) => {
   const dataProvider = useDataProvider();
   const [catalog, setCatalog] = useState<KitTag[] | null>(null);
@@ -31,6 +47,9 @@ export const KitTagPicker = ({
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
+    // No selection in progress, no request. Kit is not asked for a catalog
+    // nobody is going to be shown.
+    if (!active) return;
     let cancelled = false;
     kitTags(dataProvider)
       .then((tags) => {
@@ -42,7 +61,7 @@ export const KitTagPicker = ({
     return () => {
       cancelled = true;
     };
-  }, [dataProvider]);
+  }, [dataProvider, active]);
 
   const search = query.trim();
   const matches = useMemo(() => {
@@ -97,6 +116,10 @@ export const KitTagPicker = ({
       </div>
     );
   }
+
+  // Nothing is being chosen, so there is nothing to show. A configuration
+  // form that merely contains a picker renders no search box and no catalog.
+  if (!active) return null;
 
   return (
     <div className="flex flex-col gap-2">

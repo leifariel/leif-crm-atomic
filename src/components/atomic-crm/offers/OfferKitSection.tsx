@@ -9,7 +9,8 @@ import {
 
 import { Button } from "@/components/ui/button";
 
-import { KitTagPicker } from "../applications/KitTagPicker";
+import { ChooseKitTagDialog } from "../applications/ChooseKitTagDialog";
+import { KitConfigBox, KitConfigRow } from "../applications/KitConfigBox";
 import {
   setProgramKitTag,
   type KitTag,
@@ -56,12 +57,11 @@ export const OfferKitSection = () => {
   // transaction into a multi-write illusion.
   if (!record?.id) {
     return (
-      <section className="flex flex-col gap-1 pt-2">
-        <span className="text-sm font-medium">Kit automation</span>
+      <KitConfigBox title="Kit automation">
         <span className="text-sm text-muted-foreground">
           Save this programme, then choose its Kit tags here.
         </span>
-      </section>
+      </KitConfigBox>
     );
   }
 
@@ -93,81 +93,62 @@ export const OfferKitSection = () => {
 
   const configured = EVENTS.filter(({ event }) => mappingFor(event)).length;
 
-  return (
-    <section className="flex flex-col gap-2 pt-2">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-        <span className="text-sm font-medium">Kit automation</span>
-        {configured < EVENTS.length && (
-          <span className="text-xs text-muted-foreground">
-            Kit automation not fully configured
-          </span>
-        )}
-      </div>
+  const editingMapping = editing ? mappingFor(editing) : undefined;
 
-      <ul className="flex flex-col gap-2">
+  return (
+    <>
+      <KitConfigBox
+        title="Kit automation"
+        aside={
+          configured < EVENTS.length ? (
+            <span className="text-xs text-muted-foreground">
+              Kit automation not fully configured
+            </span>
+          ) : null
+        }
+        note="Changes apply to future Kit actions. Existing applicants are not retagged."
+      >
         {EVENTS.map(({ event, label }) => {
           const mapping = mappingFor(event);
           return (
-            <li
+            <KitConfigRow
               key={event}
-              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1"
-            >
-              <span className="text-sm text-muted-foreground w-44">
-                {label}
-              </span>
-              {editing === event ? (
-                <div className="flex-1 min-w-48 flex flex-col gap-2">
-                  <KitTagPicker
-                    value={null}
-                    disabled={saving}
-                    onChange={(tag) => tag && save(event, tag)}
-                  />
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditing(null)}
-                    >
-                      Cancel
-                    </Button>
-                    {mapping && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        disabled={saving}
-                        onClick={() => save(event, null)}
-                      >
-                        Clear
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">
-                    {mapping ? mapping.kit_tag_name : "Not set"}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setEditing(event)}
-                  >
-                    {mapping ? "Change" : "Choose"}
-                  </Button>
-                </div>
-              )}
-            </li>
+              label={label}
+              value={
+                mapping ? (
+                  mapping.kit_tag_name
+                ) : (
+                  <span className="text-muted-foreground">Not set</span>
+                )
+              }
+              action={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={saving}
+                  onClick={() => setEditing(event)}
+                >
+                  {mapping ? "Change" : "Choose"}
+                </Button>
+              }
+            />
           );
         })}
-      </ul>
+      </KitConfigBox>
 
-      <span className="text-xs text-muted-foreground">
-        Changes apply to future Kit actions. Existing applicants are not
-        retagged.
-      </span>
-    </section>
+      {/* The catalog opens over the form rather than expanding underneath the
+          row, so a long tag list never pushes the rest of the programme off
+          the screen — and cancelling is unambiguous. */}
+      <ChooseKitTagDialog
+        open={editing !== null}
+        onOpenChange={(next) => !next && setEditing(null)}
+        title="Choose Kit tag"
+        onSelect={(tag) => editing && save(editing, tag)}
+        onClear={
+          editingMapping ? () => editing && save(editing, null) : undefined
+        }
+      />
+    </>
   );
 };

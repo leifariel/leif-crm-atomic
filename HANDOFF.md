@@ -2325,6 +2325,109 @@ acceptance exposed. **Unchanged:** the Gmail takeover sequence
 (§8b-kit-gmail) — make Kit's decision automations safe FIRST, only then
 backfill.
 
+## 8b-kit-manual. MANUAL KIT TAGGING — HUMAN ACCEPTED 2026-09-30
+
+**Michelle Smith, and she was the right person for it.** Leif pressed **Add
+required tags** on her Application before finishing the look/cancel sequence —
+ahead of schedule, but this was exactly the safe first case: a pre-boundary
+applicant, still `pending`, owing one applicant tag and no decision at all.
+
+Verified read-only in production, and every part of it is what it should be:
+
+| | |
+|---|---|
+| operation | `id=22`, `application_id=187`, `contact_id=423` |
+| kind / origin | `manual` / `manual_owner`, `requested_by='owner'` |
+| tag | `24082722 MiniDD_Applicant` — **the applicant tag only** |
+| status | `succeeded`, `attempts=1`, 16:14:12 → 16:14:13 |
+| provider evidence | `kit_subscriber_id = '4294987335'` |
+| canonical identity | `contact_external_identities id=10`, `provider='kit'`, same subscriber |
+
+**No decision tag was applied, and none could have been:** her Application is
+still `pending`, and a pending application has no decision event to map. There
+is exactly one manual operation for her, no duplicate, and **no
+`automatic_application` row was fabricated** — manual tagging does not make a
+pre-boundary applicant eligible for the automatic trigger, which is the
+distinction §8b-kit-owner exists to protect.
+
+Her Application now derives **`Kit: Manual — up to date ✓`** with **✓
+MiniDD_Applicant** and no `Add required tags` button, because nothing is owed.
+She is gone from the actionable queue, which is why the aggregate went **5 →
+4** — the right reason, not a filter change. The other four pre-boundary
+applicants (applications 188, 189, 192, 195) are untouched and still `pending`.
+
+**Outcome/decision-tag automation acceptance remains OPEN.** It needs a real
+post-boundary decision, and no post-boundary application has been decided yet.
+
+### AUTOMATIC KIT RECEIPT — ACCEPTED / SEALED
+
+Proved three times over by real people, not once: applications **204** (Terry
+Robinson Whitney), **211** and **212**, each public application → durable
+receipt operation → Kit subscriber → correct `GYU-Applicant` → succeeded
+operation → canonical Kit identity → owner UI resolving provider state.
+
+## 8b-kit-ux. KIT OWNER-CONTROL UX REPAIR — COMMITTED LOCALLY 2026-09-30
+
+Human acceptance found four presentation faults. None of them touched
+architecture, provider semantics, eligibility, mappings or the worker; all four
+were about where things sat on the page.
+
+**1. Kit had a strip of its own.** `Kit needs attention · 4` was a full-width
+band below every task card, which made Kit read as a separate system Leif had
+to remember to check. It is now **one derived row inside the existing Needs
+Attention box** — `Kit` / `4 applicants need attention` / `Open`.
+
+**The count distinction, which is the part worth protecting:** Needs Attention
+counts **rows of work**, and Kit contributes **exactly one** however long its
+queue is. The row states the **people**. Two Tasks plus Kit is **3**, never
+2 + 4 = 6. `useKitNeedsAttentionCount` returns `{ rows, people }` precisely so
+the two can never be confused, and the test that pins it fails on 6. Still no
+persisted Task per applicant — placement changed, derivation did not.
+
+**2. The work modal laid every row out differently.** Each row was
+`flex-wrap` + `justify-between`, so the action sat on the right when the text
+beside it was short and dropped under it when it was long: Ruth right, Kseniya
+and Kara left, Carey right again. It looked accidental because it was. One
+`KitWorkRow` component now decides the layout for every entry from the
+container — `minmax(0,1fr) auto` — and stacks identically below the small
+breakpoint. Sync problems use the same row, so the two sections read as one
+list.
+
+**3. Program Kit mappings floated as loose labels** inside the larger form.
+They are now in a small bordered `KitConfigBox`, the same rounded-border
+language `KitStatusLine` already uses.
+
+**4. Cohort Edit printed a list of Kit tags merely because it had opened.**
+
+### The Cohort tag list was a picker defect, not a Cohort defect
+
+`KitTagPicker` fetched the catalog in a `useEffect` **on mount**, and with an
+empty search box rendered `catalog.slice(0, 8)` — the unfiltered head of the
+list. Mounted on a passive configuration form with nothing configured, that
+printed GYU-NeedsHigherCare, MiniDD_Applicant, "Imported September 13th…" under
+a heading that had asked for nothing. It looked random. It was alphabetical-ish
+catalog order.
+
+**Fixed at the root, not with CSS.** The picker takes an explicit `active`
+selection mode, **off by default**: inactive, it fetches nothing and renders
+nothing. Rendering a catalog is now something a caller has to ask for, so the
+defect cannot return by somebody reusing the picker on a new form.
+
+Both configuration surfaces now follow the CRM's bounded-action convention:
+current value (or `Not set`) plus **Choose/Change**, opening a small
+`ChooseKitTagDialog` that hosts the picker. Cancel writes nothing. The
+Contact/Application **Manage Kit tags** modal passes `active` and is unchanged
+— it *is* the act of choosing.
+
+**Acceptance cases pinned in tests:** Fall 2026 and January 2027 both render no
+catalog on load; January 2027's real production value is **Not set**; the
+catalog and its search appear only inside the lightbox; cancel writes nothing;
+a configured tag renders as a value rather than a search box; create-tag
+survives; future-only semantics unchanged.
+
+**No migration.** Production behaviour, eligibility and tag mappings are
+untouched — this slice moves and contains UI, and repairs one component's API.
+
 ## 8b-builder. APPLICATION FORM BUILDER — PARKED
 
 Still **uncommitted**, parked in a stash while the three commits above were

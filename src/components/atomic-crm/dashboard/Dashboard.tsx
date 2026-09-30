@@ -8,7 +8,6 @@ import { CompletedTodayTasks } from "./CompletedTodayTasks";
 import { DashboardActivityLog } from "./DashboardActivityLog";
 import { DashboardApplicationsForReview } from "./DashboardApplicationsForReview";
 import { DashboardTasks } from "./DashboardTasks";
-import { KitNeedsAttention } from "./KitNeedsAttention";
 import { NeedsOnboarding } from "./NeedsOnboarding";
 import { OutstandingScholarshipReservations } from "./OutstandingScholarshipReservations";
 import { PeopleDeciding } from "./PeopleDeciding";
@@ -75,10 +74,9 @@ export const Dashboard = () => {
 
       <DashboardTasks />
 
-      {/* One item for everything Kit still needs, derived rather than stored:
-          five people needing a tag is one thing to do, and a Task each would
-          bury the rest of Needs Attention under work that resolves itself. */}
-      <KitNeedsAttention />
+      {/* Kit's outstanding work is no longer a section of its own here: it is
+          one derived row inside DashboardTasks' Needs Attention box, which is
+          already the place meaning "things needing attention". */}
 
       <DashboardApplicationsForReview />
 

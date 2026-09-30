@@ -1,6 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useGetIdentity, useGetList, useTranslate } from "ra-core";
 import { Card, CardContent } from "@/components/ui/card";
+
+import { KitNeedsAttentionRow } from "./KitNeedsAttention";
+import { useKitNeedsAttentionCount } from "./useKitNeedsAttentionCount";
 
 import { Task } from "../tasks/Task";
 import {
@@ -43,6 +46,16 @@ export const DashboardTasks = () => {
   // see useRecentlyCompletedTasks's own header comment.
   const { isRecentlyCompleted, markCompleted: handleTaskCompleted } =
     useRecentlyCompletedTasks();
+
+  // Kit's outstanding work belongs in Needs Attention like anything else that
+  // needs attention — it used to be a strip of its own below every task card,
+  // which read as a separate system rather than as one more thing to do.
+  //
+  // `rows` is what the heading counts and `people` is what the row itself
+  // reports: four applicants needing a tag is ONE thing on Leif's list, not
+  // four. Adding them together is the mistake this distinction exists to
+  // prevent, and kitOwnerControls.test.tsx pins it.
+  const { rows: kitRows } = useKitNeedsAttentionCount();
 
   const { needsAttention, overdue, today, next7Days, later } = useMemo(() => {
     const ongoing = (tasks ?? []).filter(
@@ -116,7 +129,7 @@ export const DashboardTasks = () => {
           any of the three date-bucketed views below. Only rendered while
           something actually needs a decision; once resolved/dismissed the
           Task is done and this section disappears on its own. */}
-      {needsAttention.length > 0 && (
+      {(needsAttention.length > 0 || kitRows > 0) && (
         <TaskBucket
           title={translate("crm.dashboard.tasks_needs_attention", {
             _: "Needs Attention",
@@ -125,6 +138,10 @@ export const DashboardTasks = () => {
           onTaskCompleted={handleTaskCompleted}
           emphasize
           asQuestions
+          // One derived row, never a persisted Task. When Kit has nothing
+          // outstanding it renders nothing and the heading count drops back.
+          extra={<KitNeedsAttentionRow />}
+          extraCount={kitRows}
         />
       )}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
@@ -174,16 +191,24 @@ const TaskBucket = ({
   // answers it. The date-bucketed lists below stay as they are: those are
   // things with a due date, and the normal Task row is right for them.
   asQuestions,
+  // A derived row that is not a Task and must never become one — today, the
+  // single aggregate Kit item. It is always shown (never folded into "show
+  // all", which is about a long list of Tasks) and counts as exactly one.
+  extra,
+  extraCount = 0,
 }: {
   title: string;
   tasks: TaskType[];
   onTaskCompleted: (task: TaskType) => void;
   emphasize?: boolean;
   asQuestions?: boolean;
+  extra?: ReactNode;
+  extraCount?: number;
 }) => {
   const translate = useTranslate();
   const [expanded, setExpanded] = useState(false);
   const visibleTasks = expanded ? tasks : tasks.slice(0, VISIBLE_COUNT);
+  const total = tasks.length + extraCount;
 
   return (
     <Card className="min-w-0">
@@ -191,16 +216,16 @@ const TaskBucket = ({
         <div className="flex items-center gap-2">
           <p
             className={`text-xs uppercase tracking-wider font-medium ${
-              emphasize && tasks.length > 0
+              emphasize && total > 0
                 ? "text-destructive"
                 : "text-muted-foreground"
             }`}
           >
             {title}
           </p>
-          <span className="text-xs text-muted-foreground">{tasks.length}</span>
+          <span className="text-xs text-muted-foreground">{total}</span>
         </div>
-        {tasks.length === 0 ? (
+        {total === 0 ? (
           <p className="text-sm text-muted-foreground">
             {translate("crm.dashboard.tasks_bucket_empty", {
               _: "Nothing here.",
@@ -220,6 +245,7 @@ const TaskBucket = ({
                 />
               ),
             )}
+            {extra}
             {/* Expanding was one-way: once opened, the bucket stayed open
                 for the rest of the session, so a long queue permanently
                 pushed everything below it off the screen. It toggles now,

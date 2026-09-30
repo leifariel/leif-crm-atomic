@@ -194,7 +194,10 @@ export const ManageKitTagsModal = ({
 
           <section className="flex flex-col gap-2">
             <span className="text-sm font-medium">Add a tag</span>
+            {/* This modal exists to add a tag, so choosing one is what it is
+                already doing — the catalog and its search belong here. */}
             <KitTagPicker
+              active
               value={chosen}
               onChange={setChosen}
               disabled={adding}

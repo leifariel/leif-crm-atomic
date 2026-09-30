@@ -89,6 +89,7 @@ const build = ({
   operations = [] as Partial<KitSyncOperation>[],
   eligibility = "normal",
   applications,
+  tasks = [] as unknown[],
 }: {
   route?: string;
   status?: string;
@@ -97,6 +98,7 @@ const build = ({
   operations?: Partial<KitSyncOperation>[];
   eligibility?: string;
   applications?: unknown[];
+  tasks?: unknown[];
 } = {}) => {
   const dataProvider = createDataProvider({
     db: createCrmDb({
@@ -167,7 +169,7 @@ const build = ({
         updated_at: new Date().toISOString(),
         ...over,
       })),
-      tasks: [],
+      tasks,
       enrollment_onboarding_items: [],
     } as never),
     silent: true,
@@ -269,6 +271,43 @@ describe("the Application's manual Kit work", () => {
     expect(data.map((row) => row.kit_tag_id).sort()).toEqual([
       21784073, 24082722,
     ]);
+  });
+
+  // Michelle Smith's real state after the first human-accepted manual tag:
+  // a pre-boundary Living Example application, still pending, whose applicant
+  // tag reached Kit and came back with a subscriber id. Nothing is owed, so
+  // nothing is asked for — and no decision tag was invented on the way.
+  it("asks for nothing once the only required tag is confirmed", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = build({
+      status: "pending",
+      operations: [
+        {
+          status: "succeeded",
+          succeeded_at: new Date().toISOString(),
+          kit_subscriber_id: "4294987335",
+        },
+      ],
+    });
+    const screen = await render(element);
+
+    await expect
+      .element(screen.getByText("Kit: Manual — up to date ✓"))
+      .toBeVisible();
+
+    const body = document.body.textContent ?? "";
+    expect(body).toContain("✓ MiniDD_Applicant");
+    // No decision tag exists for a pending application, so none may appear.
+    expect(body).not.toContain("MiniDD_Approved");
+    expect(body).not.toContain("MiniDD_Denied");
+
+    // The action is gone because there is nothing left to add; managing tags
+    // by hand stays available.
+    const buttons = Array.from(document.body.querySelectorAll("button")).map(
+      (node) => node.textContent?.trim(),
+    );
+    expect(buttons).not.toContain("Add required tags");
+    expect(buttons).toContain("Manage Kit tags");
   });
 
   it("says the Needs Higher Care email is still manual, even after the tag lands", async () => {
@@ -402,18 +441,94 @@ describe("the Dashboard's one Kit item", () => {
       updated_at: PRE,
     }));
 
+  // A real Needs Attention item, so the box has something of its own to count
+  // alongside Kit's one row.
+  const unresolvedCall = () => [
+    {
+      id: 1,
+      contact_id: 3,
+      type: "resolve_sales_call",
+      text: "Did this call happen?",
+      due_date: PRE,
+      done_date: null,
+      status: "pending",
+      sales_id: 0,
+      sales_call_id: 1,
+    },
+  ];
+
   it("is one aggregate row, not one per applicant", async () => {
     await page.viewport(1280, 1400);
     const { element } = build({ route: "/", applications: fivePeople() });
     const screen = await render(element);
 
     await expect
-      .element(screen.getByText("Kit needs attention · 5"))
+      .element(screen.getByText("5 applicants need attention"))
       .toBeVisible();
     // Five people, one thing to do.
     expect(
-      (document.body.textContent ?? "").match(/Kit needs attention/g) ?? [],
+      (document.body.textContent ?? "").match(/applicants need attention/g) ??
+        [],
     ).toHaveLength(1);
+  });
+
+  it("lives inside Needs Attention, not in a strip of its own", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = build({ route: "/", applications: fivePeople() });
+    const screen = await render(element);
+
+    await expect
+      .element(screen.getByText("5 applicants need attention"))
+      .toBeVisible();
+
+    // The old full-width strip below the task cards is gone entirely.
+    expect(document.body.textContent ?? "").not.toContain(
+      "Kit needs attention ·",
+    );
+
+    // And the row is a descendant of the Needs Attention card rather than a
+    // sibling section further down the page.
+    const heading = [...document.querySelectorAll("p")].find(
+      (node) => node.textContent?.trim() === "Needs Attention",
+    );
+    const card = heading?.closest("div.min-w-0, [data-slot='card']");
+    expect(card?.textContent ?? "").toContain("5 applicants need attention");
+  });
+
+  it("adds exactly ONE to the Needs Attention count, whatever the backlog", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = build({
+      route: "/",
+      applications: fivePeople(),
+      tasks: unresolvedCall(),
+    });
+    const screen = await render(element);
+
+    await expect
+      .element(screen.getByText("5 applicants need attention"))
+      .toBeVisible();
+
+    const heading = [...document.querySelectorAll("p")].find(
+      (node) => node.textContent?.trim() === "Needs Attention",
+    );
+    // One real Task + one Kit row = 2. Emphatically not 1 + 5 = 6: the
+    // heading counts rows of work, the Kit row states the people behind it.
+    expect(heading?.nextElementSibling?.textContent?.trim()).toBe("2");
+  });
+
+  it("leaves the other Needs Attention items alone", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = build({
+      route: "/",
+      applications: fivePeople(),
+      tasks: unresolvedCall(),
+    });
+    const screen = await render(element);
+
+    await expect
+      .element(screen.getByText("5 applicants need attention"))
+      .toBeVisible();
+    expect(document.body.textContent ?? "").toContain("Did this call happen?");
   });
 
   it("opens a modal over the Dashboard with the required tags", async () => {
@@ -421,10 +536,53 @@ describe("the Dashboard's one Kit item", () => {
     const { element } = build({ route: "/", applications: fivePeople() });
     const screen = await render(element);
 
-    await screen.getByRole("button", { name: /Kit needs attention/ }).click();
+    await screen
+      .getByRole("button", { name: /applicants need attention/ })
+      .click();
     await expect.element(screen.getByRole("dialog")).toBeVisible();
     await expect.element(screen.getByText("Manual Kit work")).toBeVisible();
     expect(document.body.textContent ?? "").toContain("MiniDD_Applicant");
+  });
+
+  it("gives every person in the modal the same row structure", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = build({ route: "/", applications: fivePeople() });
+    const screen = await render(element);
+
+    await screen
+      .getByRole("button", { name: /applicants need attention/ })
+      .click();
+    await expect.element(screen.getByRole("dialog")).toBeVisible();
+
+    const rows = [
+      ...(document
+        .querySelector("[role='dialog']")
+        ?.querySelectorAll("[data-kit-work-row]") ?? []),
+    ];
+    expect(rows).toHaveLength(5);
+    // One structure for everybody: the button cannot land on the right for
+    // one person and under the text for the next because their programme
+    // name happens to be longer.
+    expect(new Set(rows.map((node) => node.className)).size).toBe(1);
+  });
+
+  it("keeps that one row structure on a narrow screen", async () => {
+    await page.viewport(420, 900);
+    const { element } = build({ route: "/", applications: fivePeople() });
+    const screen = await render(element);
+
+    await screen
+      .getByRole("button", { name: /applicants need attention/ })
+      .click();
+    await expect.element(screen.getByRole("dialog")).toBeVisible();
+
+    const rows = [
+      ...(document
+        .querySelector("[role='dialog']")
+        ?.querySelectorAll("[data-kit-work-row]") ?? []),
+    ];
+    expect(rows).toHaveLength(5);
+    expect(new Set(rows.map((node) => node.className)).size).toBe(1);
   });
 
   it("disappears when nothing is actionable", async () => {
@@ -442,9 +600,9 @@ describe("the Dashboard's one Kit item", () => {
     const screen = await render(element);
 
     await expect.element(screen.getByText("Dashboard")).toBeVisible();
-    expect(document.body.textContent ?? "").not.toContain(
-      "Kit needs attention",
-    );
+    expect(document.body.textContent ?? "").not.toContain("need attention");
+    // With nothing else needing attention either, the box goes too.
+    expect(document.body.textContent ?? "").not.toContain("Needs Attention");
   });
 
   it("never lists an imported historical record as current work", async () => {
@@ -471,8 +629,6 @@ describe("the Dashboard's one Kit item", () => {
     const screen = await render(element);
 
     await expect.element(screen.getByText("Dashboard")).toBeVisible();
-    expect(document.body.textContent ?? "").not.toContain(
-      "Kit needs attention",
-    );
+    expect(document.body.textContent ?? "").not.toContain("need attention");
   });
 });
