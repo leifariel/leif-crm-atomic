@@ -21,10 +21,11 @@ import type { ClientSession, Offer } from "../types";
 // tested it, which is why it survived to production: Denise Cormier has ten
 // sessions, and clicking the count lost the page.
 //
-// ClientShow owns the real session workspace, but it is per-ENROLLMENT, and
-// every production contact who has sessions has none — their appointments
-// carry a null enrollment_id. So there is no client page to send anybody to,
-// and the count opens a lightbox over the Contact instead.
+// ClientShow owns the real session workspace, but it is enrollment-scoped and
+// filters rows by enrollment_id, while this count is contact-scoped. Session
+// rows may carry no enrollment_id even where a canonical Enrollment does
+// exist, so routing there can hide sessions that correctly appear here — which
+// is why the count opens a lightbox over the Contact instead.
 
 const CONTACT_ID = 106;
 const OFFER_ID = 1;
@@ -40,7 +41,7 @@ const OFFER: Offer = {
   updated_at: "2026-01-01T00:00:00.000Z",
 } as Offer;
 
-// Denise's shape: booked sessions, and no enrollment at all.
+// Denise's shape: booked sessions whose enrollment_id is null.
 const session = (
   id: number,
   over: Partial<ClientSession> = {},

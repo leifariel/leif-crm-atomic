@@ -18,13 +18,15 @@ import { formatTimestampString } from "../deals/dealUtils";
 // nothing tested it, so clicking it reached Not Found. Denise Cormier has ten
 // sessions and that is exactly what happened.
 //
-// It is a lightbox rather than a page because of what the data turned out to
-// be: ClientShow owns the real session workspace, but it is per-ENROLLMENT,
-// and every one of the 22 production contacts who has sessions has no
-// enrollment at all — their appointments carry a null enrollment_id. So there
-// is no client page to send Leif to. This is a bounded question asked from a
-// Contact he is already reading, which is exactly what the CRM's lightbox
-// convention is for.
+// It is a lightbox rather than a page because the two views are scoped
+// differently. Contact History is contact-scoped; ClientShow — which owns the
+// real session workspace — is enrollment-scoped and filters rows by
+// enrollment_id. Session rows may carry no enrollment_id even where a
+// canonical Enrollment does exist, so routing there can hide sessions that
+// correctly appear here: Denise has an active Enrollment, yet all ten of her
+// sessions are unlinked, so ClientShow would list none under a count of ten.
+// This is a bounded question asked from a Contact already being read, which
+// is what the CRM's lightbox convention is for.
 //
 // It reports, and offers nothing to act on. Marking a no-show, resolving
 // cadence and the rest live on ClientShow, where an enrollment gives them

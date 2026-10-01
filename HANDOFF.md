@@ -2991,11 +2991,58 @@ submission is acceptable or whether the Application should attach without the
 approval being allowed to move the stage. No production row was found in this
 state; nothing here says one exists.
 
+### SESSION ↔ ENROLLMENT RECONCILIATION — recorded 2026-10-01, not this slice
+
+**Production holds session rows with `enrollment_id` NULL even where a
+canonical Enrollment does exist.** Measured on 2026-10-01 across all 220
+`client_sessions`:
+
+- 22 Contacts have sessions; **20 of them have an Enrollment**, 2 do not
+- 13 Contacts have every session linked
+- **6 Contacts have every session unlinked** — including Denise Cormier
+  (Contact 106: Enrollment 66 active via won Opportunity 97, yet all 10
+  sessions carry `enrollment_id` NULL)
+- 3 Contacts are mixed
+- 47 of 220 session rows are unlinked in total
+
+**Why it matters.** ClientShow is enrollment-scoped and filters sessions by
+`enrollment_id`, so its cadence view is blind to those 47 rows. Contact
+History is contact-scoped and sees them. That divergence is exactly why
+"Sessions · N" opens a lightbox instead of routing to ClientShow
+([ContactSessionsDialog.tsx](src/components/atomic-crm/contacts/ContactSessionsDialog.tsx))
+— the repair works correctly over the data as it stands, and does not depend
+on this debt being cleared.
+
+**A future slice should determine whether and how those rows can be safely
+linked. NOT backfilled today, and no link inferred casually**: a session and
+an Enrollment overlapping in time is not proof they belong together, and a
+wrong link would silently move real appointments onto the wrong container.
+ATOMIC HANDLES CERTAINTY. LEIF HANDLES AMBIGUITY.
+
 ### Infrastructure debt — tracked separately, blocks nothing above
 
 - `users` Edge Function `SB_PUBLISHABLE_KEY` auth issue (§7).
 - GitHub Pages deploy failure — the only red step in every Deploy run.
 - macOS `.claude/hooks` worktree-test debt (§7).
+- **`e2e-test` has only ~5 minutes of real headroom, and an install hiccup
+  spends it.** `timeout-minutes: 10` covers the whole job — `npm ci`, the
+  Playwright browser download, `npm install -g wait-on serve` AND
+  `make test-e2e-ci` (which itself replays 125 migrations). Measured
+  2026-10-01 on `787e3a9a`: the suite ran at its normal speed (Playwright
+  step 262s, against 263s on the last green run) but was guillotined,
+  because **Install Playwright Browsers took 288s instead of its usual 24s**
+  — a browser-download cache miss. 351s of installs + 263s of suite = 614s
+  = the cap, reported by GitHub as `cancelled`. Nothing to do with the
+  shipped commit; a fresh local run of the same commit was 149s end to end,
+  161 passed. **The fix is to stop the installs competing with the suite**:
+  cache the Playwright browsers, or raise `timeout-minutes`, or give the
+  suite its own step budget. Until then a green e2e is partly luck.
+- `make test-e2e-ci` is **not safe against a stale listener on 5175**. If
+  anything already holds that port, `serve` silently falls back to a random
+  one and `wait-on http-get://localhost:5175` can never succeed, so the job
+  burns its entire budget with Playwright never starting. Harmless on a
+  fresh CI runner; it cost a confusing local reproduction here (a `serve`
+  left over from 2026-09-28). Worth making the target fail loudly instead.
 - The broader `authenticated` TRUNCATE grant: 52 public tables grant it,
   Supabase's default `grant all` pattern. Not reachable through PostgREST,
   wider than intended.
