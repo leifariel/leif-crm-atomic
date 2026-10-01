@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDataProvider } from "../providers/fakerest/dataProvider";
 import { createCrmDb } from "@/test/StoryWrapper";
@@ -67,7 +67,34 @@ describe("getLivingExampleOfferContext", () => {
   });
 });
 
+// THE CLOCK.
+//
+// "Is this cohort still taking applications" is a question about today, and
+// the fixtures below answer it with fixed calendar dates. This block used to
+// take `today` from whatever machine ran it, so a window that closed on
+// 2026-09-30 was open all through September and shut by itself at midnight on
+// 1 October — turning a green suite red with no commit in between. That is
+// exactly what happened, and it is the class 23fd5cf6 and
+// postponeTaskDate.test.ts already fixed elsewhere.
+//
+// Only the INSTANT is pinned, not the timezone: publicOfferContext asks
+// getDenverDateString(), which names America/Denver explicitly, so the
+// ambient zone cannot change the answer. Faking Date alone — never the whole
+// timer API — leaves promises and the data provider running normally.
+//
+// Moving the fixture dates further into the future would have been the same
+// bug with a longer fuse.
+const FROZEN_NOW = new Date("2026-09-15T12:00:00Z");
+
 describe("getGroupCohortContext", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FROZEN_NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("returns group-open for an open cohort within its application window", async () => {
     const cohort: Cohort = {
       id: 1,

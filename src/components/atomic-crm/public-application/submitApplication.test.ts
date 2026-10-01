@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDataProvider } from "../providers/fakerest/dataProvider";
 import { createCrmDb, buildContact } from "@/test/StoryWrapper";
@@ -827,7 +827,34 @@ describe("submitApplication — Living Example (individual offer)", () => {
   });
 });
 
+// THE CLOCK.
+//
+// buildCohort() states a real application window, and whether a submission is
+// accepted is that window compared against today. Taking today from the
+// machine meant this block passed all through September and failed by itself
+// at midnight on 1 October, with no commit in between — the same class
+// 23fd5cf6 fixed for capacity.
+//
+// Only the instant is pinned: the window check asks getDenverDateString(),
+// which names America/Denver itself, so the ambient zone cannot move the
+// answer. Date alone is faked, never the whole timer API, so the data
+// provider and its promises behave normally.
+//
+// The window being ENFORCED is still proved separately, by the 2099 fixture
+// in "rejects a Cohort outside its applications_open_at/close_at window even
+// if status is open" — freezing the clock here does not stop that test from
+// meaning what it says.
+const FROZEN_NOW = new Date("2026-09-15T12:00:00Z");
+
 describe("submitApplication — Growing Yourself Up (group offer + cohort)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(FROZEN_NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("creates an Opportunity attached to the correct Cohort", async () => {
     const { dataProvider } = buildFixtures();
 
