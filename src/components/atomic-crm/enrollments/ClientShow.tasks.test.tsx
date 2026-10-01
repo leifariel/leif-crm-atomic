@@ -245,12 +245,15 @@ describe("ClientShow — manual Task creation (Manual Task UX repair)", () => {
         <TasksListByDueDate filterByContact={1} />
       </CoreAdminContext>,
     );
-    await expect.element(listScreen.getByText("Today")).toBeVisible();
+    // Scoped to this render's own container, not the page: ClientShow's own
+    // Tasks panel legitimately shows a "Today" bucket too once the new Task
+    // refreshes it, so a page-wide getByText passed only by winning that race.
+    await expect.element(listScreen.locator.getByText("Today")).toBeVisible();
     // Manual Task UX repair, round 2 (§3): the compact row now shows the
     // Task's own free-text instruction as its primary label for `other`
     // Tasks — "Other" alone told Leif nothing.
     await expect
-      .element(listScreen.getByText("Ask Jerry about scheduling"))
+      .element(listScreen.locator.getByText("Ask Jerry about scheduling"))
       .toBeVisible();
   });
 
