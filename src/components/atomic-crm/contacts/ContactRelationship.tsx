@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 import type { Application, Deal, Enrollment, Offer } from "../types";
+import { ContactSessionsDialog } from "./ContactSessionsDialog";
 import { formatTimestampString } from "../deals/dealUtils";
 import { NoteCreate } from "../notes";
 import { ContactSalesAction } from "../waitlist/ContactSalesAction";
@@ -250,7 +251,9 @@ const CurrentRelationship = ({ contactId }: { contactId: Identifier }) => {
 const VISIBLE_EVENTS = 8;
 
 const RelationshipHistory = ({ contactId }: { contactId: Identifier }) => {
-  const { isPending, events, sessionCount } = useContactHistory(contactId);
+  const { isPending, events, sessionCount, sessions } =
+    useContactHistory(contactId);
+  const [showingSessions, setShowingSessions] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [composing, setComposing] = useState(false);
 
@@ -278,88 +281,94 @@ const RelationshipHistory = ({ contactId }: { contactId: Identifier }) => {
   const remaining = events.length - visible.length;
 
   return (
-    <Panel
-      title="History"
-      // Note creation lives on the History header, where notes are read.
-      // It was previously a lone button below the fold that Leif could not
-      // find at all.
-      action={
-        <div className="flex items-center gap-3">
-          {/* Sessions are summarized, never expanded inline: an active
+    <>
+      <Panel
+        title="History"
+        // Note creation lives on the History header, where notes are read.
+        // It was previously a lone button below the fold that Leif could not
+        // find at all.
+        action={
+          <div className="flex items-center gap-3">
+            {/* Sessions are summarized, never expanded inline: an active
               client has dozens and they would bury the relationship. */}
-          {sessionCount > 0 && (
-            <Link
-              to={`/client-sessions?filter=${encodeURIComponent(
-                JSON.stringify({ contact_id: contactId }),
-              )}`}
-              className="text-xs text-muted-foreground hover:underline"
-            >
-              Sessions · {sessionCount}
-            </Link>
-          )}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setComposing((open) => !open)}
-          >
-            <Plus className="size-4" />
-            Add note
-          </Button>
-        </div>
-      }
-    >
-      {composing && (
-        <div className="border-b px-4 py-3">
-          <ContactNoteComposer contactId={contactId} />
-        </div>
-      )}
-
-      {events.length === 0 ? (
-        <p className="px-4 py-3 text-xs text-muted-foreground">
-          Nothing recorded yet.
-        </p>
-      ) : (
-        <>
-          <ol className="divide-y">
-            {visible.map((event) => (
-              <li key={event.id} className="flex gap-4 px-4 py-2 text-sm">
-                <span className="w-24 shrink-0 pt-0.5 text-xs text-muted-foreground tabular-nums">
-                  {formatTimestampString(event.at)}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span
-                    className={
-                      event.tone === "active" ? "" : "text-muted-foreground"
-                    }
-                  >
-                    {event.label}
-                  </span>
-                  {event.detail && (
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {event.detail}
-                    </span>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ol>
-          {remaining > 0 && (
-            <div className="border-t px-4 py-2">
-              <Button
+            {sessionCount > 0 && (
+              <button
                 type="button"
-                variant="ghost"
-                size="sm"
-                className="px-0 text-xs text-muted-foreground"
-                onClick={() => setExpanded(true)}
+                onClick={() => setShowingSessions(true)}
+                className="text-xs text-muted-foreground hover:underline"
               >
-                Show {remaining} earlier
-              </Button>
-            </div>
-          )}
-        </>
-      )}
-    </Panel>
+                Sessions · {sessionCount}
+              </button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setComposing((open) => !open)}
+            >
+              <Plus className="size-4" />
+              Add note
+            </Button>
+          </div>
+        }
+      >
+        {composing && (
+          <div className="border-b px-4 py-3">
+            <ContactNoteComposer contactId={contactId} />
+          </div>
+        )}
+
+        {events.length === 0 ? (
+          <p className="px-4 py-3 text-xs text-muted-foreground">
+            Nothing recorded yet.
+          </p>
+        ) : (
+          <>
+            <ol className="divide-y">
+              {visible.map((event) => (
+                <li key={event.id} className="flex gap-4 px-4 py-2 text-sm">
+                  <span className="w-24 shrink-0 pt-0.5 text-xs text-muted-foreground tabular-nums">
+                    {formatTimestampString(event.at)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span
+                      className={
+                        event.tone === "active" ? "" : "text-muted-foreground"
+                      }
+                    >
+                      {event.label}
+                    </span>
+                    {event.detail && (
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {event.detail}
+                      </span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ol>
+            {remaining > 0 && (
+              <div className="border-t px-4 py-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="px-0 text-xs text-muted-foreground"
+                  onClick={() => setExpanded(true)}
+                >
+                  Show {remaining} earlier
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+      </Panel>
+      <ContactSessionsDialog
+        open={showingSessions}
+        onOpenChange={setShowingSessions}
+        sessions={sessions}
+      />
+    </>
   );
 };
 

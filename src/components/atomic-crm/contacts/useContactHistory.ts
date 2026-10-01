@@ -120,7 +120,7 @@ export const useContactHistory = (contactId: Identifier) => {
     (dealIds.length > 0 && enrollmentsPending);
 
   if (isPending) {
-    return { isPending: true, events: [], sessionCount: 0 };
+    return { isPending: true, events: [], sessionCount: 0, sessions: [] };
   }
 
   // The Offer, not the Deal name. Deal names embed the person ("Marcus
@@ -343,5 +343,11 @@ export const useContactHistory = (contactId: Identifier) => {
     isPending: false,
     events,
     sessionCount: (clientSessions ?? []).length,
+    // The rows behind that count, newest first. Returned rather than
+    // recounted: the header and the list Leif opens must be the same
+    // sessions, derived once, or the number and the list can disagree.
+    sessions: [...(clientSessions ?? [])].sort((a, b) =>
+      String(b.scheduled_at).localeCompare(String(a.scheduled_at)),
+    ),
   };
 };
