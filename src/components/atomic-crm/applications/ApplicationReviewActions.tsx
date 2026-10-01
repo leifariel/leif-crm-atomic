@@ -5,7 +5,7 @@ import { Confirm } from "@/components/admin/confirm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
-import type { Application, Deal } from "../types";
+import type { Application } from "../types";
 import {
   applicationStatusBadgeVariant,
   applicationStatusLabels,
@@ -15,6 +15,22 @@ import {
   type ApplicationReviewOutcome,
 } from "./reviewApplication";
 
+// What the owner is told when the authority refuses. Each names a real
+// situation rather than a code, and every one of them means nothing was
+// written.
+const REFUSAL_NOTICE: Record<string, string> = {
+  "already-reviewed":
+    "This application was already reviewed — showing the current state.",
+  "no-opportunity":
+    "This application has no sales opportunity to record a decision against.",
+  "opportunity-mismatch":
+    "This application and its opportunity belong to different people, so no decision was recorded.",
+  "opportunity-invalid":
+    "This application points at an opportunity that no longer exists.",
+  "outcome-invalid": "That is not a decision this application can record.",
+  "application-invalid": "That application could not be found.",
+};
+
 // The operational control area of the Application review page (Native
 // Applications slice, §2/§3). Every write goes through the reviewApplication
 // domain action — this component only orchestrates the click, the pending
@@ -22,12 +38,15 @@ import {
 // a resource directly (§19).
 export const ApplicationReviewActions = ({
   application,
-  deal,
   applicantName,
 }: {
   application: Application;
-  deal: Deal;
   applicantName: string;
+  // Accepted and ignored. review_application() resolves the Opportunity from
+  // the Application under a lock, because a copy held by the page is exactly
+  // as stale as the status it was meant to be checked against. The prop stays
+  // in the type so callers that still pass it keep compiling.
+  deal?: unknown;
 }) => {
   const translate = useTranslate();
   const dataProvider = useDataProvider();
@@ -43,17 +62,18 @@ export const ApplicationReviewActions = ({
       const result = await reviewApplication({
         dataProvider,
         application,
-        deal,
         outcome,
       });
       if (!result.applied) {
-        // A stale tab / double-click landed after this Application was
-        // already reviewed elsewhere (§17.F/G) — never silently overwrite,
-        // just tell the user and show the real current state.
-        notify("resources.applications.review.already_reviewed_notice", {
-          type: "warning",
-          _: "This application was already reviewed — showing the current state.",
-        });
+        // The authority refused, under its lock, from current truth — a stale
+        // tab, a double-click, or a decision somebody already recorded. Never
+        // silently overwrite: say which, and show the real state.
+        notify(
+          REFUSAL_NOTICE[result.reason] ?? REFUSAL_NOTICE["already-reviewed"],
+          {
+            type: "warning",
+          },
+        );
       } else {
         notify("resources.applications.updated", { type: "info" });
       }

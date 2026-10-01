@@ -159,7 +159,6 @@ const ApplicationShowContent = () => {
             {deal ? (
               <ApplicationReviewActions
                 application={record}
-                deal={deal}
                 applicantName={applicantName}
               />
             ) : (

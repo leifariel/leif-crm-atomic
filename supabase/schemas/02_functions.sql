@@ -4514,3 +4514,120 @@ BEGIN
   );
 END;
 $$;
+
+CREATE OR REPLACE FUNCTION "public"."review_application"("p_application_id" bigint, "p_outcome" "text") RETURNS "jsonb"
+    LANGUAGE "plpgsql"
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_app applications%ROWTYPE;
+  v_deal deals%ROWTYPE;
+  v_task_id bigint;
+  v_reviewed_at timestamptz;
+BEGIN
+  -- The four outcomes a live review can record. 'denied' and 'waitlist' are
+  -- historical-import vocabulary and are not decisions anybody makes here.
+  IF p_outcome NOT IN ('approved', 'needs_higher_care', 'not_fit', 'do_not_engage') THEN
+    RETURN jsonb_build_object('status', 'outcome-invalid', 'outcome', p_outcome);
+  END IF;
+
+  -- The lock, and the whole point of this function. Everything below decides
+  -- from state nobody else can move until this transaction ends.
+  SELECT * INTO v_app FROM applications WHERE id = p_application_id FOR UPDATE;
+  IF v_app.id IS NULL THEN
+    RETURN jsonb_build_object('status', 'application-invalid');
+  END IF;
+
+  -- Re-read under the lock. A second reviewer arriving at the same moment
+  -- waits here, then finds the decision already recorded and is told which —
+  -- rather than both reading 'pending' and the last writer silently winning.
+  IF v_app.status <> 'pending' THEN
+    RETURN jsonb_build_object(
+      'status', 'already-reviewed',
+      'application_id', v_app.id,
+      'application_status', v_app.status,
+      'reviewed_at', v_app.reviewed_at
+    );
+  END IF;
+
+  -- Every outcome writes to the Application AND its Opportunity, so there is
+  -- nothing to record a decision against without one. The page does not offer
+  -- the controls in that case; this is what makes it true rather than
+  -- presentational.
+  IF v_app.opportunity_id IS NULL THEN
+    RETURN jsonb_build_object('status', 'no-opportunity', 'application_id', v_app.id);
+  END IF;
+
+  SELECT * INTO v_deal FROM deals WHERE id = v_app.opportunity_id FOR UPDATE;
+  IF v_deal.id IS NULL THEN
+    RETURN jsonb_build_object('status', 'opportunity-invalid', 'opportunity_id', v_app.opportunity_id);
+  END IF;
+
+  -- enforce_application_opportunity_agreement already refuses a mismatched
+  -- pair on write. Checked here too so the caller gets a named answer instead
+  -- of an exception, and so a pair that drifted historically cannot be decided
+  -- against the wrong person.
+  IF v_deal.contact_id IS DISTINCT FROM v_app.contact_id THEN
+    RETURN jsonb_build_object(
+      'status', 'opportunity-mismatch',
+      'opportunity_id', v_deal.id,
+      'opportunity_contact_id', v_deal.contact_id,
+      'application_contact_id', v_app.contact_id
+    );
+  END IF;
+
+  v_reviewed_at := now();
+
+  -- 1. The decision itself. This UPDATE is what fires
+  --    on_application_kit_decision, inside this transaction, once.
+  UPDATE applications
+     SET status = p_outcome,
+         reviewed_at = v_reviewed_at
+   WHERE id = v_app.id;
+
+  -- 2. The Opportunity, aligned with it. Same shapes buildDealUpdate() used:
+  --    approved moves the pipeline forward and explicitly clears any outcome a
+  --    previous round left; the three exits record an outcome and leave the
+  --    stage where it stands; Do Not Engage is 'lost' plus the owner decision,
+  --    the same pair dneOutcome.ts writes everywhere else.
+  IF p_outcome = 'approved' THEN
+    UPDATE deals SET stage = 'approved', outcome = NULL WHERE id = v_deal.id;
+  ELSIF p_outcome = 'needs_higher_care' THEN
+    UPDATE deals SET outcome = 'needs_higher_care' WHERE id = v_deal.id;
+  ELSIF p_outcome = 'not_fit' THEN
+    UPDATE deals SET outcome = 'not_fit' WHERE id = v_deal.id;
+  ELSE
+    UPDATE deals SET outcome = 'lost', owner_decision = 'do_not_engage' WHERE id = v_deal.id;
+    -- 3. The durable Contact-level gate. Never erases the Contact, never
+    --    touches unrelated history.
+    UPDATE contacts SET sales_eligibility = 'do_not_engage' WHERE id = v_app.contact_id;
+  END IF;
+
+  -- 4. The Review Application task closes because the review happened — never
+  --    the reverse. Same heuristic as reviewApplicationTask.ts: the oldest
+  --    still-open review_application task for this Contact.
+  SELECT t.id INTO v_task_id
+    FROM tasks t
+   WHERE t.contact_id = v_app.contact_id
+     AND t.type = 'review_application'
+     AND t.done_date IS NULL
+   ORDER BY t.id ASC
+   LIMIT 1;
+
+  IF v_task_id IS NOT NULL THEN
+    UPDATE tasks
+       SET done_date = v_reviewed_at,
+           status = 'completed'
+     WHERE id = v_task_id;
+  END IF;
+
+  RETURN jsonb_build_object(
+    'status', 'reviewed',
+    'application_id', v_app.id,
+    'application_status', p_outcome,
+    'opportunity_id', v_deal.id,
+    'reviewed_at', v_reviewed_at,
+    'completed_task_id', v_task_id
+  );
+END;
+$$;

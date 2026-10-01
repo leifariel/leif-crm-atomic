@@ -36,6 +36,10 @@ import {
 import { retryKitSyncMirror } from "../../applications/retryKitSync";
 import { adoptImportedApplicationMirror } from "../../applications/adoptApplication";
 import {
+  reviewApplicationMirror,
+  type ApplicationReviewOutcome,
+} from "../../applications/reviewApplication";
+import {
   addKitTagMirror,
   contactKitTagsMirror,
   createKitTagMirror,
@@ -930,6 +934,22 @@ export const createDataProvider = ({
     // production runs the database authority instead.
     adoptImportedApplication: async (applicationId: Identifier) =>
       adoptImportedApplicationMirror(dataProvider, applicationId),
+    // Recording a decision. The mirror makes the same decisions in the same
+    // order; it cannot reproduce the transaction or the row locks, which is
+    // why production runs the database authority instead.
+    reviewApplication: async (input: {
+      applicationId: Identifier;
+      outcome: string;
+    }) => {
+      const result = await reviewApplicationMirror({
+        dataProvider,
+        applicationId: input.applicationId,
+        outcome: input.outcome as ApplicationReviewOutcome,
+      });
+      return result.applied
+        ? { status: "reviewed" }
+        : { status: result.reason };
+    },
     createManualApplication: async (input: ManualApplicationInput) => {
       const result = await createManualApplicationMirror(dataProvider, input);
       // Shaped exactly like the RPC's jsonb, field for field — a key

@@ -271,6 +271,30 @@ const getDataProviderWithCustomMethods = () => {
       }
       return data as Record<string, unknown>;
     },
+    // Recording an application decision. One transaction and two row locks,
+    // because this used to be four separate writes: fail between the
+    // Application and the Opportunity and the Application carried a decision
+    // its Opportunity had never heard of, and two concurrent reviewers could
+    // both read 'pending' and both proceed. The Kit decision trigger fires
+    // inside this transaction, exactly once, with its existing rule intact.
+    // See applications/reviewApplication.ts.
+    async reviewApplication(input: {
+      applicationId: Identifier;
+      outcome: string;
+    }) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "review_application",
+        {
+          p_application_id: input.applicationId,
+          p_outcome: input.outcome,
+        },
+      );
+      if (error) {
+        console.error("review_application.error", error);
+        throw new Error("Failed to record the decision");
+      }
+      return data as { status: string; application_status?: string };
+    },
     // Bringing an imported Application into current operations. One
     // transaction for the same reason as above: the Opportunity a decision
     // needs and the record that the owner brought this person in are one

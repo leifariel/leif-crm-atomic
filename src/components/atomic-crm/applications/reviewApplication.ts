@@ -1,4 +1,4 @@
-import type { DataProvider } from "ra-core";
+import type { DataProvider, Identifier } from "ra-core";
 
 import type { Application, Deal } from "../types";
 import {
@@ -23,7 +23,23 @@ export type ApplicationReviewOutcome =
 
 export type ReviewApplicationResult =
   | { applied: true }
-  | { applied: false; reason: "already-reviewed" };
+  | {
+      applied: false;
+      reason:
+        | "already-reviewed"
+        | "no-opportunity"
+        | "opportunity-mismatch"
+        | "outcome-invalid"
+        | "application-invalid"
+        | "opportunity-invalid";
+    };
+
+type ReviewCapableProvider = DataProvider & {
+  reviewApplication?: (input: {
+    applicationId: Identifier;
+    outcome: ApplicationReviewOutcome;
+  }) => Promise<{ status: string; application_status?: string }>;
+};
 
 // Centralizes every write an Application review decision requires across
 // Application / Opportunity / Contact / Task (Native Applications slice,
@@ -40,28 +56,80 @@ export type ReviewApplicationResult =
 export const reviewApplication = async ({
   dataProvider,
   application,
-  deal,
   outcome,
 }: {
   dataProvider: DataProvider;
   application: Pick<Application, "id">;
-  deal: Pick<
-    Deal,
-    "id" | "contact_id" | "stage" | "outcome" | "owner_decision"
-  >;
+  // The Opportunity is deliberately NOT a parameter any more. It is resolved
+  // from the Application under the lock, because a caller's copy of it is
+  // exactly as stale as the status check it was meant to accompany.
+  outcome: ApplicationReviewOutcome;
+}): Promise<ReviewApplicationResult> => {
+  // ONE authority, one transaction, one lock.
+  //
+  // This used to be four separate writes with nothing holding them together,
+  // and a test proved what that cost: fail between the Application and the
+  // Opportunity and the Application carries a decision its Opportunity has
+  // never heard of. The re-read below was also check-then-act — two reviewers
+  // could both see 'pending' and both proceed.
+  //
+  // review_application() takes FOR UPDATE on both rows, so the second caller
+  // waits, re-reads, and is told which decision already won instead of
+  // overwriting it. See 20261001090000.
+  const rpc = (dataProvider as ReviewCapableProvider).reviewApplication;
+  if (typeof rpc === "function") {
+    const result = await rpc({ applicationId: application.id, outcome });
+    if (result.status === "reviewed") return { applied: true };
+    return {
+      applied: false,
+      reason: (result.status ?? "already-reviewed") as Exclude<
+        ReviewApplicationResult,
+        { applied: true }
+      >["reason"],
+    };
+  }
+  return await reviewApplicationMirror({
+    dataProvider,
+    applicationId: application.id,
+    outcome,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// The mirror
+// ---------------------------------------------------------------------------
+// A provider with no database function behind it makes the same decisions in
+// the same order. What it cannot reproduce is the transaction or the row
+// locks — nothing in a browser can, which is exactly why production does not
+// run this.
+export const reviewApplicationMirror = async ({
+  dataProvider,
+  applicationId,
+  outcome,
+}: {
+  dataProvider: DataProvider;
+  applicationId: Identifier;
   outcome: ApplicationReviewOutcome;
 }): Promise<ReviewApplicationResult> => {
   const { data: currentApplication } = await dataProvider.getOne<Application>(
     "applications",
-    { id: application.id },
+    { id: applicationId },
   );
   if (currentApplication.status !== "pending") {
     return { applied: false, reason: "already-reviewed" };
   }
 
+  // Resolved from the Application, exactly as the authority does — never from
+  // whatever the caller happened to be holding.
+  if (currentApplication.opportunity_id == null) {
+    return { applied: false, reason: "no-opportunity" };
+  }
   const { data: currentDeal } = await dataProvider.getOne<Deal>("deals", {
-    id: deal.id,
+    id: currentApplication.opportunity_id,
   });
+  if (currentDeal.contact_id !== currentApplication.contact_id) {
+    return { applied: false, reason: "opportunity-mismatch" };
+  }
 
   const reviewedAt = new Date().toISOString();
 

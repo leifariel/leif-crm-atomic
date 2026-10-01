@@ -239,6 +239,17 @@ export const REVIEWED_DETERMINISTIC = {
   // Application, which is the defect this migration exists to close.
   20260930180000:
     "synthetic proof rows, rolled back; owns the current adopt_imported_application() definition",
+  // Flagged for the same reason as the two above: its header explains a
+  // defect in the vocabulary of real review decisions. It reads and writes no
+  // real row — the proof builds its own Offer, Cohort, two Contacts, two
+  // Opportunities, two Applications and a Task inside a subtransaction that
+  // ends by raising.
+  //
+  // It cannot be skipped: it owns review_application()'s definition. A
+  // database rebuilt without it has no transactional authority for recording
+  // a decision at all, and the frontend calls that function by name.
+  20261001090000:
+    "synthetic proof rows, rolled back; owns review_application()'s definition",
 };
 
 /**

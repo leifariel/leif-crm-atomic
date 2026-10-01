@@ -2693,6 +2693,105 @@ the **delta** around adoption, which is 0 queued and 0 responses.
 **Residual security model, stated plainly:** only provisioned CRM users can
 become `authenticated` now — but `authenticated` remains highly privileged.
 
+## 8b-adopt-accepted. IMPORTED CURRENT APPLICATION ADOPTION — HUMAN ACCEPTED 2026-10-01
+
+**Taylor Carr, application 148.** Leif pressed Bring into CRM; verified
+read-only afterwards, and every part is what it should be.
+
+| | |
+|---|---|
+| provenance | `source = historical_import` — **unchanged, forever** |
+| decision | `status = pending`, `reviewed_at` still null — none fabricated |
+| adoption | `crm_adopted_at = 2026-10-01 00:45:35Z` |
+| Opportunity | **exactly one**, id 323, `application_received`, offer GYU, cohort January 2027 |
+| ownership | belongs to contact 337; no Opportunity stolen or shared — 1 Application points at it |
+| answers | all **four** `application_responses` byte-identical before and after |
+| totals | applications 169 → 169 (no duplicate), deals 170 → **171** (exactly one new) |
+| Kit | operations 4 → 4, identities 4 → 4, **zero** for Taylor |
+| derived | **Manual — action needed**, `○ GYU-Applicant`, queue **4 → 5**, still ONE aggregate row, no per-person Task |
+
+Neither January cohort has a Kit tag configured, which is why she owes the
+programme tag only.
+
+**Ready for the same single click, not yet done:** Jessie (96), Lena (145),
+Cristina Luca (147).
+
+**Intentionally unresolved:** Samantha Herold (97) and Celia (146) — each has a
+live `call_booked` GYU Opportunity carrying no cohort, so whether that
+conversation IS their January application is Leif's call. The page names the
+conflict rather than offering the action.
+
+**Deferred:** Elin Hilgemann (144) — approved import with no Opportunity, and
+the live stage for a decision made elsewhere at an unknown time is a business
+question.
+
+## 8b-decision. A DECISION IS ALL OF IT, OR NONE OF IT — 2026-10-01
+
+**The adoption gate found this, and it was not about adoption.**
+
+Recording a review was four separate browser writes with nothing holding them
+together: `applications.status`+`reviewed_at`, then the Opportunity's
+stage/outcome, then the Contact on Do Not Engage, then the review Task. The
+pending check was also check-then-act — two reviewers could both read
+`pending` and both proceed.
+
+**Proven, not theorised.** A test injected one failure between the Application
+write and the Opportunity write; the Application came back `approved` while its
+Opportunity sat at `application_received`, with nothing able to tell. It needs
+one interruption — a dropped connection, a refused request, a closed tab — not
+a race.
+
+### `review_application(application_id, outcome)` — 20261001090000
+
+One transaction, SECURITY INVOKER, pinned `search_path`, granting nothing the
+caller does not already hold. `FOR UPDATE` on the Application **and** its
+Opportunity is what turns "is this still pending" from a guess into a decision:
+the second caller waits, re-reads under the lock, and is told which decision
+already won.
+
+The Opportunity is no longer a parameter. It is resolved from the Application
+under the lock, because a copy the page is holding is exactly as stale as the
+status check it was meant to accompany.
+
+Refuses by name, writing nothing: `already-reviewed` (with the status that
+won), `no-opportunity`, `opportunity-mismatch`, `opportunity-invalid`,
+`outcome-invalid` — the last covering `denied` and `waitlist`, which are
+historical-import vocabulary and not decisions anybody makes here.
+
+### Concurrency, proved with real sessions
+
+| pair | result |
+|---|---|
+| approved vs approved | one `reviewed`, one `already-reviewed` |
+| approved vs not_fit | one winner |
+| approved vs needs_higher_care | one winner |
+| not_fit vs do_not_engage | one winner, Contact gate set correctly |
+
+In every case the Application and its Opportunity **AGREE**, and exactly one
+review Task closed. Rollback: a fault injected after the Application decision
+left status `pending`, `reviewed_at` null, Opportunity untouched, Contact
+untouched, no Task closed, no Kit operation — then retried clean.
+
+### Kit, and the distinction that matters
+
+`on_application_kit_decision` fires inside this transaction, exactly once, with
+its existing guard intact — and that guard is what keeps the two modes apart.
+
+| | |
+|---|---|
+| automatic (an applicant operation exists) | approved → **exactly one** decision operation; replay, including a conflicting outcome, does not duplicate |
+| **adopted import** (never had one) | approved → **zero** Kit operations. No automatic work is invented; the outcome tag becomes MANUAL required work |
+| needs_higher_care / not_fit | exactly one each, correct tag |
+| do_not_engage | **zero** |
+
+**Email:** nothing in this path sends anything, and nothing was added.
+Approved and Not Fit reach Leif's Kit automations through the tag via the
+outbox, exactly as they did before. Individualised decision email stays
+Leif's by hand until Gmail is deliberately built.
+
+**Not yet accepted by a human.** Built and proved; Leif has not recorded a real
+decision through it.
+
 ## 8b-builder. APPLICATION FORM BUILDER — PARKED
 
 Still **uncommitted**, parked in a stash while the three commits above were

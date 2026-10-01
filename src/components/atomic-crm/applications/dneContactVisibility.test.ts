@@ -79,12 +79,11 @@ const buildFixtures = () => {
 
 describe("Do Not Engage contact visibility", () => {
   it("the DNE Contact still appears in the unfiltered Contacts list", async () => {
-    const { dataProvider, deal, application } = buildFixtures();
+    const { dataProvider, application } = buildFixtures();
 
     await reviewApplication({
       dataProvider,
       application,
-      deal,
       outcome: "do_not_engage",
     });
 
@@ -99,12 +98,11 @@ describe("Do Not Engage contact visibility", () => {
   });
 
   it("the DNE Contact is still findable by search", async () => {
-    const { dataProvider, deal, application } = buildFixtures();
+    const { dataProvider, application } = buildFixtures();
 
     await reviewApplication({
       dataProvider,
       application,
-      deal,
       outcome: "do_not_engage",
     });
 
@@ -118,12 +116,11 @@ describe("Do Not Engage contact visibility", () => {
   });
 
   it("the DNE Contact is still fetchable individually (Contact show page)", async () => {
-    const { dataProvider, deal, application } = buildFixtures();
+    const { dataProvider, application } = buildFixtures();
 
     await reviewApplication({
       dataProvider,
       application,
-      deal,
       outcome: "do_not_engage",
     });
 
@@ -135,12 +132,11 @@ describe("Do Not Engage contact visibility", () => {
   });
 
   it("the DNE Contact still appears in the Person selector (contacts_summary reference)", async () => {
-    const { dataProvider, deal, application } = buildFixtures();
+    const { dataProvider, application } = buildFixtures();
 
     await reviewApplication({
       dataProvider,
       application,
-      deal,
       outcome: "do_not_engage",
     });
 
@@ -157,12 +153,11 @@ describe("Do Not Engage contact visibility", () => {
   });
 
   it("the DNE Opportunity is excluded from the active pipeline query, while the Contact's history remains reachable via the Deal", async () => {
-    const { dataProvider, deal, application } = buildFixtures();
+    const { dataProvider, application } = buildFixtures();
 
     await reviewApplication({
       dataProvider,
       application,
-      deal,
       outcome: "do_not_engage",
     });
 

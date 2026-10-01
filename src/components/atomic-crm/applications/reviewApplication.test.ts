@@ -95,14 +95,96 @@ const buildFixtures = () => {
   return { dataProvider, deal, application };
 };
 
-describe("reviewApplication", () => {
-  it("Approve: Application approved, Opportunity stage Approved with a cleared outcome, review task completes, no Enrollment created", async () => {
-    const { dataProvider, deal, application } = buildFixtures();
+// Found by the adversarial gate before Leif began approving applicants.
+//
+// A decision is four separate writes with no transaction: the Application, the
+// Opportunity, the Contact on Do Not Engage, and the review Task. Nothing
+// holds them together, so anything that interrupts the sequence — a dropped
+// connection, a refused request, a closed tab — leaves the Application
+// carrying a decision its Opportunity has never heard of.
+//
+// That is not a theoretical race. It needs only one failure in the middle.
+describe("an application decision is all of it or none of it", () => {
+  it("records the decision through one authority, not four separate writes", async () => {
+    const { dataProvider, application } = buildFixtures();
+
+    // Count what the decision actually does to the outside world.
+    const writes: string[] = [];
+    let authorityCalls = 0;
+    const watched = {
+      ...dataProvider,
+      reviewApplication: (async (input: {
+        applicationId: unknown;
+        outcome: string;
+      }) => {
+        authorityCalls += 1;
+        return await (
+          dataProvider as unknown as {
+            reviewApplication: (i: unknown) => Promise<{ status: string }>;
+          }
+        ).reviewApplication(input);
+      }) as never,
+      update: (async (resource: string, params: unknown) => {
+        writes.push(`update:${resource}`);
+        return await (
+          dataProvider as unknown as {
+            update: (r: string, p: unknown) => Promise<unknown>;
+          }
+        ).update(resource, params);
+      }) as typeof dataProvider.update,
+    } as typeof dataProvider;
+
+    const result = await reviewApplication({
+      dataProvider: watched,
+      application,
+      outcome: "approved",
+    });
+
+    expect(result).toEqual({ applied: true });
+    // ONE call carries the whole decision. The caller never writes to
+    // applications, deals, contacts or tasks itself — if it did, a failure
+    // between two of those writes would leave the Application carrying a
+    // decision its Opportunity had never heard of, which is exactly the
+    // defect this replaced.
+    expect(authorityCalls).toBe(1);
+    expect(writes).toEqual([]);
+  });
+
+  it("refuses a decision there is no opportunity to record against", async () => {
+    const { dataProvider, application } = buildFixtures();
+    const { data: current } = await dataProvider.getOne<Application>(
+      "applications",
+      { id: application.id },
+    );
+    await dataProvider.update("applications", {
+      id: application.id,
+      data: { opportunity_id: null },
+      previousData: current,
+    });
 
     const result = await reviewApplication({
       dataProvider,
       application,
-      deal,
+      outcome: "approved",
+    });
+
+    expect(result).toEqual({ applied: false, reason: "no-opportunity" });
+    const { data: after } = await dataProvider.getOne<Application>(
+      "applications",
+      { id: application.id },
+    );
+    expect(after.status).toBe("pending");
+    expect(after.reviewed_at ?? null).toBeNull();
+  });
+});
+
+describe("reviewApplication", () => {
+  it("Approve: Application approved, Opportunity stage Approved with a cleared outcome, review task completes, no Enrollment created", async () => {
+    const { dataProvider, application } = buildFixtures();
+
+    const result = await reviewApplication({
+      dataProvider,
+      application,
       outcome: "approved",
     });
     expect(result).toEqual({ applied: true });
@@ -138,12 +220,11 @@ describe("reviewApplication", () => {
   });
 
   it("does not create a duplicate Opportunity on Approve", async () => {
-    const { dataProvider, deal, application } = buildFixtures();
+    const { dataProvider, application } = buildFixtures();
 
     await reviewApplication({
       dataProvider,
       application,
-      deal,
       outcome: "approved",
     });
 
@@ -155,12 +236,11 @@ describe("reviewApplication", () => {
   });
 
   it("Needs Higher Care: Application records the outcome, Opportunity exits the active pipeline, Contact is not DNE, review task completes", async () => {
-    const { dataProvider, deal, application } = buildFixtures();
+    const { dataProvider, application } = buildFixtures();
 
     const result = await reviewApplication({
       dataProvider,
       application,
-      deal,
       outcome: "needs_higher_care",
     });
     expect(result).toEqual({ applied: true });
@@ -190,12 +270,11 @@ describe("reviewApplication", () => {
   });
 
   it("Not Fit: correct Application outcome, Opportunity exits, Contact remains non-DNE, review task completes", async () => {
-    const { dataProvider, deal, application } = buildFixtures();
+    const { dataProvider, application } = buildFixtures();
 
     await reviewApplication({
       dataProvider,
       application,
-      deal,
       outcome: "not_fit",
     });
 
@@ -222,12 +301,11 @@ describe("reviewApplication", () => {
   });
 
   it("Do Not Engage: Contact Sales Eligibility becomes Do Not Engage, Opportunity exits, review task completes", async () => {
-    const { dataProvider, deal, application } = buildFixtures();
+    const { dataProvider, application } = buildFixtures();
 
     const result = await reviewApplication({
       dataProvider,
       application,
-      deal,
       outcome: "do_not_engage",
     });
     expect(result).toEqual({ applied: true });
@@ -256,12 +334,11 @@ describe("reviewApplication", () => {
   });
 
   it("is idempotent: a second review call against an already-reviewed Application is a no-op", async () => {
-    const { dataProvider, deal, application } = buildFixtures();
+    const { dataProvider, application } = buildFixtures();
 
     const first = await reviewApplication({
       dataProvider,
       application,
-      deal,
       outcome: "approved",
     });
     expect(first).toEqual({ applied: true });
@@ -271,7 +348,6 @@ describe("reviewApplication", () => {
     const second = await reviewApplication({
       dataProvider,
       application,
-      deal,
       outcome: "not_fit",
     });
     expect(second).toEqual({ applied: false, reason: "already-reviewed" });
