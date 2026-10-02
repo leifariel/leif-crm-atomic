@@ -46,10 +46,25 @@ export const kitTagRisk = (
   return "quiet";
 };
 
+// What any confirmation says before provider work, for however many risky
+// tags are going. The CRM reads which EVENT a tag is mapped to and never
+// Kit's automation topology, so this says "may trigger" and asserts neither
+// the connection nor an email. Both confirmations say it through here, so
+// there is one sentence to keep honest rather than three.
+export const kitRiskWarning = (tagNames: string[]): string | null => {
+  if (tagNames.length === 0) return null;
+  if (tagNames.length === 1)
+    return `${tagNames[0]} may trigger a Kit automation connected to that tag.`;
+  return "These tags may trigger Kit automations connected to them.";
+};
+
 export const kitRiskSentence = (risk: KitTagRisk, tagName: string): string => {
   switch (risk) {
     case "sends-email":
-      return `${tagName} is connected to one of your Kit email automations, which may send an email.`;
+      // Same claim the shared confirmation makes, from the same authority:
+      // the CRM reads which EVENT a tag is mapped to, never Kit's automation
+      // topology, so it says "may trigger" and asserts no connection.
+      return kitRiskWarning([tagName]) ?? "";
     case "no-automation-yet":
       return `${tagName} does not currently have an email automation attached, so that email still needs to be sent by hand.`;
     default:
@@ -60,14 +75,3 @@ export const kitRiskSentence = (risk: KitTagRisk, tagName: string): string => {
 // The one thing a Needs Higher Care decision must never let anybody assume.
 export const NEEDS_HIGHER_CARE_EMAIL_NOTE =
   "Needs Higher Care email still needs to be sent manually.";
-
-// What the confirmation says before provider work, for however many risky
-// tags are going. Deliberately weaker than kitRiskSentence: the CRM reads
-// which EVENT a tag is mapped to, never Kit's automation topology, so it says
-// "may trigger" and never asserts the connection or an email.
-export const kitRiskWarning = (tagNames: string[]): string | null => {
-  if (tagNames.length === 0) return null;
-  if (tagNames.length === 1)
-    return `${tagNames[0]} may trigger a Kit automation connected to that tag.`;
-  return "These tags may trigger Kit automations connected to them.";
-};

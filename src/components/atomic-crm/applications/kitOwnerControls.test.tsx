@@ -607,7 +607,7 @@ describe("the shared tag manager", () => {
     await expect
       .element(
         screen.getByText(
-          "This tag is connected to one of your Kit email automations.",
+          "Adding this tag may trigger a Kit automation connected to it.",
         ),
       )
       .toBeVisible();

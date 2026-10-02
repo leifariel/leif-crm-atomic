@@ -202,19 +202,24 @@ export const ManageKitTagsModal = ({
               onChange={setChosen}
               disabled={adding}
             />
-            {riskNote && (
+            {/* Said once: the specific sentence when a tag is chosen, the
+                general one until then. Both at once is what made the Add
+                required tags confirmation too dense to read. */}
+            {riskNote ? (
               <span className="text-xs text-muted-foreground">{riskNote}</span>
+            ) : (
+              <span className="text-xs text-muted-foreground">
+                Adding a Kit tag may trigger an automation connected to that
+                tag.
+              </span>
             )}
-            <span className="text-xs text-muted-foreground">
-              Adding a Kit tag may trigger an automation connected to that tag.
-            </span>
           </section>
 
           {confirming && (
             <section className="rounded-md border px-3 py-2 flex flex-col gap-2">
               <span className="text-sm">Add {confirming.name}?</span>
               <span className="text-sm text-muted-foreground">
-                This tag is connected to one of your Kit email automations.
+                Adding this tag may trigger a Kit automation connected to it.
               </span>
               <div className="flex gap-2">
                 <Button

@@ -3177,6 +3177,53 @@ ATOMIC HANDLES CERTAINTY. LEIF HANDLES AMBIGUITY.
 - The broader `authenticated` TRUNCATE grant: 52 public tables grant it,
   Supabase's default `grant all` pattern. Not reachable through PostgREST,
   wider than intended.
+- **`IndividualProgramPage.capacity.test.tsx` — CI flake, mechanism still
+  UNKNOWN. Investigated 2026-10-02; do not re-tread these.** It failed the CI
+  Test job once, on `33714d30` (three of its ten tests, each burning its full
+  45s timeout: `12 / 12 active` absent, `Full — 12 of 12 slots filled.`
+  absent, and a 44.8s click timeout waiting for the `November 2026` openings
+  button). It is the only CI Test failure this file has had in the runs
+  inspectable without admin log access, and it passes 10/10 in isolation.
+
+  **Eliminated, each by a forced reproduction rather than by repetition:**
+
+  1. *Persisted query-cache pollution.* `CRM.tsx` wraps the app in
+     `PersistQueryClientProvider` with a `localStorage` persister
+     (`REACT_QUERY_OFFLINE_CACHE`, 1s throttle), nothing clears it, there are
+     no `setupFiles`, and **42 app test files render `<CRM>`** — so one
+     file's cache really is restored into the next. Measured: it is written.
+     But mounting the same route twice in one file with *different* fixtures,
+     with the first mount's cache persisted and restored, still rendered the
+     second fixture's answer correctly. `staleTime` is 0, so restored data is
+     stale on arrival and refetched. **Not the cause.**
+  2. *Viewport leak into the mobile layout.* `page.viewport()` is a page
+     setting, Vitest reuses pages across files, `CRM.tsx` picks
+     `MobileAdmin` purely from `useIsMobile()` (breakpoint 768), six call
+     sites across four files set a mobile width without restoring it, eight
+     `<CRM>`-rendering files never state one — and CI's DOM dump *did* show
+     the mobile `<nav>`. Measured: the leak does persist across tests, and
+     the layout does switch. But the real capacity file run at a forced
+     600px passes **10/10**. A width matrix (375/600/700/1280) showed
+     `12 / 12 active` present at every width. **Not the cause** — and note
+     the first read of that matrix was misread as implicating the viewport,
+     when the absent strings were absent at 1280 too, for fixture reasons.
+
+  **Also not reproducible by load on an 8-core machine:** the exact CI command
+  (`CI=1 npm run test:unit:app -- --run`, all four projects) and the app
+  project at 2, 8 and 16 workers are all green — 1824 passed every time.
+
+  **Still open and worth trying next:** the failing job's own log, which needs
+  admin rights this session does not have. It would name the other files in
+  that worker and carry the full DOM and console output. A cascade is also
+  plausible but unproven: the file's `afterEach` restores the clock and then
+  awaits a CDP timezone call, so if one test fails mid-flight the rest of the
+  file may inherit a half-restored state — which would explain three failures
+  clustered in one file without explaining the first.
+
+  **What was deliberately NOT done:** no timeout raised (it is already 45s and
+  CI burned 44.8s of it), no sleep, no assertion weakened, no test skipped or
+  marked flaky, and no speculative repair committed for a mechanism that is
+  not yet understood.
 - A pre-existing alternating pass/fail flake in **partial** test selections
   (`enrollments/` plus the capacity file). Measured on both the changed and
   unchanged tree and identical on each, so it predates the sort change. The
