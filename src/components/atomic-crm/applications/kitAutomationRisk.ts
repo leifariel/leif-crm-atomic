@@ -25,6 +25,14 @@ export type KitTagRisk =
 
 const SENDS_EMAIL: string[] = ["approved", "not_fit"];
 
+// A required tag already knows which event it is for, so the two surfaces that
+// offer "Add required tags" can ask about it without re-reading the mappings.
+export const kitEventRisk = (event: string): KitTagRisk => {
+  if (SENDS_EMAIL.includes(event)) return "sends-email";
+  if (event === "needs_higher_care") return "no-automation-yet";
+  return "quiet";
+};
+
 export const kitTagRisk = (
   kitTagId: number,
   mappings: KitTagMapping[],
@@ -32,7 +40,8 @@ export const kitTagRisk = (
   const events = mappings
     .filter((mapping) => Number(mapping.kit_tag_id) === Number(kitTagId))
     .map((mapping) => mapping.event);
-  if (events.some((event) => SENDS_EMAIL.includes(event))) return "sends-email";
+  if (events.some((event) => kitEventRisk(event) === "sends-email"))
+    return "sends-email";
   if (events.includes("needs_higher_care")) return "no-automation-yet";
   return "quiet";
 };

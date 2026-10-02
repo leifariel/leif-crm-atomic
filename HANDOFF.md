@@ -2792,6 +2792,75 @@ Leif's by hand until Gmail is deliberately built.
 **Not yet accepted by a human.** Built and proved; Leif has not recorded a real
 decision through it.
 
+## 8b-accepted. THE FIRST REAL APPLICATION DECISION — HUMAN ACCEPTED 2026-10-02
+
+**Taylor Carr → Approved**, by the owner, in production, at
+`2026-10-02T15:55:16.119Z`. The transactional decision authority
+(`review_application`, §8b-decision) is now **HUMAN ACCEPTED**.
+
+The proof that it was one transaction, not three writes that happened to
+agree: `applications.reviewed_at` and `tasks.done_date` are the **same
+instant to the millisecond** — both `15:55:16.119` — because both come from
+the single `v_reviewed_at` the function computes once.
+
+| | after the click |
+|---|---|
+| Application 148 | `approved`, `reviewed_at` set once, still `historical_import`, `crm_adopted_at` preserved, cohort still January 2027 |
+| Opportunity 323 | `stage = approved`, `outcome` null, `owner_decision` null, exactly one Opportunity |
+| Task 352 | `completed`, `done_date` = `reviewed_at`, no duplicate |
+| Contact 337 | `sales_eligibility` still `normal` |
+| Kit | **zero** operations — production still holds exactly the same 4 rows (ids 9, 18, 19, 22) it held before |
+
+So the approval sent **no email** and created **no Kit identity or tag**, by two
+independent gates: `enqueue_kit_application_decision` only enqueues when an
+`applicant` operation already exists for that Application (Taylor has none),
+and `enqueue_kit_application_sync` returns null for any `source` outside
+`public_form`/`manual` **and** for anything created before the boundary
+(`not_before` 2026-09-28; Taylor's Application is 2026-09-17).
+
+**Still OPEN: automatic post-boundary Kit-decision acceptance.** It needs a
+genuine post-boundary automatic applicant to receive a real decision. Do not
+manufacture one.
+
+### The UX gap the acceptance exposed — and what it actually was
+
+The reported symptom was that after deciding, the page offered no way to do the
+Kit work the decision creates. **The audit did not support that.** Rendering an
+Application in Taylor's exact shape (adopted import, approved, pre-boundary,
+zero operations) produces the Kit box with "Kit: Manual — action needed",
+"2 tags still to add", both required tags listed, and **both** buttons —
+`Add required tags` and `Manage Kit tags` — already inside the Review
+Decision card. All of those strings are in the deployed bundle, and
+`authenticated` can read all three Kit tables (permissive SELECT policies).
+So no second Kit panel was built: there was already a working one, and adding
+another would have created exactly the duplicate work this slice forbids.
+
+What was genuinely wrong were two different things:
+
+**1. The decision line contradicted the Kit box.** `already_reviewed` read
+"Reviewed — no further action needed." and rendered immediately above
+"Manual — action needed · 2 tags still to add". One of the two was always
+false, and `ApplicationReviewActions` cannot know whether anything else is
+outstanding. It now says **"Decision recorded."** — the decision, and nothing
+more. Whatever Kit still needs is said by the component that actually knows.
+The sentence lives in `englishCrmMessages.ts`/`frenchCrmMessages.ts`, not in
+the inline default, which is why changing the default alone did nothing.
+
+**2. `Add required tags` performed a provider write with no confirmation.**
+`kitAutomationRisk.ts` already classified `approved`/`not_fit` as
+`sends-email`, and `ManageKitTagsModal` already confirmed before a
+hand-picked tag — but the required-tags button enqueued straight away. For
+Taylor it would have queued `GYU-Approved`, which may trigger the approval
+automation, with no warning at all. **Both doors** now ask first: the
+Application's button and the Dashboard's Kit modal, which had the same
+unguarded path. Cancel queues nothing; confirming uses the existing manual
+authority exactly once per missing tag.
+
+The gate is risk-based, not blanket: a quiet tag (applicant, cohort) is still
+added in one click. `kitEventRisk(event)` is the shared authority — a
+required tag already carries its own event, so neither surface re-reads the
+mappings, and both keep deriving from the one `kitStatus`.
+
 ## 8b-builder. APPLICATION FORM BUILDER — PARKED
 
 Still **uncommitted**, parked in a stash while the three commits above were

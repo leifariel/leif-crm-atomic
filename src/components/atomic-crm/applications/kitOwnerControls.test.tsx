@@ -86,6 +86,7 @@ const build = ({
   status = "pending",
   source = "public_form",
   createdAt = PRE,
+  adoptedAt = null as string | null,
   operations = [] as Partial<KitSyncOperation>[],
   eligibility = "normal",
   applications,
@@ -95,6 +96,7 @@ const build = ({
   status?: string;
   source?: string;
   createdAt?: string;
+  adoptedAt?: string | null;
   operations?: Partial<KitSyncOperation>[];
   eligibility?: string;
   applications?: unknown[];
@@ -137,6 +139,7 @@ const build = ({
           intended_cohort_id: null,
           status,
           source,
+          crm_adopted_at: adoptedAt,
           raw_answers: {},
           submitted_at: createdAt,
           reviewed_at: null,
@@ -256,6 +259,12 @@ describe("the Application's manual Kit work", () => {
     const screen = await render(element);
 
     await screen.getByRole("button", { name: "Add required tags" }).click();
+    // Only the outcome tag is still missing, and that one can send an email,
+    // so it asks first.
+    await expect
+      .element(screen.getByText("Add required Kit tags?"))
+      .toBeVisible();
+    await screen.getByRole("button", { name: "Add tags" }).click();
     await expect.element(screen.getByText(/queued for Kit/)).toBeVisible();
 
     const { data } = await dataProvider.getList<KitSyncOperation>(
@@ -358,6 +367,186 @@ describe("the Application's manual Kit work", () => {
     );
     expect(buttons).not.toContain("Add required tags");
     expect(buttons).not.toContain("Manage Kit tags");
+  });
+});
+
+// Right after a decision, on the page where it was just made. Taylor Carr's
+// shape: an imported Application the owner deliberately brought into the CRM,
+// then approved. Provenance stays historical_import forever; being adopted is
+// what makes it current work, and an approved decision adds a second required
+// tag that somebody has to actually add.
+describe("the Kit work a decision leaves behind", () => {
+  const taylor = () =>
+    build({
+      status: "approved",
+      source: "historical_import",
+      adoptedAt: "2026-10-01T00:45:35.000Z",
+      createdAt: PRE,
+    });
+
+  it("asks for the programme tag AND the outcome tag, without leaving the page", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = taylor();
+    const screen = await render(element);
+
+    await expect
+      .element(screen.getByText("Kit: Manual — action needed"))
+      .toBeVisible();
+    const body = () => document.body.textContent ?? "";
+    await expect.poll(() => body().includes("MiniDD_Approved")).toBe(true);
+    expect(body()).toContain("MiniDD_Applicant");
+    await expect
+      .element(screen.getByRole("button", { name: "Add required tags" }))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Manage Kit tags" }))
+      .toBeVisible();
+    // Still the Application, not a page it navigated to.
+    await expect.element(screen.getByText("Review Decision")).toBeVisible();
+  });
+
+  it("requires exactly the two tags, because this round has no Kit tag of its own", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = taylor();
+    const screen = await render(element);
+    await expect
+      .element(screen.getByText("Kit: Manual — action needed"))
+      .toBeVisible();
+    await expect
+      .poll(() => document.body.textContent ?? "")
+      .toContain("2 tags still to add");
+  });
+
+  it("no longer claims nothing is outstanding while two tags are missing", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = taylor();
+    const screen = await render(element);
+    await expect
+      .element(screen.getByText("Kit: Manual — action needed"))
+      .toBeVisible();
+    const body = document.body.textContent ?? "";
+    expect(body).toContain("Decision recorded.");
+    expect(body).not.toContain("no further action needed");
+  });
+});
+
+// Approving never tags and never emails. THIS button is where that becomes
+// possible, so it is the one that asks first.
+describe("adding the tags a decision requires", () => {
+  const taylor = () =>
+    build({
+      status: "approved",
+      source: "historical_import",
+      adoptedAt: "2026-10-01T00:45:35.000Z",
+      createdAt: PRE,
+    });
+
+  it("asks before adding a tag connected to an email automation", async () => {
+    await page.viewport(1280, 1400);
+    const { dataProvider, element } = taylor();
+    const screen = await render(element);
+    await screen.getByRole("button", { name: "Add required tags" }).click();
+
+    await expect
+      .element(screen.getByText("Add required Kit tags?"))
+      .toBeVisible();
+    const body = document.body.textContent ?? "";
+    expect(body).toContain(
+      "MiniDD_Approved is connected to one of your Kit email automations",
+    );
+    expect(body).toContain(
+      "Adding a Kit tag may trigger an automation connected to that tag.",
+    );
+
+    // Nothing has been queued merely by asking.
+    const { total } = await dataProvider.getList("kit_sync_operations", {
+      filter: {},
+      pagination: { page: 1, perPage: 50 },
+      sort: { field: "id", order: "ASC" },
+    });
+    expect(total).toBe(0);
+  });
+
+  it("Cancel queues nothing at all", async () => {
+    await page.viewport(1280, 1400);
+    const { dataProvider, element } = taylor();
+    const screen = await render(element);
+    await screen.getByRole("button", { name: "Add required tags" }).click();
+    await expect
+      .element(screen.getByText("Add required Kit tags?"))
+      .toBeVisible();
+    await screen.getByRole("button", { name: "Cancel" }).click();
+
+    const { total } = await dataProvider.getList("kit_sync_operations", {
+      filter: {},
+      pagination: { page: 1, perPage: 50 },
+      sort: { field: "id", order: "ASC" },
+    });
+    expect(total).toBe(0);
+  });
+
+  it("confirming uses the existing manual authority exactly once per missing tag", async () => {
+    await page.viewport(1280, 1400);
+    const { dataProvider, element } = taylor();
+    const screen = await render(element);
+    await screen.getByRole("button", { name: "Add required tags" }).click();
+    await expect
+      .element(screen.getByText("Add required Kit tags?"))
+      .toBeVisible();
+    await screen.getByRole("button", { name: "Add tags" }).click();
+
+    await expect
+      .poll(async () => {
+        const { data } = await dataProvider.getList<KitSyncOperation>(
+          "kit_sync_operations",
+          {
+            filter: {},
+            pagination: { page: 1, perPage: 50 },
+            sort: { field: "id", order: "ASC" },
+          },
+        );
+        return data.length;
+      })
+      .toBe(2);
+
+    const { data } = await dataProvider.getList<KitSyncOperation>(
+      "kit_sync_operations",
+      {
+        filter: {},
+        pagination: { page: 1, perPage: 50 },
+        sort: { field: "id", order: "ASC" },
+      },
+    );
+    expect(data.every((op) => op.origin === "manual_owner")).toBe(true);
+    expect(data.map((op) => op.kit_tag_name).sort()).toEqual([
+      "MiniDD_Applicant",
+      "MiniDD_Approved",
+    ]);
+  });
+
+  it("does not ask when nothing being added can send an email", async () => {
+    await page.viewport(1280, 1400);
+    // Pending: the programme tag only, which has no automation attached.
+    const { dataProvider, element } = build();
+    const screen = await render(element);
+    await screen.getByRole("button", { name: "Add required tags" }).click();
+
+    await expect
+      .element(screen.getByText("MiniDD_Applicant queued for Kit."))
+      .toBeVisible();
+    expect(document.body.textContent ?? "").not.toContain(
+      "Add required Kit tags?",
+    );
+
+    const { data } = await dataProvider.getList<KitSyncOperation>(
+      "kit_sync_operations",
+      {
+        filter: {},
+        pagination: { page: 1, perPage: 50 },
+        sort: { field: "id", order: "ASC" },
+      },
+    );
+    expect(data).toHaveLength(1);
   });
 });
 
@@ -603,6 +792,122 @@ describe("the Dashboard's one Kit item", () => {
     expect(document.body.textContent ?? "").not.toContain("need attention");
     // With nothing else needing attention either, the box goes too.
     expect(document.body.textContent ?? "").not.toContain("Needs Attention");
+  });
+
+  // The Dashboard offers the same provider work through a second door, so it
+  // asks the same question. Otherwise the warning is only as good as which
+  // button Leif happens to use.
+  const approvedAdoptedImport = () => [
+    {
+      id: 101,
+      contact_id: 3,
+      opportunity_id: 5,
+      offer_id: 1,
+      intended_cohort_id: null,
+      status: "approved",
+      source: "historical_import",
+      crm_adopted_at: "2026-10-01T00:45:35.000Z",
+      raw_answers: {},
+      submitted_at: PRE,
+      reviewed_at: "2026-10-02T15:55:16.000Z",
+      created_at: PRE,
+      updated_at: PRE,
+    },
+  ];
+
+  it("asks before adding an outcome tag from the Dashboard too", async () => {
+    await page.viewport(1280, 1400);
+    const { dataProvider, element } = build({
+      route: "/",
+      applications: approvedAdoptedImport(),
+    });
+    const screen = await render(element);
+
+    await screen
+      .getByRole("button", { name: /applicants? need(s)? attention/ })
+      .click();
+    await expect.element(screen.getByText("Manual Kit work")).toBeVisible();
+    await screen.getByRole("button", { name: "Add required tags" }).click();
+
+    await expect
+      .element(screen.getByText(/Add required Kit tags for/))
+      .toBeVisible();
+    expect(document.body.textContent ?? "").toContain(
+      "MiniDD_Approved is connected to one of your Kit email automations",
+    );
+
+    const before = await dataProvider.getList<KitSyncOperation>(
+      "kit_sync_operations",
+      {
+        filter: {},
+        pagination: { page: 1, perPage: 50 },
+        sort: { field: "id", order: "ASC" },
+      },
+    );
+    expect(before.data).toHaveLength(0);
+  });
+
+  it("Cancel on the Dashboard queues nothing", async () => {
+    await page.viewport(1280, 1400);
+    const { dataProvider, element } = build({
+      route: "/",
+      applications: approvedAdoptedImport(),
+    });
+    const screen = await render(element);
+
+    await screen
+      .getByRole("button", { name: /applicants? need(s)? attention/ })
+      .click();
+    await screen.getByRole("button", { name: "Add required tags" }).click();
+    await expect
+      .element(screen.getByText(/Add required Kit tags for/))
+      .toBeVisible();
+    await screen.getByRole("button", { name: "Cancel" }).click();
+
+    const { data } = await dataProvider.getList<KitSyncOperation>(
+      "kit_sync_operations",
+      {
+        filter: {},
+        pagination: { page: 1, perPage: 50 },
+        sort: { field: "id", order: "ASC" },
+      },
+    );
+    expect(data).toHaveLength(0);
+  });
+
+  it("confirming on the Dashboard uses the same authority, once per tag", async () => {
+    await page.viewport(1280, 1400);
+    const { dataProvider, element } = build({
+      route: "/",
+      applications: approvedAdoptedImport(),
+    });
+    const screen = await render(element);
+
+    await screen
+      .getByRole("button", { name: /applicants? need(s)? attention/ })
+      .click();
+    await screen.getByRole("button", { name: "Add required tags" }).click();
+    await expect
+      .element(screen.getByText(/Add required Kit tags for/))
+      .toBeVisible();
+    await screen.getByRole("button", { name: "Add tags" }).click();
+
+    await expect
+      .poll(async () => {
+        const { data } = await dataProvider.getList<KitSyncOperation>(
+          "kit_sync_operations",
+          {
+            filter: {},
+            pagination: { page: 1, perPage: 50 },
+            sort: { field: "id", order: "ASC" },
+          },
+        );
+        return data
+          .map((op) => op.kit_tag_name)
+          .sort()
+          .join(",");
+      })
+      .toBe("MiniDD_Applicant,MiniDD_Approved");
   });
 
   it("never lists an imported historical record as current work", async () => {

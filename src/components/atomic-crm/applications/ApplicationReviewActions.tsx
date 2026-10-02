@@ -91,9 +91,15 @@ export const ApplicationReviewActions = ({
         <Badge variant={applicationStatusBadgeVariant[application.status]}>
           {applicationStatusLabels[application.status]}
         </Badge>
+        {/* States the decision and nothing else. It used to read "Reviewed
+            — no further action needed.", which sat directly above a Kit box
+            saying "Manual — action needed · 2 tags still to add": one of the
+            two was always wrong, and this component cannot know whether
+            anything else is outstanding. Whatever Kit still needs is said by
+            the component that actually knows, immediately below. */}
         <span className="text-sm text-muted-foreground">
           {translate("resources.applications.review.already_reviewed", {
-            _: "Reviewed — no further action needed.",
+            _: "Decision recorded.",
           })}
         </span>
       </div>

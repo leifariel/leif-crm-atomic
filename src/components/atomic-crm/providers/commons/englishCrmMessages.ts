@@ -371,7 +371,7 @@ export const englishCrmMessages = {
         answers_title: "Application Answers",
         decision_title: "Review Decision",
         related_sales_title: "Related Sales",
-        already_reviewed: "Reviewed — no further action needed.",
+        already_reviewed: "Decision recorded.",
         already_reviewed_notice:
           "This application was already reviewed — showing the current state.",
         dne_confirm_title: "Mark %{name} as Do Not Engage?",

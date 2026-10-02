@@ -250,7 +250,7 @@ describe("ApplicationShow", () => {
     );
 
     await expect
-      .element(screen.getByText("Reviewed — no further action needed."))
+      .element(screen.getByText("Decision recorded."))
       .toBeInTheDocument();
     await expect
       .element(screen.getByRole("button", { name: /Approve/ }))

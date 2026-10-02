@@ -13,7 +13,11 @@ import { kitStatus } from "./kitStatus";
 import { KitSyncCard } from "./KitSyncCard";
 import { ManageKitTagsModal } from "./ManageKitTagsModal";
 import { addKitTag } from "./kitTagActions";
-import { NEEDS_HIGHER_CARE_EMAIL_NOTE } from "./kitAutomationRisk";
+import {
+  kitEventRisk,
+  kitRiskSentence,
+  NEEDS_HIGHER_CARE_EMAIL_NOTE,
+} from "./kitAutomationRisk";
 import { retryKitSync } from "./retryKitSync";
 
 // Is Kit handling this application, or is it Leif's to do by hand?
@@ -45,6 +49,7 @@ export const KitStatusLine = ({
   const [retrying, setRetrying] = useState(false);
   const [managing, setManaging] = useState(false);
   const [addingRequired, setAddingRequired] = useState(false);
+  const [confirmingAdd, setConfirmingAdd] = useState(false);
 
   // retry: false throughout — a provider without these resources must degrade
   // to saying nothing rather than hanging the page it sits on.
@@ -169,6 +174,65 @@ export const KitStatusLine = ({
     }
   };
 
+  // Adding a decision tag is the act that can actually send something, so it
+  // asks first. The decision click itself never tags and never emails; this
+  // button is where that becomes possible, and ManageKitTagsModal already
+  // confirms the same way for a hand-picked tag.
+  const missingRequired =
+    status.kind === "manual-action" || status.kind === "attention"
+      ? status.required.filter((tag) => !tag.done)
+      : [];
+  const risky = missingRequired.filter(
+    (tag) => kitEventRisk(tag.event) === "sends-email",
+  );
+  const onAddRequiredClick = () => {
+    if (risky.length > 0) {
+      setConfirmingAdd(true);
+      return;
+    }
+    void onAddRequired();
+  };
+
+  const confirmAddSection = confirmingAdd ? (
+    <section className="rounded-md border px-3 py-2 flex flex-col gap-2">
+      <span className="text-sm">Add required Kit tags?</span>
+      <ul className="text-xs text-muted-foreground flex flex-col gap-0.5">
+        {missingRequired.map((tag) => (
+          <li key={tag.kitTagId}>• {tag.kitTagName}</li>
+        ))}
+      </ul>
+      {risky.map((tag) => (
+        <span key={tag.kitTagId} className="text-sm text-muted-foreground">
+          {kitRiskSentence("sends-email", tag.kitTagName)}
+        </span>
+      ))}
+      <span className="text-xs text-muted-foreground">
+        Adding a Kit tag may trigger an automation connected to that tag.
+      </span>
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setConfirmingAdd(false)}
+        >
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          disabled={addingRequired}
+          onClick={() => {
+            setConfirmingAdd(false);
+            void onAddRequired();
+          }}
+        >
+          Add tags
+        </Button>
+      </div>
+    </section>
+  ) : null;
+
   const manageButton = (
     <Button
       type="button"
@@ -195,6 +259,7 @@ export const KitStatusLine = ({
       <>
         <KitSyncCard status={status} retrying={retrying} onRetry={onRetry} />
         <div className="flex pt-1">{manageButton}</div>
+        {confirmAddSection}
         {modal}
       </>
     );
@@ -249,7 +314,7 @@ export const KitStatusLine = ({
               type="button"
               size="sm"
               disabled={addingRequired}
-              onClick={onAddRequired}
+              onClick={onAddRequiredClick}
             >
               Add required tags
             </Button>
@@ -257,6 +322,7 @@ export const KitStatusLine = ({
           {manageButton}
         </div>
       )}
+      {confirmAddSection}
       {modal}
     </div>
   );

@@ -370,7 +370,7 @@ export const frenchCrmMessages = {
         answers_title: "Réponses à la candidature",
         decision_title: "Décision de révision",
         related_sales_title: "Vente associée",
-        already_reviewed: "Révisée — aucune action requise.",
+        already_reviewed: "Décision enregistrée.",
         already_reviewed_notice:
           "Cette candidature avait déjà été révisée — affichage de l'état actuel.",
         dne_confirm_title: "Marquer %{name} comme « Ne pas contacter » ?",
