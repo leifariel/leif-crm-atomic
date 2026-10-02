@@ -161,7 +161,7 @@ const buildTestCrm = () => {
     latency: 0,
   });
 
-  return (
+  const element = (
     <MemoryRouter initialEntries={["/programs/individual/1"]}>
       <CRM
         dataProvider={dataProvider}
@@ -172,6 +172,131 @@ const buildTestCrm = () => {
       />
     </MemoryRouter>
   );
+  return { element, dataProvider };
+};
+
+// WHY THIS FILE CARRIES DIAGNOSTICS.
+//
+// It failed the CI Test job once, on 33714d30 — three of its ten tests, each
+// burning its full 45s: "12 / 12 active" absent, "Full — 12 of 12 slots
+// filled." absent, and a 44.8s click timeout on the November 2026 button. It
+// passes 10/10 alone, and the mechanism is still unknown: persisted
+// query-cache pollution and a leaked mobile viewport were both forced and
+// both cleared (HANDOFF, Infrastructure debt).
+//
+// The reason that failure read as "wrong page" is IndividualProgramPage.tsx's
+// own line 50 — `if (isPending || waitlistPending) return null`. While its
+// data is loading the page renders NOTHING, with no spinner and no skeleton,
+// so a slow query and a wrong answer look identical from the outside. These
+// diagnostics exist to tell those two apart the next time it happens, because
+// a once-a-fortnight CI failure is otherwise unreadable: the log needs admin
+// rights, and the check-run annotation carries only a truncated DOM.
+//
+// Observability only. No assertion, timeout, retry or production path is
+// touched by any of this.
+
+// Console errors during the render, collected per test. React and ra-core
+// both complain here when a provider or a query misbehaves, and that is
+// exactly the kind of thing a once-in-a-fortnight failure needs to have said.
+const consoleErrors: string[] = [];
+
+type CapacityDiagnostics = Record<string, unknown>;
+
+const firstMatch = (text: string, pattern: RegExp): string | null =>
+  text.match(pattern)?.[0] ?? null;
+
+// Everything about the fixture and the render that could explain the three
+// expectations below going missing. Fixture and test state only — the data is
+// the constants declared at the top of this file.
+const captureState = async (
+  screen: { container: HTMLElement },
+  dataProvider: ReturnType<typeof createDataProvider>,
+): Promise<CapacityDiagnostics> => {
+  const rendered = screen.container.textContent ?? "";
+  const count = async (resource: string) => {
+    try {
+      const { total, data } = await dataProvider.getList(resource, {
+        filter: {},
+        pagination: { page: 1, perPage: 500 },
+        sort: { field: "id", order: "ASC" },
+      });
+      return total ?? data.length;
+    } catch (error) {
+      return `unreadable: ${(error as Error).message}`;
+    }
+  };
+  return {
+    // Where and when the render happened.
+    route: window.location.href,
+    viewport: `${window.innerWidth}x${window.innerHeight}`,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    now: new Date().toISOString(),
+    dateIsFaked: vi.isFakeTimers(),
+    // The page renders null until its data lands, so an empty container IS
+    // the loading state. This is the single most useful line here.
+    pageRenderedAnything: rendered.trim().length > 0,
+    renderedLength: rendered.length,
+    programmeNamePresent: rendered.includes("The Living Example"),
+    // What the page actually says where the assertions look.
+    activeCountShown: firstMatch(rendered, /\d+\s*\/\s*\d+\s+active/),
+    committedShown: firstMatch(rendered, /\d+ committed to start/),
+    availabilityShown: firstMatch(rendered, /Full — .*?slots filled\./),
+    openingsHeadingPresent: rendered.includes("Upcoming Openings"),
+    cantCalculatePresent: rendered.includes("Can't calculate"),
+    monthButtons: [...screen.container.querySelectorAll("button")]
+      .map((button) => button.textContent?.trim() ?? "")
+      .filter((label) => /20\d\d/.test(label))
+      .slice(0, 12),
+    // What the fixture says SHOULD be there.
+    fixture: {
+      occupied: OCCUPIED.length,
+      committed: COMMITTED.length,
+      calendarWeeks: CALENDAR_WEEKS.length,
+      maxActiveClients: livingExample.max_active_clients,
+    },
+    // What the provider actually served, which separates "the page never got
+    // its data" from "the page got it and computed something else".
+    served: {
+      offers: await count("offers"),
+      deals: await count("deals"),
+      enrollments: await count("enrollments"),
+      expected_session_windows: await count("expected_session_windows"),
+      waitlist_entries: await count("waitlist_entries"),
+    },
+    consoleErrors: consoleErrors.slice(0, 5),
+  };
+};
+
+// Runs an expectation and, if it fails, attaches the state to the failure
+// before letting it through unchanged.
+//
+// The diagnostics go onto the error's own message rather than only to the
+// console, because that is the channel a CI failure actually reaches: the
+// check-run annotation carries the assertion message, and reading the job log
+// needs admin rights. The original error object, type and stack are preserved
+// and rethrown — the test still fails exactly as it would have.
+const withDiagnostics = async (
+  what: string,
+  screen: { container: HTMLElement },
+  dataProvider: ReturnType<typeof createDataProvider>,
+  expectation: () => Promise<void>,
+): Promise<void> => {
+  try {
+    await expectation();
+  } catch (error) {
+    let state: string;
+    try {
+      state = JSON.stringify(await captureState(screen, dataProvider), null, 2);
+    } catch (captureError) {
+      state = `diagnostics unavailable: ${(captureError as Error).message}`;
+    }
+    const report = `\n\n--- capacity diagnostics (${what}) ---\n${state}\n--- end capacity diagnostics ---`;
+    console.error(report);
+    if (error instanceof Error) {
+      error.message = `${error.message}${report}`;
+    }
+    throw error;
+  }
 };
 
 describe("Living Example program page — capacity Leif can plan around", () => {
@@ -218,32 +343,49 @@ describe("Living Example program page — capacity Leif can plan around", () => 
   // one running in a timezone it did not choose.
   let ambientTimezone: string;
 
+  let restoreConsoleError: (() => void) | null = null;
+
   beforeEach(async () => {
+    consoleErrors.length = 0;
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      consoleErrors.push(args.map((arg) => String(arg)).join(" "));
+      original(...(args as []));
+    };
+    restoreConsoleError = () => {
+      console.error = original;
+    };
     ambientTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     await commands.setTimezone("UTC");
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-21T12:00:00Z"));
   });
   afterEach(async () => {
+    restoreConsoleError?.();
+    restoreConsoleError = null;
     vi.useRealTimers();
     await commands.setTimezone(ambientTimezone);
   });
 
   it("counts the twelve people Leif is working with, not the eighteen agreements", async () => {
-    const screen = await render(buildTestCrm());
+    const { element, dataProvider } = buildTestCrm();
+    const screen = await render(element);
 
     // Twice on the page now — the header and the "Right now" panel — and
     // both have to say twelve. Six people have agreed to start; an
     // agreement is not an occupancy.
-    await expect
-      .element(screen.getByText("12 / 12 active", { exact: false }).first())
-      .toBeVisible();
+    await withDiagnostics("active count", screen, dataProvider, async () => {
+      await expect
+        .element(screen.getByText("12 / 12 active", { exact: false }).first())
+        .toBeVisible();
+    });
     expect(screen.container.textContent).not.toContain("18 / 12");
     expect(screen.container.textContent).toContain("6 committed to start");
   });
 
   it("names the six who have agreed but not started, under their own heading", async () => {
-    const screen = await render(buildTestCrm());
+    const { element } = buildTestCrm();
+    const screen = await render(element);
 
     await expect
       .element(screen.getByRole("heading", { name: "Starting Later" }))
@@ -263,7 +405,8 @@ describe("Living Example program page — capacity Leif can plan around", () => 
   });
 
   it("shows a final session week worked out from the calendar, not from four months", async () => {
-    const screen = await render(buildTestCrm());
+    const { element } = buildTestCrm();
+    const screen = await render(element);
 
     // Jules started 20 May. Four calendar months is 20 September — the old
     // model had already ended him. His twelve eligible `1:1s` weeks run to
@@ -281,7 +424,8 @@ describe("Living Example program page — capacity Leif can plan around", () => 
   });
 
   it("refuses to offer an opening it cannot stand behind", async () => {
-    const screen = await render(buildTestCrm());
+    const { element, dataProvider } = buildTestCrm();
+    const screen = await render(element);
 
     await expect
       .element(screen.getByRole("heading", { name: "Upcoming Openings" }))
@@ -300,10 +444,17 @@ describe("Living Example program page — capacity Leif can plan around", () => 
     // six over — and that detail lives in the breakdown now rather than on
     // every month card. Said with its unit and its ceiling, because "Peak
     // 18 in the programme" was read as "do I have 18 people enrolled?".
-    await screen
-      .getByRole("button", { name: /November 2026/ })
-      .first()
-      .click();
+    await withDiagnostics(
+      "November 2026 breakdown",
+      screen,
+      dataProvider,
+      async () => {
+        await screen
+          .getByRole("button", { name: /November 2026/ })
+          .first()
+          .click();
+      },
+    );
     await expect.element(screen.getByRole("dialog")).toBeVisible();
 
     const dialog = screen.container.ownerDocument.body.textContent ?? "";
@@ -316,7 +467,8 @@ describe("Living Example program page — capacity Leif can plan around", () => 
   });
 
   it("says whose end the calendar cannot reach, and what to do about it", async () => {
-    const screen = await render(buildTestCrm());
+    const { element } = buildTestCrm();
+    const screen = await render(element);
 
     await expect
       .element(screen.getByRole("heading", { name: "Upcoming Openings" }))
@@ -340,7 +492,8 @@ describe("Living Example program page — capacity Leif can plan around", () => 
     // Neither is sorted by expected END date. That is derived from the
     // calendar, so the list used to silently reorder itself after a sync,
     // around a projection rather than a fact about the person.
-    const screen = await render(buildTestCrm());
+    const { element } = buildTestCrm();
+    const screen = await render(element);
     await expect
       .element(screen.getByRole("heading", { name: "Current Clients" }))
       .toBeVisible();
@@ -400,7 +553,8 @@ describe("Living Example program page — capacity Leif can plan around", () => 
     // the page header interpolated the ledger ANSWER into "%{count}
     // openings". Two card call sites were caught by tests; this one was
     // only caught by reading the rendered page.
-    const screen = await render(buildTestCrm());
+    const { element } = buildTestCrm();
+    const screen = await render(element);
 
     await expect
       .element(screen.getByRole("heading", { name: "Upcoming Openings" }))
@@ -409,7 +563,8 @@ describe("Living Example program page — capacity Leif can plan around", () => 
   });
 
   it("offers Sync Calendar where the dates come from", async () => {
-    const screen = await render(buildTestCrm());
+    const { element } = buildTestCrm();
+    const screen = await render(element);
 
     await expect
       .element(screen.getByRole("button", { name: /Sync Calendar/ }))
@@ -417,15 +572,23 @@ describe("Living Example program page — capacity Leif can plan around", () => 
   });
 
   it("states availability beside the waitlist, and offers no way to act on it", async () => {
-    const screen = await render(buildTestCrm());
+    const { element, dataProvider } = buildTestCrm();
+    const screen = await render(element);
 
     // Somebody starting TODAY could be scheduled — thirteen eligible
     // weeks still remain, so their twelve exist. There is simply no room.
     // "Full" is the right answer here, and it is a different answer from
     // the months below, where the calendar runs out first.
-    await expect
-      .element(screen.getByText("Full — 12 of 12 slots filled."))
-      .toBeVisible();
+    await withDiagnostics(
+      "waitlist availability",
+      screen,
+      dataProvider,
+      async () => {
+        await expect
+          .element(screen.getByText("Full — 12 of 12 slots filled."))
+          .toBeVisible();
+      },
+    );
     // Reporting only. Nothing here invites, moves, emails, or promotes
     // anybody — who gets an opening stays Leif's decision.
     const text = screen.container.textContent ?? "";
@@ -436,7 +599,8 @@ describe("Living Example program page — capacity Leif can plan around", () => 
   it("puts + Add to Waitlist at the waitlist itself", async () => {
     // Leif adds people arriving from Instagram by hand. The control used
     // to live only in the page header, four sections above the list.
-    const screen = await render(buildTestCrm());
+    const { element } = buildTestCrm();
+    const screen = await render(element);
 
     const button = screen.getByRole("button", { name: "Add to Waitlist" });
     await expect.element(button).toBeVisible();
