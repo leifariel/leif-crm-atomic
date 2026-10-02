@@ -42,6 +42,12 @@ export type KitStatusKind =
   // claim the automatic integration is following this person's lifecycle,
   // and it is not — a later decision becomes manual work again.
   | "manual-done"
+  // Manual work the owner has already asked for, still on its way to Kit.
+  // The rows exist and the worker will carry them out, so nobody needs to act
+  // — the same distinction the automatic side draws with "Syncing…". Without
+  // it a confirmed request kept reading as "action needed", which invites the
+  // same tag being asked for twice.
+  | "manual-syncing"
   // Live, after the boundary, but its programme has no Kit tags configured.
   // Said out loud rather than guessed at or silently ignored.
   | "not-configured"
@@ -77,6 +83,7 @@ export const KIT_STATUS_LABELS: Record<KitStatusKind, string> = {
   attention: "Kit: Needs attention",
   "manual-action": "Kit: Manual — action needed",
   "manual-done": "Kit: Manual — up to date ✓",
+  "manual-syncing": "Kit: Syncing…",
   "not-configured": "Kit: Automation not configured",
   "not-used": "Kit: Not used",
   historical: "",
@@ -305,9 +312,25 @@ export const kitStatus = ({
   // a real anomaly, and reads the same way: somebody has to act.
   void preBoundary;
 
-  return required.every((tag) => tag.done)
-    ? say("manual-done", { required })
-    : say("manual-action", { required });
+  if (required.every((tag) => tag.done))
+    return say("manual-done", { required });
+
+  // Everything still missing has already been asked for, so this is on its
+  // way rather than owed. A partially-asked state stays "action needed",
+  // because something in it genuinely still is.
+  const queued = operations.filter(
+    (operation) =>
+      operation.origin === "manual_owner" && outstanding(operation),
+  );
+  const missing = required.filter((tag) => !tag.done);
+  const allQueued =
+    queued.length > 0 &&
+    missing.every((tag) =>
+      queued.some((operation) => Number(operation.kit_tag_id) === tag.kitTagId),
+    );
+  if (allQueued) return say("manual-syncing", { required });
+
+  return say("manual-action", { required });
 };
 
 // What went wrong, in Leif's terms. No status codes, no payloads, no mention

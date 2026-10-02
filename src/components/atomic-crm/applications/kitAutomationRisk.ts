@@ -60,3 +60,14 @@ export const kitRiskSentence = (risk: KitTagRisk, tagName: string): string => {
 // The one thing a Needs Higher Care decision must never let anybody assume.
 export const NEEDS_HIGHER_CARE_EMAIL_NOTE =
   "Needs Higher Care email still needs to be sent manually.";
+
+// What the confirmation says before provider work, for however many risky
+// tags are going. Deliberately weaker than kitRiskSentence: the CRM reads
+// which EVENT a tag is mapped to, never Kit's automation topology, so it says
+// "may trigger" and never asserts the connection or an email.
+export const kitRiskWarning = (tagNames: string[]): string | null => {
+  if (tagNames.length === 0) return null;
+  if (tagNames.length === 1)
+    return `${tagNames[0]} may trigger a Kit automation connected to that tag.`;
+  return "These tags may trigger Kit automations connected to them.";
+};

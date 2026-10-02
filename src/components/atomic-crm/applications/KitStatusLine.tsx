@@ -15,9 +15,9 @@ import { ManageKitTagsModal } from "./ManageKitTagsModal";
 import { addKitTag } from "./kitTagActions";
 import {
   kitEventRisk,
-  kitRiskSentence,
   NEEDS_HIGHER_CARE_EMAIL_NOTE,
 } from "./kitAutomationRisk";
+import { ConfirmKitTagsDialog } from "./ConfirmKitTagsDialog";
 import { retryKitSync } from "./retryKitSync";
 
 // Is Kit handling this application, or is it Leif's to do by hand?
@@ -194,43 +194,15 @@ export const KitStatusLine = ({
   };
 
   const confirmAddSection = confirmingAdd ? (
-    <section className="rounded-md border px-3 py-2 flex flex-col gap-2">
-      <span className="text-sm">Add required Kit tags?</span>
-      <ul className="text-xs text-muted-foreground flex flex-col gap-0.5">
-        {missingRequired.map((tag) => (
-          <li key={tag.kitTagId}>• {tag.kitTagName}</li>
-        ))}
-      </ul>
-      {risky.map((tag) => (
-        <span key={tag.kitTagId} className="text-sm text-muted-foreground">
-          {kitRiskSentence("sends-email", tag.kitTagName)}
-        </span>
-      ))}
-      <span className="text-xs text-muted-foreground">
-        Adding a Kit tag may trigger an automation connected to that tag.
-      </span>
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setConfirmingAdd(false)}
-        >
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={addingRequired}
-          onClick={() => {
-            setConfirmingAdd(false);
-            void onAddRequired();
-          }}
-        >
-          Add tags
-        </Button>
-      </div>
-    </section>
+    <ConfirmKitTagsDialog
+      tags={missingRequired}
+      busy={addingRequired}
+      onCancel={() => setConfirmingAdd(false)}
+      onConfirm={() => {
+        setConfirmingAdd(false);
+        void onAddRequired();
+      }}
+    />
   ) : null;
 
   const manageButton = (
@@ -278,6 +250,18 @@ export const KitStatusLine = ({
             still to add
           </span>
         )}
+        {/* Already asked for and on its way. Without this the page read
+            exactly as it did before the click, which is how somebody ends up
+            asking for the same tag twice. */}
+        {status.kind === "manual-syncing" && (
+          <span className="text-xs text-muted-foreground">
+            {status.required.filter((tag) => !tag.done).length} tag
+            {status.required.filter((tag) => !tag.done).length === 1
+              ? ""
+              : "s"}{" "}
+            queued
+          </span>
+        )}
       </div>
       {/* Which tags, when it is his to do — named, because "add the tags" is
           not an instruction until it says which. */}
@@ -309,16 +293,17 @@ export const KitStatusLine = ({
 
       {status.kind !== "not-used" && (
         <div className="flex flex-wrap gap-2 pt-1">
-          {status.required.some((tag) => !tag.done) && (
-            <Button
-              type="button"
-              size="sm"
-              disabled={addingRequired}
-              onClick={onAddRequiredClick}
-            >
-              Add required tags
-            </Button>
-          )}
+          {status.kind === "manual-action" &&
+            status.required.some((tag) => !tag.done) && (
+              <Button
+                type="button"
+                size="sm"
+                disabled={addingRequired || confirmingAdd}
+                onClick={onAddRequiredClick}
+              >
+                Add required tags
+              </Button>
+            )}
           {manageButton}
         </div>
       )}

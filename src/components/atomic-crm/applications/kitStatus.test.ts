@@ -7,6 +7,7 @@ import {
   requiredKitTags,
   STALE_AFTER_MS,
 } from "./kitStatus";
+import { kitEventRisk, kitRiskWarning } from "./kitAutomationRisk";
 import type {
   Application,
   ApplicationStatus,
@@ -319,6 +320,80 @@ describe("manual — it predates the integration, so the tags are Leif's", () =>
   );
 });
 
+// Asked for, and on its way. The rows exist, so nobody needs to act — the
+// same thing the automatic side has always said with "Syncing…".
+describe("manual — already asked for", () => {
+  it("is syncing, not action needed, once every missing tag is queued", () => {
+    const status = state({
+      application: preBoundary({ status: "approved" as ApplicationStatus }),
+      operations: [
+        manual({ kit_tag_id: LE_TAGS.applicant.id, status: "pending" }),
+        manual({
+          id: 2,
+          kit_tag_id: LE_TAGS.approved.id,
+          kit_tag_name: LE_TAGS.approved.name,
+          status: "pending",
+        }),
+      ],
+    });
+    expect(status.kind).toBe("manual-syncing");
+    expect(status.label).toBe("Kit: Syncing…");
+    expect(status.required).toHaveLength(2);
+  });
+
+  it("still needs action while only SOME of it has been asked for", () => {
+    const status = state({
+      application: preBoundary({ status: "approved" as ApplicationStatus }),
+      operations: [
+        manual({ kit_tag_id: LE_TAGS.applicant.id, status: "pending" }),
+      ],
+    });
+    expect(status.kind).toBe("manual-action");
+  });
+
+  it("hands a failed manual request to the existing Needs attention state", () => {
+    const status = state({
+      application: preBoundary({ status: "approved" as ApplicationStatus }),
+      operations: [
+        manual({
+          kit_tag_id: LE_TAGS.approved.id,
+          kit_tag_name: LE_TAGS.approved.name,
+          status: "failed",
+          failed_at: minutesAgo(1),
+          failure_class: "rejected",
+        }),
+      ],
+    });
+    expect(status.kind).toBe("attention");
+    expect(status.isRetryable).toBe(true);
+  });
+});
+
+describe("what the confirmation is allowed to claim", () => {
+  it("says an outcome tag MAY trigger an automation, never that it is wired to one", () => {
+    const sentence = kitRiskWarning(["MiniDD_Approved"]);
+    expect(sentence).toBe(
+      "MiniDD_Approved may trigger a Kit automation connected to that tag.",
+    );
+    expect(sentence).not.toMatch(/is connected|will send|sends an email/);
+  });
+
+  it("stays general for several, and silent for none", () => {
+    expect(kitRiskWarning(["MiniDD_Approved", "MiniDD_Denied"])).toBe(
+      "These tags may trigger Kit automations connected to them.",
+    );
+    expect(kitRiskWarning([])).toBeNull();
+  });
+
+  it("treats an applicant or cohort tag as quiet, and NHC as having no automation yet", () => {
+    expect(kitEventRisk("applicant")).toBe("quiet");
+    expect(kitEventRisk("cohort")).toBe("quiet");
+    expect(kitEventRisk("needs_higher_care")).toBe("no-automation-yet");
+    expect(kitEventRisk("approved")).toBe("sends-email");
+    expect(kitEventRisk("not_fit")).toBe("sends-email");
+  });
+});
+
 describe("Kit is not involved at all", () => {
   it("says the automation is not configured when the programme has no tags", () => {
     const status = state({
@@ -416,6 +491,7 @@ describe("the copy itself", () => {
       attention: "Kit: Needs attention",
       "manual-action": "Kit: Manual — action needed",
       "manual-done": "Kit: Manual — up to date ✓",
+      "manual-syncing": "Kit: Syncing…",
       "not-configured": "Kit: Automation not configured",
       "not-used": "Kit: Not used",
       historical: "",

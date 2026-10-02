@@ -2861,6 +2861,68 @@ added in one click. `kitEventRisk(event)` is the shared authority — a
 required tag already carries its own event, so neither surface re-reads the
 mappings, and both keep deriving from the one `kitStatus`.
 
+## 8b-kit-manual-accepted. MANUAL POST-DECISION KIT TAGGING — HUMAN ACCEPTED 2026-10-02
+
+**Taylor Carr → Approved → GYU-Applicant + GYU-Approved**, by the owner, in
+production, at `17:23:51`–`17:23:53Z`. Exactly two `manual_owner`
+operations, one per tag, each `succeeded` on its first attempt, both carrying
+the same Kit subscriber id `4267946624` — one canonical identity, no
+duplicate. No `automatic_application` decision operation was invented for
+Application 148, and the manual unique index
+(`contact_id, kit_tag_id` where `origin = 'manual_owner'`) makes a second
+request for either tag impossible. The Dashboard manual queue moved **5 → 4**:
+Ruth, Kseniya, Kara and Carey remain, each with zero operations. No Kit task
+type exists anywhere.
+
+**No email delivery is claimed.** `succeeded` means Kit accepted the tag.
+The CRM has no delivery evidence and never asserts one.
+
+**The first attempt silently did nothing**, which is what produced the next
+slice. Every refusal branch in `request_kit_manual_tag` passed for Taylor,
+and no row was created — the request never reached the database. The likeliest
+cause was the confirmation's own shape: it was an inline block *below* the
+buttons, leaving the original `Add required tags` live directly above it, so
+the obvious second click just re-opened the question and queued nothing.
+
+### The queued state the state machine did not have
+
+`kitStatus` had no way to say "asked for, on its way". Manual operations
+count as done only once `succeeded`, so between the click and the worker's
+pass the card still read `Manual — action needed`, `○` tags and
+`Add required tags` — identical to before the click, which is precisely how
+the same tag gets asked for twice. Added **`manual-syncing`**, reusing the
+existing `Kit: Syncing…` line, when every still-missing tag already has an
+outstanding manual operation. A partially-asked state deliberately stays
+`manual-action`, because part of it genuinely is. Failure needed nothing new:
+`failed`/`stuck` is checked at the top across all operations, so a failed
+manual request already reaches **Needs attention** with its retry.
+
+`useKitWorkQueue` filters on `kind === "manual-action"`, so queued work
+leaves the Dashboard queue by itself — the same way automatic work in flight
+always has.
+
+### One lightbox, two doors
+
+`ConfirmKitTagsDialog` is now the single confirmation, used by the
+Application and the Dashboard. It names the tags, warns **once**, and offers
+Cancel or Add. Because it is a real modal, the action behind it is not merely
+disabled — Radix takes the page out of the accessibility tree, so the button
+cannot be reached or clicked at all while the question stands. That is
+asserted, not assumed.
+
+**Wording is deliberately weaker than it was.** The old sentence claimed
+"GYU-Approved is connected to one of your Kit email automations". The CRM
+reads which EVENT a tag is mapped to; it cannot read Kit's automation
+topology. It now says `<tag> may trigger a Kit automation connected to that
+tag`, or "These tags may trigger Kit automations connected to them" for
+several — and the second, generic line underneath was removed, because saying
+it twice made the dense case denser and the quiet case alarming.
+
+**Quiet tags still skip the question entirely.** Audited rather than changed:
+all four remaining queue entries are applicant-only, Leif tags them routinely,
+and a confirmation there would be friction with no safety to buy. Only an
+outcome tag (`approved`, `not_fit`) opens the lightbox.
+
 ## 8b-builder. APPLICATION FORM BUILDER — PARKED
 
 Still **uncommitted**, parked in a stash while the three commits above were

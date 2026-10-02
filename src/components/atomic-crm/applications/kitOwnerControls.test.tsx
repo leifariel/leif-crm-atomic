@@ -261,10 +261,8 @@ describe("the Application's manual Kit work", () => {
     await screen.getByRole("button", { name: "Add required tags" }).click();
     // Only the outcome tag is still missing, and that one can send an email,
     // so it asks first.
-    await expect
-      .element(screen.getByText("Add required Kit tags?"))
-      .toBeVisible();
-    await screen.getByRole("button", { name: "Add tags" }).click();
+    await expect.element(screen.getByText("Add 1 Kit tag?")).toBeVisible();
+    await screen.getByRole("button", { name: "Add tag" }).click();
     await expect.element(screen.getByText(/queued for Kit/)).toBeVisible();
 
     const { data } = await dataProvider.getList<KitSyncOperation>(
@@ -447,16 +445,24 @@ describe("adding the tags a decision requires", () => {
     const screen = await render(element);
     await screen.getByRole("button", { name: "Add required tags" }).click();
 
-    await expect
-      .element(screen.getByText("Add required Kit tags?"))
-      .toBeVisible();
+    await expect.element(screen.getByText("Add 2 Kit tags?")).toBeVisible();
     const body = document.body.textContent ?? "";
+    // ONE conservative sentence. The CRM reads which event a tag is mapped
+    // to, never Kit automation topology, so it never asserts the connection
+    // and never promises an email.
     expect(body).toContain(
-      "MiniDD_Approved is connected to one of your Kit email automations",
+      "MiniDD_Approved may trigger a Kit automation connected to that tag.",
     );
-    expect(body).toContain(
+    expect(body).not.toContain("is connected to one of your Kit email");
+    expect(body).not.toContain(
       "Adding a Kit tag may trigger an automation connected to that tag.",
     );
+    // No duplicate-click trap. The lightbox takes the page out of the
+    // accessibility tree, so the action behind it is not merely disabled —
+    // it cannot be reached or clicked at all while the question stands.
+    await expect
+      .element(screen.getByRole("button", { name: "Add required tags" }))
+      .not.toBeInTheDocument();
 
     // Nothing has been queued merely by asking.
     const { total } = await dataProvider.getList("kit_sync_operations", {
@@ -472,9 +478,7 @@ describe("adding the tags a decision requires", () => {
     const { dataProvider, element } = taylor();
     const screen = await render(element);
     await screen.getByRole("button", { name: "Add required tags" }).click();
-    await expect
-      .element(screen.getByText("Add required Kit tags?"))
-      .toBeVisible();
+    await expect.element(screen.getByText("Add 2 Kit tags?")).toBeVisible();
     await screen.getByRole("button", { name: "Cancel" }).click();
 
     const { total } = await dataProvider.getList("kit_sync_operations", {
@@ -490,9 +494,7 @@ describe("adding the tags a decision requires", () => {
     const { dataProvider, element } = taylor();
     const screen = await render(element);
     await screen.getByRole("button", { name: "Add required tags" }).click();
-    await expect
-      .element(screen.getByText("Add required Kit tags?"))
-      .toBeVisible();
+    await expect.element(screen.getByText("Add 2 Kit tags?")).toBeVisible();
     await screen.getByRole("button", { name: "Add tags" }).click();
 
     await expect
@@ -524,6 +526,37 @@ describe("adding the tags a decision requires", () => {
     ]);
   });
 
+  it("closes the question and says the work is queued, so nobody clicks twice", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = taylor();
+    const screen = await render(element);
+    await screen.getByRole("button", { name: "Add required tags" }).click();
+    await expect.element(screen.getByText("Add 2 Kit tags?")).toBeVisible();
+    await screen.getByRole("button", { name: "Add tags" }).click();
+
+    // The lightbox goes.
+    await expect
+      .element(screen.getByText("Add 2 Kit tags?"))
+      .not.toBeInTheDocument();
+
+    // And the card no longer reads exactly as it did before the click.
+    await expect.element(screen.getByText("Kit: Syncing…")).toBeVisible();
+    await expect
+      .poll(() => document.body.textContent ?? "")
+      .toContain("2 tags queued");
+    const body = document.body.textContent ?? "";
+    expect(body).not.toContain("Kit: Manual — action needed");
+    expect(body).not.toContain("still to add");
+    // Nothing left to click twice.
+    await expect
+      .element(screen.getByRole("button", { name: "Add required tags" }))
+      .not.toBeInTheDocument();
+    // The one thing that stays available.
+    await expect
+      .element(screen.getByRole("button", { name: "Manage Kit tags" }))
+      .toBeVisible();
+  });
+
   it("does not ask when nothing being added can send an email", async () => {
     await page.viewport(1280, 1400);
     // Pending: the programme tag only, which has no automation attached.
@@ -534,9 +567,8 @@ describe("adding the tags a decision requires", () => {
     await expect
       .element(screen.getByText("MiniDD_Applicant queued for Kit."))
       .toBeVisible();
-    expect(document.body.textContent ?? "").not.toContain(
-      "Add required Kit tags?",
-    );
+    // No dialog of any size: the quiet case is still one click.
+    expect(document.body.textContent ?? "").not.toContain("Kit tag?");
 
     const { data } = await dataProvider.getList<KitSyncOperation>(
       "kit_sync_operations",
@@ -829,11 +861,9 @@ describe("the Dashboard's one Kit item", () => {
     await expect.element(screen.getByText("Manual Kit work")).toBeVisible();
     await screen.getByRole("button", { name: "Add required tags" }).click();
 
-    await expect
-      .element(screen.getByText(/Add required Kit tags for/))
-      .toBeVisible();
+    await expect.element(screen.getByText(/Add 2 Kit tags for/)).toBeVisible();
     expect(document.body.textContent ?? "").toContain(
-      "MiniDD_Approved is connected to one of your Kit email automations",
+      "MiniDD_Approved may trigger a Kit automation connected to that tag.",
     );
 
     const before = await dataProvider.getList<KitSyncOperation>(
@@ -859,9 +889,7 @@ describe("the Dashboard's one Kit item", () => {
       .getByRole("button", { name: /applicants? need(s)? attention/ })
       .click();
     await screen.getByRole("button", { name: "Add required tags" }).click();
-    await expect
-      .element(screen.getByText(/Add required Kit tags for/))
-      .toBeVisible();
+    await expect.element(screen.getByText(/Add 2 Kit tags for/)).toBeVisible();
     await screen.getByRole("button", { name: "Cancel" }).click();
 
     const { data } = await dataProvider.getList<KitSyncOperation>(
@@ -887,9 +915,7 @@ describe("the Dashboard's one Kit item", () => {
       .getByRole("button", { name: /applicants? need(s)? attention/ })
       .click();
     await screen.getByRole("button", { name: "Add required tags" }).click();
-    await expect
-      .element(screen.getByText(/Add required Kit tags for/))
-      .toBeVisible();
+    await expect.element(screen.getByText(/Add 2 Kit tags for/)).toBeVisible();
     await screen.getByRole("button", { name: "Add tags" }).click();
 
     await expect
@@ -908,6 +934,31 @@ describe("the Dashboard's one Kit item", () => {
           .join(",");
       })
       .toBe("MiniDD_Applicant,MiniDD_Approved");
+  });
+
+  it("closes the same lightbox and stops asking, from the Dashboard too", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = build({
+      route: "/",
+      applications: approvedAdoptedImport(),
+    });
+    const screen = await render(element);
+
+    await screen
+      .getByRole("button", { name: /applicants? need(s)? attention/ })
+      .click();
+    await screen.getByRole("button", { name: "Add required tags" }).click();
+    await expect.element(screen.getByText(/Add 2 Kit tags for/)).toBeVisible();
+    await screen.getByRole("button", { name: "Add tags" }).click();
+
+    // Same lightbox, same closing behaviour as the Application.
+    await expect
+      .element(screen.getByText(/Add 2 Kit tags for/))
+      .not.toBeInTheDocument();
+    // And the work is no longer asked for, because it is queued.
+    await expect
+      .element(screen.getByRole("button", { name: "Add required tags" }))
+      .not.toBeInTheDocument();
   });
 
   it("never lists an imported historical record as current work", async () => {

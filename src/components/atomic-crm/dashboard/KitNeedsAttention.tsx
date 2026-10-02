@@ -10,10 +10,8 @@ import {
 } from "@/components/ui/dialog";
 
 import { addKitTag } from "../applications/kitTagActions";
-import {
-  kitEventRisk,
-  kitRiskSentence,
-} from "../applications/kitAutomationRisk";
+import { kitEventRisk } from "../applications/kitAutomationRisk";
+import { ConfirmKitTagsDialog } from "../applications/ConfirmKitTagsDialog";
 import { retryKitSync } from "../applications/retryKitSync";
 import { KitWorkRow, KitWorkTags } from "./KitWorkRow";
 import { useKitWorkQueue, type KitManualRow } from "./useKitWorkQueue";
@@ -157,7 +155,10 @@ const KitWorkModal = ({
                       <Button
                         type="button"
                         size="sm"
-                        disabled={working === String(row.applicationId)}
+                        disabled={
+                          working === String(row.applicationId) ||
+                          confirming !== null
+                        }
                         onClick={() => {
                           if (riskyTags(row).length > 0) {
                             setConfirming(row);
@@ -172,53 +173,21 @@ const KitWorkModal = ({
                   />
                 ))}
               </ul>
-              {confirming && (
-                <section className="rounded-md border px-3 py-2 flex flex-col gap-2">
-                  <span className="text-sm">
-                    Add required Kit tags for {confirming.name}?
-                  </span>
-                  <ul className="text-xs text-muted-foreground flex flex-col gap-0.5">
-                    {missingTags(confirming).map((one) => (
-                      <li key={one.kitTagId}>• {one.kitTagName}</li>
-                    ))}
-                  </ul>
-                  {riskyTags(confirming).map((one) => (
-                    <span
-                      key={one.kitTagId}
-                      className="text-sm text-muted-foreground"
-                    >
-                      {kitRiskSentence("sends-email", one.kitTagName)}
-                    </span>
-                  ))}
-                  <span className="text-xs text-muted-foreground">
-                    Adding a Kit tag may trigger an automation connected to that
-                    tag.
-                  </span>
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setConfirming(null)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={working === String(confirming.applicationId)}
-                      onClick={() => {
-                        const row = confirming;
-                        setConfirming(null);
-                        void addRequired(row);
-                      }}
-                    >
-                      Add tags
-                    </Button>
-                  </div>
-                </section>
-              )}
             </section>
+          )}
+
+          {confirming && (
+            <ConfirmKitTagsDialog
+              tags={missingTags(confirming)}
+              personName={confirming.name}
+              busy={working === String(confirming.applicationId)}
+              onCancel={() => setConfirming(null)}
+              onConfirm={() => {
+                const row = confirming;
+                setConfirming(null);
+                void addRequired(row);
+              }}
+            />
           )}
 
           {problems.length > 0 && (
