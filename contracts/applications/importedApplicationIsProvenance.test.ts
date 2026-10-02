@@ -125,7 +125,12 @@ describe("an adopted import is manual Kit work, never automatic", () => {
   });
 
   test("the Dashboard queue uses the same rule", () => {
-    expect(QUEUE).toMatch(/crm_adopted_at != null/);
+    // Literally the same rule now: one exported predicate from kitStatus,
+    // imported here. It used to be a second copy written in a different shape
+    // (`source !== "historical_import"` against kitStatus's allow-list), and
+    // the two agreed only because those are the only sources that exist.
+    expect(QUEUE).toMatch(/isOperationalApplication/);
+    expect(QUEUE).not.toMatch(/crm_adopted_at != null/);
   });
 
   test("automatic mode still requires an automatic operation", () => {

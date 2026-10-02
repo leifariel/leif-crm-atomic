@@ -394,6 +394,97 @@ describe("what the confirmation is allowed to claim", () => {
   });
 });
 
+// Courtney Foregger, production application 181, approved by the owner in the
+// CRM on 2026-10-02. An imported record that already had its canonical
+// Opportunity from the import, so she was reviewable without ever being
+// adopted — and the Kit section vanished from her page entirely the moment
+// the decision landed.
+//
+// reviewed_at is the fact that settles it. reviewApplication writes it
+// alongside the outcome, so it is the only evidence of a decision made IN
+// this CRM: all 58 imported 'approved' rows carry a status with no timestamp,
+// and classifyApplication already treats that distinction as outranking
+// everything else. Kit asked a cruder question — provenance, or an explicit
+// adoption — and so called a person Leif had just decided on "history".
+describe("an imported application decided in the CRM", () => {
+  const courtney = () =>
+    preBoundary({
+      status: "approved" as ApplicationStatus,
+      source: "historical_import",
+      crm_adopted_at: null,
+      reviewed_at: "2026-10-02T19:37:27.530861+00:00",
+      intended_cohort_id: null,
+    });
+
+  it("is operational, because the decision was recorded here", () => {
+    const status = state({ application: courtney(), operations: [] });
+    expect(status.kind).toBe("manual-action");
+  });
+
+  it("owes the programme tag and the outcome tag, and no cohort tag", () => {
+    const status = state({ application: courtney(), operations: [] });
+    expect(status.required.map((tag) => tag.kitTagName)).toEqual([
+      LE_TAGS.applicant.name,
+      LE_TAGS.approved.name,
+    ]);
+    expect(status.required.every((tag) => !tag.done)).toBe(true);
+  });
+
+  it("still leaves an imported decision that was NOT made here as history", () => {
+    // The 58 archive rows: a real decision, made outside this system, with no
+    // timestamp. Promoting these would ask Leif to tag his own back catalogue.
+    const status = state({
+      application: preBoundary({
+        status: "approved" as ApplicationStatus,
+        source: "historical_import",
+        crm_adopted_at: null,
+        reviewed_at: null,
+      }),
+      operations: [],
+    });
+    expect(status.kind).toBe("historical");
+  });
+
+  it("still leaves an undecided, unadopted import as history", () => {
+    const status = state({
+      application: preBoundary({
+        status: "pending" as ApplicationStatus,
+        source: "historical_import",
+        crm_adopted_at: null,
+        reviewed_at: null,
+      }),
+      operations: [],
+    });
+    expect(status.kind).toBe("historical");
+  });
+
+  it("treats an application the owner entered herself as operational", () => {
+    const status = state({
+      application: preBoundary({
+        status: "pending" as ApplicationStatus,
+        source: "manual",
+        crm_adopted_at: null,
+        reviewed_at: null,
+      }),
+      operations: [],
+    });
+    expect(status.kind).toBe("manual-action");
+  });
+
+  it("keeps Do Not Engage out of Kit even when decided here", () => {
+    const status = state({
+      application: preBoundary({
+        status: "do_not_engage" as ApplicationStatus,
+        source: "historical_import",
+        crm_adopted_at: null,
+        reviewed_at: "2026-10-02T19:37:27.530861+00:00",
+      }),
+      operations: [],
+    });
+    expect(status.kind).toBe("not-used");
+  });
+});
+
 describe("Kit is not involved at all", () => {
   it("says the automation is not configured when the programme has no tags", () => {
     const status = state({

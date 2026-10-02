@@ -2923,6 +2923,71 @@ all four remaining queue entries are applicant-only, Leif tags them routinely,
 and a confirmation there would be friction with no safety to buy. Only an
 outcome tag (`approved`, `not_fit`) opens the lightbox.
 
+## 8b-kit-operational. PROVENANCE IS NOT LIFECYCLE, FOR KIT TOO — 2026-10-02
+
+**Courtney Foregger (application 181) was approved in production and her Kit
+section vanished instead of appearing.** Not a presentation bug: a domain
+classification bug, and both surfaces were wrong together.
+
+Her row: `source = historical_import`, `crm_adopted_at = NULL`,
+`opportunity_id = 218` (created by the import, same microsecond as the
+Application), `status = approved`, `reviewed_at = 2026-10-02T19:37:27Z`,
+`intended_cohort_id = NULL`, zero Kit operations. The approval itself is
+transactionally correct — deal 218 `approved`, review Task 226 completed at
+exactly `reviewed_at`.
+
+She was reviewable without ever being adopted, because the import had already
+given her a canonical Opportunity. Taylor needed `crm_adopted_at` only
+because she had none.
+
+### The first predicate where she diverged
+
+```
+operational = TERMINAL_SOURCES.includes(source) || crm_adopted_at != null
+```
+
+`historical_import` is not in `["public_form","manual"]`, and
+`crm_adopted_at` is null — so `operational = false`, `kitStatus` returned
+`historical`, and `KitStatusLine` returns `null` for `historical`. The
+whole section, both buttons included, simply was not rendered.
+`useKitWorkQueue` held a SECOND copy of the rule in a different shape
+(`source !== "historical_import"`), so the Dashboard excluded her too.
+
+**The CRM already knew better.** `classifyApplication.ts` rule 1 is
+*"A real decision was recorded here. Nothing else can outrank that"* —
+`reviewed_at` is written only by `review_application()`, so it is the sole
+evidence of a decision made IN this CRM. All 58 imported `approved` rows
+carry a status with **no** timestamp, and types.ts is explicit that a decided
+status with no timestamp is valid history, never "not reviewed". The
+Applications inbox used that; Kit asked the cruder question. Two notions of
+"current", and Courtney was the first person to be decided here without having
+been adopted, so she was the first to fall through.
+
+### The repair
+
+`isOperationalApplication` now lives in `kitStatus.ts`, is exported, and is
+the only copy — `useKitWorkQueue` imports it instead of restating it. Three
+separate kinds of evidence: the CRM's own funnel (`public_form`/`manual`),
+an explicit adoption (`crm_adopted_at`), or **a decision recorded here**
+(`reviewed_at`). Provenance alone decides currentness in neither direction.
+
+**Measured blast radius on production: exactly two rows** — application 181
+(Courtney) and application 107 (**Anu Nandyala, approved in the CRM on
+2026-09-25**, invisible to Kit for a week before Courtney exposed the same
+bug). The manual queue goes 4 → 6. All 58 archive approvals stay out, because
+their decisions carry no timestamp. Nothing else moves.
+
+Courtney owes `GYU-Applicant` + `GYU-Approved` and no cohort tag, because
+`intended_cohort_id` is null.
+
+### Worth knowing
+
+Courtney has **two** completed `review_application` Tasks (161, completed
+2026-09-19 during the import era; 226, completed by the real decision today).
+`review_application` closes the oldest OPEN one, so it closed 226 correctly.
+Why the import left a completed review Task behind is unexamined and is not
+this slice.
+
 ## 8b-builder. APPLICATION FORM BUILDER — PARKED
 
 Still **uncommitted**, parked in a stash while the three commits above were

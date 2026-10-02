@@ -101,6 +101,36 @@ const KIT_DECISIONS = ["approved", "needs_higher_care", "not_fit"] as const;
 
 const TERMINAL_SOURCES = ["public_form", "manual"];
 
+// Is this Application current operational work at all — the one answer both
+// the Application page and the Dashboard queue use.
+//
+// Three kinds of evidence, and they are deliberately separate clauses:
+//
+//   public_form / manual   the record was created in this CRM's own funnel.
+//   crm_adopted_at         the owner explicitly brought an imported record in.
+//   reviewed_at            a decision was RECORDED HERE. review_application
+//                          writes it alongside the outcome, so it is the only
+//                          evidence of a review made in this system: all 58
+//                          imported 'approved' rows carry a status with no
+//                          timestamp, and types.ts is explicit that a decided
+//                          status with no timestamp is valid history, never
+//                          "not reviewed". classifyApplication already lets
+//                          this outrank everything else; Kit was asking the
+//                          cruder question and so called somebody the owner
+//                          had just decided on "history".
+//
+// Provenance alone therefore never decides currentness, in either direction.
+// Courtney Foregger (application 181) is the case that proved it: imported,
+// never adopted because the import had already given her a canonical
+// Opportunity, reviewable all along, approved on 2026-10-02 — and her Kit
+// section disappeared at the moment of the decision.
+export const isOperationalApplication = (
+  application: Pick<Application, "source" | "crm_adopted_at" | "reviewed_at">,
+): boolean =>
+  TERMINAL_SOURCES.includes(application.source) ||
+  application.crm_adopted_at != null ||
+  application.reviewed_at != null;
+
 const outstanding = (operation: KitSyncOperation) =>
   operation.status === "pending" || operation.status === "processing";
 
@@ -114,6 +144,7 @@ type StatusInput = {
     | "created_at"
     | "offer_id"
     | "crm_adopted_at"
+    | "reviewed_at"
   > & { intended_cohort_id?: number | string | null };
   // Every operation that could speak about this application: its own automatic
   // rows, plus this person's manual rows.
@@ -253,10 +284,7 @@ export const kitStatus = ({
   // current as a live one, and owes the same tags. It reaches manual mode
   // below rather than automatic: its receipt was never Kit-managed, so no
   // automatic operation exists and none is invented.
-  const operational =
-    TERMINAL_SOURCES.includes(application.source) ||
-    application.crm_adopted_at != null;
-  if (!operational) return say("historical");
+  if (!isOperationalApplication(application)) return say("historical");
 
   // Automatic: the application is Kit-managed exactly when the integration
   // created work for it.

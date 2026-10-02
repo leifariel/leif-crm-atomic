@@ -373,10 +373,10 @@ describe('one shared answer to "is Kit handling this?"', () => {
     // import nobody adopted is historical, and the page shows nothing for it.
     // 99 old questionnaires must never appear in a Kit queue.
     expect(code(STATUS)).toMatch(
-      /TERMINAL_SOURCES\.includes\(application\.source\) \|\|\s*application\.crm_adopted_at != null/,
+      /export const isOperationalApplication[\s\S]*TERMINAL_SOURCES\.includes\(application\.source\)/,
     );
     expect(code(STATUS)).toMatch(
-      /if \(!operational\) return say\("historical"\)/,
+      /if \(!isOperationalApplication\(application\)\) return say\("historical"\)/,
     );
     expect(code(STATUS)).toMatch(
       /TERMINAL_SOURCES = \["public_form", "manual"\]/,
@@ -387,11 +387,24 @@ describe('one shared answer to "is Kit handling this?"', () => {
 
   test("only an explicit owner act can make an import operational", () => {
     // Never a date, never a cohort being open, never the mere existence of an
-    // Opportunity — four already-approved January imports have one and must
-    // stay out of today's queues. One column, written by one authority.
+    // Opportunity — 83 imports have one, and the already-approved ones among
+    // them must stay out of today's queues.
+    //
+    // Two acts in this CRM can make an import operational, and both are the
+    // owner's: explicitly adopting it, or RECORDING A DECISION on it.
+    // reviewed_at is written only by review_application, so it cannot be
+    // forged by provenance — all 58 imported 'approved' rows carry a status
+    // with no timestamp and stay historical. Courtney Foregger (application
+    // 181) was approved here without ever being adopted, because the import
+    // had already given her a canonical Opportunity, and the old one-column
+    // rule erased her Kit section at the moment of the decision.
     expect(code(STATUS)).toMatch(/application\.crm_adopted_at != null/);
-    expect(code(QUEUE)).toMatch(/crm_adopted_at != null/);
+    expect(code(STATUS)).toMatch(/application\.reviewed_at != null/);
     expect(code(STATUS)).not.toMatch(/opportunity_id/);
+    // And exactly ONE copy of the rule. The queue used to restate it in a
+    // different shape; duplication is now the thing forbidden, not required.
+    expect(code(QUEUE)).toMatch(/isOperationalApplication/);
+    expect(code(QUEUE)).not.toMatch(/crm_adopted_at != null/);
   });
 
   test("a decided application is not Tagged until its outcome tag has landed", () => {

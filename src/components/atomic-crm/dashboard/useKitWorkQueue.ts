@@ -1,6 +1,10 @@
 import { useGetList, useGetMany } from "ra-core";
 
-import { kitStatus, type KitRequiredTag } from "../applications/kitStatus";
+import {
+  isOperationalApplication,
+  kitStatus,
+  type KitRequiredTag,
+} from "../applications/kitStatus";
 import type {
   Application,
   Cohort,
@@ -49,18 +53,11 @@ export type KitWorkQueue = {
 
 const TERMINAL = ["completed", "withdrawn", "ended"];
 
-// Whether this Application is current operational work at all.
-//
-// An imported record is finished history and has no Kit work — unless the
-// owner deliberately brought it into the CRM, which is the one thing that can
-// make provenance stop deciding currentness. Same rule kitStatus applies, so
-// the Dashboard and the Application page cannot disagree about who is owed a
-// tag.
-const isOperationalApplication = (
-  application: Pick<Application, "source" | "crm_adopted_at">,
-): boolean =>
-  application.source !== "historical_import" ||
-  application.crm_adopted_at != null;
+// Whether this Application is current operational work at all — imported from
+// kitStatus rather than restated here. This was a second copy of the rule,
+// written in a different shape (`source !== "historical_import"` against
+// kitStatus's allow-list), and the two agreed only because those are the only
+// three sources that exist. One answer, one place.
 
 export const useKitWorkQueue = (): KitWorkQueue => {
   const { data: applications, isPending: loadingApplications } =

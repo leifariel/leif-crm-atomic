@@ -87,6 +87,7 @@ const build = ({
   source = "public_form",
   createdAt = PRE,
   adoptedAt = null as string | null,
+  reviewedAt = null as string | null,
   operations = [] as Partial<KitSyncOperation>[],
   eligibility = "normal",
   applications,
@@ -97,6 +98,7 @@ const build = ({
   source?: string;
   createdAt?: string;
   adoptedAt?: string | null;
+  reviewedAt?: string | null;
   operations?: Partial<KitSyncOperation>[];
   eligibility?: string;
   applications?: unknown[];
@@ -142,7 +144,7 @@ const build = ({
           crm_adopted_at: adoptedAt,
           raw_answers: {},
           submitted_at: createdAt,
-          reviewed_at: null,
+          reviewed_at: reviewedAt,
           created_at: createdAt,
           updated_at: createdAt,
         } as unknown as Application,
@@ -579,6 +581,88 @@ describe("adding the tags a decision requires", () => {
       },
     );
     expect(data).toHaveLength(1);
+  });
+});
+
+// Courtney Foregger's shape: production application 181. Imported, never
+// adopted — the import had already given her a canonical Opportunity, so she
+// was reviewable without one — and approved in the CRM on 2026-10-02. The
+// decision made her Kit section disappear instead of appear.
+describe("an imported application the owner decided here", () => {
+  const courtney = () =>
+    build({
+      status: "approved",
+      source: "historical_import",
+      adoptedAt: null,
+      reviewedAt: "2026-10-02T19:37:27.530861+00:00",
+      createdAt: PRE,
+    });
+
+  it("shows the Kit work on the page where the decision was made", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = courtney();
+    const screen = await render(element);
+
+    await expect
+      .element(screen.getByText("Kit: Manual — action needed"))
+      .toBeVisible();
+    await expect
+      .poll(() => document.body.textContent ?? "")
+      .toContain("MiniDD_Approved");
+    expect(document.body.textContent ?? "").toContain("MiniDD_Applicant");
+    await expect
+      .element(screen.getByRole("button", { name: "Add required tags" }))
+      .toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Manage Kit tags" }))
+      .toBeVisible();
+  });
+
+  it("is counted in the Dashboard's one Kit row, from the same derivation", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = build({
+      route: "/",
+      status: "approved",
+      source: "historical_import",
+      adoptedAt: null,
+      reviewedAt: "2026-10-02T19:37:27.530861+00:00",
+      createdAt: PRE,
+    });
+    const screen = await render(element);
+
+    await expect
+      .element(
+        screen.getByRole("button", { name: /applicants? need(s)? attention/ }),
+      )
+      .toBeVisible();
+    await screen
+      .getByRole("button", { name: /applicants? need(s)? attention/ })
+      .click();
+    await expect.element(screen.getByText("Manual Kit work")).toBeVisible();
+    const body = document.body.textContent ?? "";
+    expect(body).toContain("MiniDD_Applicant");
+    expect(body).toContain("MiniDD_Approved");
+  });
+
+  it("leaves an imported decision made OUTSIDE the CRM off both surfaces", async () => {
+    await page.viewport(1280, 1400);
+    // Same row, except the decision carries no timestamp: one of the 58
+    // archive approvals. Asking Leif to tag his own back catalogue is the
+    // thing this must never start doing.
+    const { element } = build({
+      route: "/",
+      status: "approved",
+      source: "historical_import",
+      adoptedAt: null,
+      reviewedAt: null,
+      createdAt: PRE,
+    });
+    const screen = await render(element);
+
+    await expect.element(screen.getByText("Dashboard")).toBeVisible();
+    expect(document.body.textContent ?? "").not.toContain(
+      "applicants need attention",
+    );
   });
 });
 
