@@ -129,6 +129,33 @@ const callsTo = (name: string, body: string): string[] => {
   return calls;
 };
 
+describe("the other way to lose a queued write", () => {
+  // Variant 1 is a plain notify() over a queued mutation: the toast pops it
+  // and discards it. Variant 2 is raising NO notification, which leaves the
+  // mutation in the queue, never sent. The sweep below catches variant 1 by
+  // reading every notify; variant 2 is a PATH through an onSuccess and no
+  // static rule can see it honestly, so the one place it was found is
+  // pinned here by name.
+  test("reopening a Task asks the database rather than queueing", () => {
+    const body = code(read("src/components/atomic-crm/tasks/Task.tsx"));
+    expect(body).toMatch(
+      /mutationMode: completing \? "undoable" : "pessimistic"/,
+    );
+  });
+
+  test("and why, so it is not flattened back for consistency", () => {
+    const source = read("src/components/atomic-crm/tasks/Task.tsx");
+    expect(source).toMatch(/UndoableMutationsContextProvider/);
+    // Wrapped across lines by the formatter, so the assertion reads the
+    // words rather than the line.
+    expect(source.replace(/\s*\/\/\s*/g, " ")).toMatch(/was never sent/);
+    // The regression that proves both halves lives next to the component.
+    expect(() =>
+      read("src/components/atomic-crm/tasks/reopeningATaskIsSent.test.tsx"),
+    ).not.toThrow();
+  });
+});
+
 describe("no other form is built the way this one was", () => {
   test("an undoable edit never raises a toast that is not undoable", () => {
     const offenders: string[] = [];

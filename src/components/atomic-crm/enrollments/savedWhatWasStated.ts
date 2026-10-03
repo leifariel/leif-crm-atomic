@@ -1,3 +1,5 @@
+import type { Identifier } from "ra-core";
+
 import type { Enrollment } from "../types";
 
 // Whether a save actually saved what Leif said.
@@ -65,6 +67,10 @@ export type SaveMismatch = {
 
 export type SaveVerdict =
   | { kind: "saved" }
+  // The record that came back is not the record that was being edited.
+  // Its own outcome, because a value check cannot catch it: the right date
+  // on the wrong person reads as a perfect save.
+  | { kind: "wrong-record"; intended: string; saved: string | null }
   // The write was accepted and the record still does not say what Leif
   // said. Not an error — nothing failed — which is precisely why it needs
   // its own outcome rather than being folded into either success or
@@ -81,14 +87,31 @@ export type SaveVerdict =
 export const assessEnrollmentSave = ({
   stated,
   saved,
+  intendedId,
 }: {
   stated: Partial<Enrollment>;
   saved: Partial<Enrollment> | null | undefined;
+  // The Enrollment the modal was opened on. Checked first, because the
+  // right date on the wrong client is the one failure a value comparison
+  // reads as a perfect save.
+  intendedId?: Identifier | null;
 }): SaveVerdict => {
   // No record came back at all. The provider may legitimately not return
   // one, and in that case there is nothing to verify — so this stays a
   // success rather than inventing a failure the CRM cannot see.
   if (saved == null) return { kind: "saved" };
+
+  if (
+    intendedId != null &&
+    saved.id != null &&
+    String(saved.id) !== String(intendedId)
+  ) {
+    return {
+      kind: "wrong-record",
+      intended: String(intendedId),
+      saved: String(saved.id),
+    };
+  }
 
   const mismatches = FIELDS.filter((field) => field in stated)
     .map((field) => ({
@@ -113,6 +136,11 @@ const LABELS: Record<CheckedField, string> = {
 
 export const saveOutcomeMessage = (verdict: SaveVerdict): string => {
   if (verdict.kind === "saved") return "Client updated";
+  if (verdict.kind === "wrong-record") {
+    // Deliberately not "record 41 came back instead of 7". Leif cannot act
+    // on that, and the only safe thing to tell him is not to trust it.
+    return "Not saved — the CRM got an answer about a different client. Reload before trusting this page, and tell Natasha.";
+  }
   const named = verdict.mismatches
     .map((mismatch) => {
       const label = LABELS[mismatch.field];

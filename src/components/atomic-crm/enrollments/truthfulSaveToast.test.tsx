@@ -52,8 +52,14 @@ const asked: { resource: string; data: Partial<Enrollment> }[] = [];
 const buildCrm = ({
   startDate = null,
   lie,
+  rejectWith,
   route = "/enrollments/7/show",
-}: { startDate?: string | null; lie?: Lie; route?: string } = {}) => {
+}: {
+  startDate?: string | null;
+  lie?: Lie;
+  rejectWith?: string;
+  route?: string;
+} = {}) => {
   const base = createDataProvider({
     db: createCrmDb({
       contacts: [
@@ -103,6 +109,9 @@ const buildCrm = ({
     ...base,
     update: async (resource: string, params: { data: unknown }) => {
       asked.push({ resource, data: params.data as Partial<Enrollment> });
+      if (rejectWith && resource === "enrollments") {
+        throw new Error(rejectWith);
+      }
       const result = await base.update(resource, params as never);
       return lie && resource === "enrollments"
         ? { data: lie(result.data as Partial<Enrollment>) }
@@ -268,6 +277,52 @@ describe("a write that is accepted and does not persist", () => {
     await expect
       .element(screen.getByText("saved as 2026-11-02", { exact: false }))
       .toBeVisible();
+  });
+});
+
+describe("a write the database refuses", () => {
+  it("does not claim the client was updated", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm({ rejectWith: "permission denied" });
+    const screen = await render(element);
+
+    await openEditor(screen);
+    await startWeekField(screen).fill("2026-11-09");
+    await screen.getByRole("button", { name: "Save" }).click();
+
+    // ra-core's own error path handles the message; what matters here is
+    // that the success sentence is nowhere on screen.
+    await expect.element(screen.getByRole("dialog")).toBeVisible();
+    expect(document.body.textContent ?? "").not.toContain("Client updated");
+  });
+});
+
+describe("a saved record about a different client", () => {
+  it("is never reported as a save", async () => {
+    // The one failure a value comparison reads as perfect: every field
+    // matches and it is somebody else's row.
+    //
+    // Measured here, ra-core refuses it BEFORE this modal's own check ever
+    // runs — useEditController throws "Fetched record's id attribute
+    // (4242) must match the requested 'id' (7)" into the error boundary.
+    // So this asserts the outcome that matters rather than this file's own
+    // wording, and assessEnrollmentSave's identity check (unit-tested in
+    // savedWhatWasStated.test.ts) stays as the second lock on a path where
+    // ra-core does not look.
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm({
+      lie: (saved) => ({ ...saved, id: 4242 }),
+    });
+    const screen = await render(element);
+
+    await openEditor(screen);
+    await startWeekField(screen).fill("2026-11-09");
+    await screen.getByRole("button", { name: "Save" }).click();
+
+    await expect
+      .element(screen.getByText("Save", { exact: false }).first())
+      .toBeVisible();
+    expect(document.body.textContent ?? "").not.toContain("Client updated");
   });
 });
 

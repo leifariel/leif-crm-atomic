@@ -121,6 +121,59 @@ describe("deciding whether a save happened", () => {
   });
 });
 
+describe("the record has to be the right record", () => {
+  test("the right date on the wrong client is not a save", () => {
+    // The one failure a value comparison reads as perfect: every field
+    // matches, and it is somebody else's row.
+    const verdict = assessEnrollmentSave({
+      stated: { start_date: "2026-11-09" },
+      saved: { id: 41, start_date: "2026-11-09" },
+      intendedId: 7,
+    });
+    expect(verdict).toEqual({
+      kind: "wrong-record",
+      intended: "7",
+      saved: "41",
+    });
+    expect(saveOutcomeMessage(verdict)).toContain(
+      "an answer about a different client",
+    );
+  });
+
+  test("the right client is a save, whichever way the id is typed", () => {
+    // PostgREST returns a number, the route gives a string. A save must not
+    // be reported as a failure over that.
+    expect(
+      assessEnrollmentSave({
+        stated: { start_date: "2026-11-09" },
+        saved: { id: 7, start_date: "2026-11-09" },
+        intendedId: "7",
+      }),
+    ).toEqual({ kind: "saved" });
+  });
+
+  test("a record with no id is judged on its values alone", () => {
+    // Nothing to check identity against is not evidence of a wrong record,
+    // and inventing a failure here would be the same sin in reverse.
+    expect(
+      assessEnrollmentSave({
+        stated: { start_date: "2026-11-09" },
+        saved: { start_date: "2026-11-09" },
+        intendedId: 7,
+      }),
+    ).toEqual({ kind: "saved" });
+  });
+
+  test("identity is checked before values, so it is never masked", () => {
+    const verdict = assessEnrollmentSave({
+      stated: { start_date: "2026-11-09" },
+      saved: { id: 41, start_date: null },
+      intendedId: 7,
+    });
+    expect(verdict.kind).toBe("wrong-record");
+  });
+});
+
 describe("what Leif reads", () => {
   test("a save says so plainly", () => {
     expect(saveOutcomeMessage({ kind: "saved" })).toBe("Client updated");

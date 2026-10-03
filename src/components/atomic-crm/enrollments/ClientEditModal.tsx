@@ -112,6 +112,7 @@ export const ClientEditModal = ({
               const verdict = assessEnrollmentSave({
                 stated: stated.current ?? {},
                 saved,
+                intendedId: enrollmentId,
               });
               const message = saveOutcomeMessage(verdict);
               if (verdict.kind === "saved") {
