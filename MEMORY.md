@@ -50,3 +50,50 @@ Audited and approved 2026-09; not yet implemented. Preserve these decisions acro
 - **Retention:** 12 months post-inactivity is the current product direction for raw message content, but no destructive deletion automation until a later privacy/hardening slice — Phase 1 only needs a schema field capable of tracking inactivity (e.g. `last_activity_at`), not the deletion logic itself.
 - **Phase 1 scope (ingestion only):** Meta app/Instagram Login connection, webhook endpoint + signature verification (same HMAC-SHA256 pattern as `acuitySignature.ts`), the three new tables, stable-identity handling, inbound/outbound/`is_echo` capture, Meta-message-ID idempotency, a minimal read-only proof surface. Explicitly NOT in Phase 1: AI classification, any Contact/Opportunity/Application/Waitlist mutation, collaboration automation, outbound CRM sending, capacity recommendations, an inbox UI.
 - **Meta platform facts to build against** (official docs, 2026-09): Instagram API *with Instagram Login* (not Facebook Login) needs no linked Facebook Page; for a single business managing only its own account under Standard Access, official Meta docs state App Review is "Not required"; Conversations API can only retrieve the 20 most recent messages per conversation (no real history backfill — must capture going forward via webhook, there is no later fallback); the 24-hour standard messaging window and 7-day Human Agent tag extension apply to Instagram, not just Messenger.
+
+## Start week, capacity, and two framework traps — 2026-10-03
+
+- **"Not knowing cannot free capacity" was wrong, and it was ours.** The
+  occupancy model deliberately counted a commitment with no start week as
+  occupying a slot from today — a conservative floor, so openings could never
+  over-promise. Todd Jacobsen made a twelve-client programme read **13 / 12**:
+  a number true of nobody. And because an active count above the ceiling
+  leaves nothing to offer, the floor also **erased a genuinely open week**.
+  Protecting the number was concealing the answer. The trade is now taken the
+  other way: openings can be too generous, and every unplaced commitment is
+  named on both the openings view and the client's own page. The reasoning
+  for the reversal lives in the code that implements it, because the old
+  reasoning was also written down and was also sincere.
+- **Capacity and the Clients list are allowed to disagree about exactly one
+  row.** "Is this a current client?" and "is this consuming a dated slot?"
+  are different questions, and for a commitment with no week the honest
+  answers differ. The contract that used to assert they always agree now
+  records the exception. Forcing them back into one answer is what produced
+  13 / 12.
+- **A success toast is a claim about the database.** Leif set Todd's start
+  week and read "Client updated" over a write that was never sent. `EditBase`
+  defaults to `mutationMode="undoable"`: ra-core QUEUES the real update for
+  whichever notification comes next, and `notification.tsx` pops it with
+  `takeMutation()` then runs it only `if (undoable)`. A plain `notify()`
+  therefore **takes the pending write off the queue and throws it away**. Not
+  delayed — gone. `TaskEdit` is built identically and survives only because
+  its notify happens to pass `undoable: true`. Rule: an edit form either asks
+  the database first, or every toast it raises declares itself undoable.
+- **The repair is to earn the sentence, not just fix the write.** Success is
+  now decided by reading the returned record and finding the owner's
+  statement in it — with dates compared by day, because crying wolf on every
+  save would be the same sin in the other direction.
+- **A once-a-fortnight CI failure was not flaky, it was the wrong record.**
+  Three capacity assertions failed together because the page had rendered a
+  DIFFERENT test file's Offer 1 — a group programme with no ceiling — restored
+  from `localStorage` by the mobile `PersistQueryClientProvider` and served by
+  `networkMode: "offlineFirst"` without ever asking the provider. Vitest
+  browser mode shares one origin across every file. The diagnostic that
+  cracked it was dumping the **rendered text**: the programme's own name was
+  the fingerprint. Booleans could not tell "slow page" from "wrong page";
+  the text could.
+- **Where a bug can live decides where the proof has to run.** Neither trap
+  is reachable from Postgres. Both live in the browser, between the form and
+  the provider. A real-database journey would have replayed the migration,
+  found the column writable, and reported green over a CRM that could not
+  save a start week.

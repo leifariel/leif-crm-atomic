@@ -403,6 +403,52 @@ checklist used to mean three different things and no longer does. Lifecycle:
 onboarding → active → offboarding → completed. **Won is a sales fact and is
 never gated on payment.**
 
+### Start week and capacity — SETTLED 2026-10-03
+
+Six rules. They are one domain rule stated six ways, because every page that
+guessed at its own version of it produced a different number from the same
+rows.
+
+**A. A start week is Leif's decision, and only his.** Nothing infers one —
+not an onboarding date, a Won date, a payment, or a booked session. Saving
+the edit modal IS the owner statement, which is what promotes it to
+`start_date_source = 'owner'`. Clearing it returns the Enrollment to having
+no week and no source, the only honest way to say "not decided yet".
+
+**B. No start week means no dated capacity consumption.** A commitment with
+no week consumes neither an active slot nor a dated one, because there is no
+date at which it could consume one. [slotOccupancy.ts](src/components/atomic-crm/capacity/slotOccupancy.ts)
+calls that phase `unscheduled`.
+
+**C. This reverses an earlier deliberate choice, and the reversal is the
+point.** The old rule counted an unplaced commitment as occupying today — a
+conservative floor, so openings could never over-promise. Todd Jacobsen made
+a twelve-client programme read **13 / 12**, a number true of nobody, and
+because an active count above the ceiling leaves nothing to offer it also
+erased a genuinely open week. The floor was protecting a number at the cost
+of concealing the answer.
+
+**D. So openings may now be too generous, and the risk is carried in the
+open.** Every commitment with no week is NAMED — `capacity.missingStartWeek`,
+rendered by [UpcomingOpeningsSection](src/components/atomic-crm/programs/UpcomingOpeningsSection.tsx)
+and by [StartWeekCard](src/components/atomic-crm/enrollments/StartWeekCard.tsx)
+on the client's own page. Both used to say the opposite ("they hold a place,
+so these numbers are a minimum") and now say what is true. If that copy ever
+disagrees with the rule again, the copy is the bug.
+
+**E. Capacity and the Clients list answer DIFFERENT questions, and for one
+row they honestly differ.** `classifyEnrollment` answers "is this a current
+client?" — a commitment with no week is live work, so yes. `slotPhaseOf`
+answers "is this consuming a dated slot?" — no. Folding the two back together
+is what produced 13 / 12.
+[oneSourceOfTruth.test.ts](src/components/atomic-crm/capacity/oneSourceOfTruth.test.ts)
+records the exception rather than asserting the two must always agree.
+
+**F. One rule, one module, every reader.** `slotPhaseOf` has exactly one
+production caller (`computeIndividualCapacity`), and the dashboard card,
+the programme page and the openings ledger all derive from it. There is no
+page-specific capacity arithmetic anywhere, and adding one is the regression.
+
 ### Payment / Stripe
 Payment is a separate dimension from sales truth.
 [paymentTruth.ts](src/components/atomic-crm/deals/paymentTruth.ts) is the single
@@ -3027,6 +3073,89 @@ start-week / capacity UX, and the Kit integration. And when Applications are
 eventually called finished,
 **the Kit requirement above is part of that judgement** — a form Leif can edit
 does not complete Applications on its own.
+
+## 8b-stabilize. TWO FRAMEWORK TRAPS, FOUND BY ONE MISSING START WEEK — 2026-10-03
+
+Leif set Todd Jacobsen's start week. The CRM said **"Client updated"**. The
+week was not there afterwards. Everything at the database layer came back
+clean, repeatedly, because nothing at the database layer was wrong.
+
+### The write was never sent
+
+`EditBase` defaults to **`mutationMode="undoable"`**. In that mode ra-core
+patches its own cache, calls `onSuccess` with the OPTIMISTIC record, and
+QUEUES the real `dataProvider.update` to be run by whichever notification is
+raised next. [notification.tsx](src/components/admin/notification.tsx) pops
+that queued write with `takeMutation()` and then runs it only `if (undoable)`.
+
+`ClientEditModal`'s `onSuccess` raised a plain `notify("Client updated")`. So
+the queued write was taken off the queue by a toast that did not know it was
+holding one, and **discarded**. Not delayed — gone. Proven directly:
+`dataProvider.update` was never called, not after nine seconds, and the record
+still read null.
+
+**The invariant:** an edit form either asks the database first
+(`mutationMode="pessimistic"`) or every `notify` it raises declares
+`undoable: true`. Nothing in between is safe. `TaskEdit` has the identical
+construction and survives *only* because its notify happens to pass
+`undoable: true` — a trap, not a pattern, which is why
+[aSaveIsNotAClaim.test.ts](contracts/enrollments/aSaveIsNotAClaim.test.ts)
+sweeps **every** edit form in the app for it. Verified sensitive: with the fix
+removed it flags exactly `ClientEditModal`.
+
+### A success message is a claim about the database
+
+The missing write is one bug. The sentence is the worse one, because it is
+what sent Leif away believing the decision was recorded — and it would have
+said the same about any field, in any form, for any reason a write did not
+take.
+
+[savedWhatWasStated.ts](src/components/atomic-crm/enrollments/savedWhatWasStated.ts)
+reads the record that came back and looks for Leif's statement in it. Absent,
+the CRM says so, names the field and the real outcome in his words, stays
+open, and does not auto-dismiss. Dates compare **by day**, so a value that
+round-tripped through a different shape is still a save — crying wolf on every
+save would be the same sin in the other direction.
+
+### The fortnightly CI failure was the wrong offer
+
+`IndividualProgramPage.capacity` lost three assertions at a time in CI while
+passing 10/10 alone. It read like a slow page, because that page renders
+`null` while loading, so a slow query and a wrong answer look identical.
+
+It was a wrong answer. The page said **"Growing Yourself Up"** and
+"12 active" with no "/ 12" — a group programme, which has no
+`max_active_clients`, so there was no ceiling, no availability line and no
+openings it could calculate. Three failures, one record.
+
+On a mobile-width viewport `CRM.tsx` renders `MobileAdmin`, which wraps Admin
+in a `PersistQueryClientProvider` backed by **localStorage** (`gcTime` 24h,
+`networkMode: "offlineFirst"`). Vitest browser mode runs every file in ONE
+browser context on one origin, so that cache is shared by all of them and
+nothing cleared it. An earlier file left its own Offer 1 under
+`REACT_QUERY_OFFLINE_CACHE`, and "offlineFirst" answered
+`useGetOne("offers", { id: 1 })` from it without ever asking the provider.
+
+Repaired at the cause: [isolateBrowserStorage.ts](src/test/isolateBrowserStorage.ts),
+wired as the app project's `setupFiles`, gives every browser test empty
+storage. No timeout raised, no assertion weakened, no retry added, no
+production path touched. The previously-failing selection now runs 8/8 green,
+having failed 3 times in 11 attempts before.
+
+**Carried forward, not repaired:** that persisted cache is real in
+production too. A mobile user holds a 24h `offlineFirst` cache, so a stale
+Offer can render after it changes, until revalidation lands. That is the
+intended offline-first design and is listed here only so nobody rediscovers
+it as a bug.
+
+### What this says about proving things in Postgres
+
+Neither trap is reachable from the database. Both live in the browser,
+between the form and the provider — one in ra-core's mutation queue, one in a
+persisted query cache. A real-Postgres journey would have replayed the
+migration, found the column writable, and reported green over a CRM that
+could not save a start week. **Where a bug can live decides where the proof
+has to run.**
 
 ## 8b-schema. DECLARATIVE SCHEMA DEBT — MEASURED, RECORDED, NOT REPAIRED
 
