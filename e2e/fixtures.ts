@@ -7,31 +7,151 @@ const adminSupabase = createClient(
   { auth: { autoRefreshToken: false, persistSession: false } },
 );
 
-// Tables in FK-safe deletion order (children before parents)
+// Tables in FK-safe deletion order (children before parents).
+//
+// This list used to stop at the ten tables the CRM had when it was written,
+// and the deletes were fired without checking their errors. Everything
+// added since — Enrollments, Applications, the waiting list, sales calls,
+// client sessions, the deal event tables — referenced `contacts` or
+// `deals` and was never cleared, so from `contacts` onward every delete
+// silently failed whenever one of those specs had run.
+//
+// The consequence was not a dirty database. It was undeletable USERS:
+// `sales` could not be deleted while `contacts` referenced it, and
+// `auth.users` could not be deleted while `sales` referenced it —
+// `sales.user_id` has no ON DELETE CASCADE, whatever the old comment
+// below claimed. The pool therefore grew past one page of listUsers() and
+// specs that sign in as a fixed address started failing with "already been
+// registered", in files nobody had touched.
+//
+// So: the full child-first order, and errors are no longer swallowed. A
+// table added in the future that references one of these will fail loudly
+// here instead of quietly disabling the reset.
 const TABLES = [
+  // Enrollment children
+  "client_session_cadence_issues",
+  "client_sessions",
+  "enrollment_expected_sessions",
+  "enrollment_offboarding_items",
+  "enrollment_onboarding_items",
+  "enrollment_status_events",
+  // Referencing deals AND enrollments, so before both
+  "scholarship_slot_events",
+  "scholarship_slots",
   "tasks",
-  "contact_notes",
+  "enrollments",
+  // Waiting list, before contacts and deals
+  "waitlist_invitations",
+  "waitlist_invitation_batches",
+  "waitlist_entries",
+  "applications",
+  // Deal children
+  "deal_payment_schedule_items",
+  "deal_stage_events",
   "deal_notes",
+  "sales_calls",
+  // Contact children
+  "kit_sync_operations",
+  "contact_notes",
+  // Parents
   "deals",
   "contacts",
   "companies",
   "tags",
   "favicons_excluded_domains",
-  "configuration",
   "sales",
 ];
+
+// Deliberately NOT in the list above, because service_role is not granted
+// DELETE on them — checked one by one against the real schema:
+//
+//   deal_offer_events, deal_outcome_events, deal_stripe_plan_objects,
+//   contact_external_identities, contact_stripe_customers
+//     append-only or provider-owned, and all of them ON DELETE CASCADE
+//     from deals or contacts, so emptying the parent clears them.
+//
+//   contact_merges
+//     also undeletable, and its FK to contacts is NO ACTION rather than
+//     cascade. If a spec ever records a merge, the contacts delete below
+//     will fail loudly and name the table. That is the right outcome: the
+//     answer is a grant decision, not a quieter reset.
+//
+//   configuration
+//     was in this list for as long as it existed and never once worked.
+//     Nothing needs it cleared.
+//
+// That posture is production's, not a clean-room quirk, which is why the
+// reset works around it rather than widening a grant to suit a test.
 
 async function resetDb() {
   for (const table of TABLES) {
     // Supabase client delete need a where clause to get executed, so we use one that will match on all rows (id is not null)
-    await adminSupabase.from(table).delete().not("id", "is", null);
+    const { error } = await adminSupabase
+      .from(table)
+      .delete()
+      .not("id", "is", null);
+    if (error) {
+      throw new Error(`resetDb could not clear ${table}: ${error.message}`);
+    }
   }
 
-  // Delete all auth users (cascades to sales via DB trigger)
-  const { data } = await adminSupabase.auth.admin.listUsers();
-  await Promise.all(
-    data.users.map((user) => adminSupabase.auth.admin.deleteUser(user.id)),
-  );
+  // Delete all auth users. NOT a cascade: sales.user_id references
+  // auth.users with no ON DELETE CASCADE, which is why sales has to be
+  // emptied above first — and why this used to fail with "Database error
+  // deleting user" (FK sales_user_id_fkey, SQLSTATE 23503) once anything
+  // was left referencing a sales row.
+  //
+  // Paginated, because listUsers() returns ONE PAGE — fifty by default —
+  // and this used to delete only that page. For a long time the clean room
+  // never held fifty users so nobody noticed. Then a spec that makes a
+  // fresh user per test pushed the pool past the limit, and the leftovers
+  // started outliving the reset: every spec that signs in as a fixed
+  // address began failing with "A user with this email address has already
+  // been registered", in files nobody had touched. Measured at the time:
+  // page 1 and page 2 both full, and john@doe.com on neither.
+  // A page at a time, five deletes at a time, and it STOPS when a pass
+  // makes no progress.
+  //
+  // Three separate things were learned here and all three are load-bearing:
+  //
+  //   - listUsers() returns ONE PAGE (fifty by default), and this used to
+  //     delete only that page. For a long time the clean room never held
+  //     fifty users so nothing noticed. A spec that makes a fresh user per
+  //     test pushed the pool past the limit, the leftovers outlived the
+  //     reset, and every spec signing in as a fixed address started failing
+  //     with "already been registered" — in files nobody had touched.
+  //
+  //   - two hundred concurrent deletes took the local auth service down
+  //     with ECONNRESET. Hence batches of five.
+  //
+  //   - some users CANNOT be deleted: the delete 500s with "Database error
+  //     deleting user" while business rows this function does not truncate
+  //     (offers, enrollments, applications, waitlist_entries) still
+  //     reference their sales row. Looping until the list is empty
+  //     therefore spins forever, which is how a one-page cleanup became
+  //     thirty-second timeouts across the whole suite. A pass that frees
+  //     nobody ends the loop and leaves the rest; the next test's own
+  //     unique address is unaffected, which is why specs should use one.
+  for (;;) {
+    const { data } = await adminSupabase.auth.admin.listUsers({
+      page: 1,
+      perPage: 50,
+    });
+    if (data.users.length === 0) break;
+    const before = data.users.length;
+    for (let i = 0; i < data.users.length; i += 5) {
+      await Promise.all(
+        data.users
+          .slice(i, i + 5)
+          .map((user) => adminSupabase.auth.admin.deleteUser(user.id)),
+      );
+    }
+    const { data: after } = await adminSupabase.auth.admin.listUsers({
+      page: 1,
+      perPage: 50,
+    });
+    if (after.users.length >= before) break;
+  }
 }
 
 async function createUser({
