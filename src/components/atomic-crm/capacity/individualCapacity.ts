@@ -40,8 +40,11 @@ export type IndividualCapacity = {
   committed: SlotHolder[];
   // Holders whose container cannot be ended: no Start Date to count from,
   // or a Year Tracking calendar that stops before their twelfth week.
-  // They hold a slot for the whole horizon, because that is what not
-  // knowing implies.
+  // Unendable is not the same as unoccupied — a dated client whose twelfth
+  // week the calendar cannot reach does hold a slot with no computable
+  // release. One with no Start Date at all holds no DATED slot (see
+  // slotOccupancy.ts); it is listed here because its end is still unknown,
+  // not because it is consuming anything.
   unknownEnd: SlotHolder[];
   // The subset whose end is unknown specifically because the calendar runs
   // out — the ones a few more `1:1s` weeks would answer.
@@ -50,20 +53,20 @@ export type IndividualCapacity = {
   // from a booked session, or one with no traceable basis. They have a
   // date; it is the date that is in question.
   unconfirmedStartWeek: SlotHolder[];
-  // Holders with NO Start Week at all, which is a different question with a
-  // different fix: not "is this date right?" but "when does this person
-  // begin?". They were previously indistinguishable inside unknownEnd,
-  // whose copy blames the calendar — so a client nobody had given a start
-  // date was reported as a client Year Tracking could not reach, which sent
-  // Leif to sync a calendar that was already long enough.
-  //
-  // They still hold a slot for the whole horizon, exactly as before: not
-  // knowing when somebody starts cannot free capacity.
   // Commitments with no start week: not active, claiming no dated slot,
-  // and surfaced rather than counted. Same rows as missingStartWeek today,
-  // kept as its own field because one is a phase and the other is a
-  // question for Leif.
+  // and surfaced rather than counted. One is a phase, the other is a
+  // question for Leif, which is why they are two fields over the same rows.
   unscheduled: SlotHolder[];
+  // Holders with NO Start Week at all, which is a different question from
+  // an unconfirmed one with a different fix: not "is this date right?" but
+  // "when does this person begin?". They were once indistinguishable inside
+  // unknownEnd, whose copy blames the calendar — so a client nobody had
+  // given a start date was reported as one Year Tracking could not reach,
+  // which sent Leif to sync a calendar that was already long enough.
+  //
+  // They consume no dated slot (reversed 2026-10-03, see slotOccupancy.ts),
+  // so the numbers above can read more open than they are until Leif says
+  // when each begins. That is why this list is rendered rather than kept.
   missingStartWeek: SlotHolder[];
   events: SlotEvent[];
   // The last day Year Tracking reaches. Beyond it the CRM knows nothing,
