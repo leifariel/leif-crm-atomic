@@ -3148,6 +3148,103 @@ Offer can render after it changes, until revalidation lands. That is the
 intended offline-first design and is listed here only so nobody rediscovers
 it as a bug.
 
+### The second way to lose a queued write
+
+The same audit turned up a second, independent instance, in a different
+shape.
+
+ra-core's undoable mode does not send the write. It pushes the mutation onto
+`UndoableMutationsContextProvider`'s FIFO queue, which drains only when a
+notification is **displayed and then dismissed**, and then only
+`if (undoable)`. Two ways to lose a write follow:
+
+1. **raise a plain `notify()` over a queued mutation** — a toast that does
+   not know it is holding one pops it and discards it. That was
+   `ClientEditModal`, and it is why Todd's start week vanished.
+2. **raise NO notification at all** — the mutation stays queued and is never
+   sent. That was [Task.tsx](src/components/atomic-crm/tasks/Task.tsx)'s
+   reopen path, whose `onSuccess` returns before notifying when
+   `completing` is false.
+
+So **un-ticking a plain Task did nothing**. Measured on the real component
+path: `dataProvider.update` was never called and the Task was still
+`completed` eight seconds later, while the box looked un-ticked the whole
+time because the optimistic patch is local. And because the queue is global
+and FIFO, the next unrelated undoable action would have popped that stale
+mutation instead of its own.
+
+Repaired as `mutationMode: completing ? "undoable" : "pessimistic"`.
+Pessimistic is also the honest mode: un-ticking a box IS the undo, and
+offering an undo window on an undo is a second way to get the same answer
+wrong. Regression:
+[reopeningATaskIsSent.test.tsx](src/components/atomic-crm/tasks/reopeningATaskIsSent.test.tsx)
+pins both halves — the mechanism (undoable + no notification = never sent)
+and the repair.
+
+### Edit-form audit — every form, classified
+
+Every `EditBase` / `Edit` construction in `src/components/atomic-crm`,
+checked for the exact dangerous pattern. **Not** made pessimistic wholesale:
+an undoable list edit is a deliberate, good UX, and changing it for
+consistency would be cargo cult.
+
+| Form | Consequence | Mode | Why it is safe |
+|---|---|---|---|
+| `enrollments/ClientEditModal` | **A: start week, lifecycle status** | pessimistic | REPAIRED. Was the bug. Success now earned from the saved record. |
+| `enrollments/ClientEdit` | **A** (same component) | pessimistic | Thin route wrapper around the modal; one implementation, two doors. |
+| `tasks/Task` (checkbox) | **A: task completion, which mirrors lifecycle items** | undoable on complete, pessimistic on reopen | REPAIRED. Completing raises an undoable toast that drains the queue; reopening raised none and was lost. |
+| `tasks/Task` (delete) | **A** | pessimistic | Already explicit, with its own non-undoable `onSuccess`. |
+| `tasks/TaskEdit` | **A: a Task's text, type and due date** | undoable (EditBase default) | Its custom `onSuccess` notifies with `undoable: true`, so the queue drains. Verified by running a real desktop task edit: the provider was asked and the text persisted. **Left alone deliberately.** |
+| `deals/DealEdit` | **A: commercial truth** | pessimistic | Already explicit. |
+| `settings/SettingsPage` | **A: account settings** | pessimistic | Already explicit. |
+| `waitlist/WaitlistEntryEditSheet` | **A: eligibility / waiting position** | pessimistic | Already explicit. |
+| `applications/ApplicationEditDialog` | **A: application record** | pessimistic | Already explicit. |
+| `misc/EditDialog`, `misc/EditSheet` | depends on caller | caller's, default undoable | Their own `handleSuccess` notifies with `undoable: mutationMode === "undoable"`, so the declaration tracks the mode. A caller passing its own `onSuccess` takes over the obligation; today's callers pass none. |
+| `contacts/ContactEdit`, `contacts/ContactEditSheet` | B: contact details | undoable | No custom `onSuccess`; ra-core's own undoable notification drains the queue. |
+| `companies/CompanyEdit`, `cohorts/CohortEdit`, `offers/OfferEdit` | B | undoable | Same. |
+| `notes/Note`, `notes/NoteEditSheet` | B: note text | `useUpdate` / explicit undoable with an undoable notify | `useUpdate` defaults to pessimistic; the delete path declares `undoable: true`. |
+| `contacts/TagsListEdit` | B: tags | `useUpdate` (pessimistic default) | Not an edit form at all — the `Edit` match is the lucide icon. |
+
+The sweep is mechanised in
+[aSaveIsNotAClaim.test.ts](contracts/enrollments/aSaveIsNotAClaim.test.ts):
+any form that is not pessimistic and hands `EditBase` its own `onSuccess`
+must have every `notify` declare `undoable`. Verified sensitive — with the
+`ClientEditModal` fix removed it flags exactly that file, and nothing as
+committed. Variant 2 is a PATH through an `onSuccess`, which no static rule
+can see honestly, so the one place it was found is pinned by name instead.
+
+### The Golden Journey — what SYSTEM GREEN means here
+
+[startWeekGoldenJourney.spec.ts](e2e/startWeekGoldenJourney.spec.ts), on its
+own synthetic fixture
+([goldenJourneyFixture.ts](e2e/goldenJourneyFixture.ts)). Eight cases, run on
+both Playwright projects — desktop Chrome and Pixel 5, the second being the
+one that renders `MobileAdmin` and its persisted cache.
+
+The chain, with nothing stubbed in it: **real browser → real production
+build → real UI interaction → real data provider → real Postgres clean room
+→ independent SQL read-back → fresh browser context → rendered truth
+again.**
+
+The fixture is twelve genuinely active clients against a ceiling of twelve —
+activated through the real path, because the database refuses to activate an
+Enrollment whose required onboarding items are not done — plus one
+Todd-shaped commitment: Won, enrolled by the live trigger, `start_date` null,
+`start_date_source` null, nothing inferred. One of the twelve started nine
+weeks ago, so their twelfth session week frees a genuine opening three weeks
+out: the week the old rule erased.
+
+Every date derives from the most recent Monday, so the scenario has a fixed
+SHAPE on any day it runs. A real browser against real Postgres cannot have
+its clock frozen without lying to the auth client, so the arithmetic is
+pinned rather than the calendar.
+
+**Sensitivity proven, not assumed.** With `mutationMode="pessimistic"`
+removed and the app rebuilt, five of the eight fail, and the decisive one
+fails for the right reason: the browser sent **zero** PATCH requests to
+PostgREST while the CRM said "Client updated". The broken variant was never
+committed.
+
 ### What this says about proving things in Postgres
 
 Neither trap is reachable from the database. Both live in the browser,
@@ -3156,6 +3253,28 @@ persisted query cache. A real-Postgres journey would have replayed the
 migration, found the column writable, and reported green over a CRM that
 could not save a start week. **Where a bug can live decides where the proof
 has to run.**
+
+## 8b-e2e. resetDb COULD ONLY CLEAR ONE PAGE OF USERS — 2026-10-03
+
+`e2e/fixtures.ts`'s `resetDb` deleted auth users from
+`listUsers()` — which returns ONE PAGE, fifty by default. For a long time
+the clean room never held fifty users, so nothing noticed.
+
+The Golden Journey makes a fresh user per test, which pushed the pool past
+the limit. The leftovers then outlived the reset, and every spec that signs
+in as a fixed address started failing with "A user with this email address
+has already been registered" — thirteen failures, in four spec files nobody
+had touched. Measured at the time: page 1 and page 2 both full, and
+`john@doe.com` on neither.
+
+Fixed by paginating until the list comes back empty, and deleting five at a
+time rather than the whole page at once: two hundred concurrent deletes took
+the local auth service down with ECONNRESET, also measured. The 242-user
+backlog was cleared directly in the disposable clean room.
+
+A pre-existing defect that only a new spec could expose, and worth keeping
+written down: a fixture that cleans up incompletely reports failures in
+other people's files.
 
 ## 8b-schema. DECLARATIVE SCHEMA DEBT — MEASURED, RECORDED, NOT REPAIRED
 
