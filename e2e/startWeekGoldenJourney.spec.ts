@@ -1,0 +1,430 @@
+import type { Browser, Page } from "@playwright/test";
+
+import { expect, test } from "./fixtures";
+import {
+  OFFER_ID,
+  OTHER_OFFER_ID,
+  OTHER_OFFER_MAX,
+  OTHER_OFFER_NAME,
+  UNSCHEDULED,
+  changedBetween,
+  cleanup,
+  countActiveDated,
+  readEnrollment,
+  seedGoldenJourney,
+  snapshotEnrollments,
+  week,
+} from "./goldenJourneyFixture";
+
+// SYSTEM GREEN for the start week.
+//
+// Two bugs got past everything this repo had, and both lived between the
+// browser and Postgres:
+//
+//   - ra-core queued the real update for the next notification, and
+//     ClientEditModal's own toast took it off the queue and discarded it.
+//     dataProvider.update was never called. The CRM said "Client updated".
+//   - a persisted query cache, shared across one browser origin, restored
+//     ANOTHER programme's Offer into the capacity page, which then had no
+//     ceiling to count against.
+//
+// Neither is reachable from SQL. A Postgres-only integration test would
+// have replayed the migration, found the column writable, and reported
+// green over a CRM that could not save a start week. So this journey runs
+// the whole chain: real browser, real build, real UI interaction, real
+// data provider, real Postgres, an INDEPENDENT read-back, a fresh browser,
+// and the rendered truth again.
+//
+// The scenario is twelve genuinely active clients against a ceiling of
+// twelve, plus one Todd-shaped commitment with no start week — the exact
+// shape that made a twelve-client programme read 13 / 12 and erased a real
+// open week along with it.
+
+const PASSWORD = "password";
+const UNSCHEDULED_NAME = `${UNSCHEDULED.first} ${UNSCHEDULED.last}`;
+
+// date-fns "PP" for en-US, which is what the pages render.
+const ppDate = (iso: string) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y!, m! - 1, d!).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+};
+
+const signIn = async (page: Page, email: string) => {
+  await page.goto("/");
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveTitle(/Leif CRM/);
+  await expect(page.getByText("Business at a Glance")).toBeVisible();
+};
+
+// The app is hash-routed on purpose (CRM.tsx), so moving between two
+// `#/...` paths is a same-document hash change. page.goto() will not
+// re-navigate for one, so this does what the app itself does.
+const goTo = async (page: Page, hash: string) => {
+  await page.evaluate((target) => {
+    window.location.hash = target;
+  }, hash);
+};
+
+const openProgramme = async (page: Page, offerId: number | string) => {
+  await goTo(page, `#/programs/individual/${offerId}`);
+  await expect(
+    page.getByRole("heading", { name: "Upcoming Openings" }),
+  ).toBeVisible();
+};
+
+const openClient = async (page: Page, enrollmentId: number) => {
+  await goTo(page, `#/enrollments/${enrollmentId}/show`);
+  await expect(
+    page.getByText(UNSCHEDULED_NAME, { exact: false }).first(),
+  ).toBeVisible();
+};
+
+// StartWeekCard -> ClientEditModal -> DateInput -> Save: the same four
+// things Leif touches, with nothing stubbed in between.
+// `from` is the week the field should already be showing. It matters: the
+// modal renders before EditBase's record lands, and DateInput re-keys its
+// input when the form value arrives from outside — so typing into an empty
+// field first and letting the record arrive second silently reverts what
+// was typed. Measured, not guessed: the second save in the change case
+// wrote nothing while the toast still said "Client updated", because that
+// toast was about the save that DID happen.
+const stateTheStartWeek = async (
+  page: Page,
+  iso: string,
+  { from }: { from?: string } = {},
+) => {
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  const field = dialog.getByLabel(/^Start week/);
+  await expect(field).toHaveValue(from ?? "");
+  await field.fill(iso);
+  await expect(field).toHaveValue(iso);
+  await dialog.getByRole("button", { name: "Save" }).click();
+};
+
+// Every PATCH the browser actually sent to PostgREST for enrollments.
+const watchEnrollmentWrites = (page: Page) => {
+  const writes: { method: string; url: string; body: string | null }[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "PATCH" &&
+      request.url().includes("/rest/v1/enrollments")
+    ) {
+      writes.push({
+        method: request.method(),
+        url: request.url(),
+        body: request.postData(),
+      });
+    }
+  });
+  return writes;
+};
+
+const freshBrowserAt = async (
+  browser: Browser,
+  email: string,
+  hash: string,
+) => {
+  // A brand new context: no localStorage, no persisted query cache, no
+  // session. Nothing the previous page held can answer for this one.
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await signIn(page, email);
+  await goTo(page, hash);
+  return { context, page };
+};
+
+test.describe("the start-week golden journey", () => {
+  let seeded: Awaited<ReturnType<typeof seedGoldenJourney>>;
+  // A fresh address per test. The fixture truncates auth users between
+  // tests, but a fixed address still collides across the two Playwright
+  // projects when their setup interleaves — the seam userAddingATask
+  // already documents.
+  let email: string;
+
+  test.beforeEach(async ({ createSales }) => {
+    email = `golden-journey-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}@example.com`;
+    seeded = await seedGoldenJourney(createSales, {
+      email,
+      password: PASSWORD,
+    });
+  });
+
+  test.afterEach(async () => {
+    await cleanup();
+  });
+
+  test("twelve of twelve, and the thirteenth is a question rather than a number", async ({
+    page,
+  }) => {
+    await signIn(page, email);
+    await openProgramme(page, OFFER_ID);
+
+    // The programme it was asked for, not one left in storage.
+    await expect(
+      page.getByRole("heading", { name: "The Living Example" }),
+    ).toBeVisible();
+
+    const rendered = await page.locator("body").innerText();
+    // THE regression. Thirteen people are committed; twelve are clients.
+    expect(rendered).toContain("12 / 12 active");
+    expect(rendered).not.toContain("13 / 12");
+    expect(rendered).toContain("Full — 12 of 12 slots filled.");
+
+    // The thirteenth is named, in the attention state that asks the
+    // question instead of answering it with "now".
+    expect(rendered).toContain(`No start week yet for ${UNSCHEDULED_NAME}`);
+    expect(rendered).toContain("aren't counted here until you set one");
+
+    // And nothing invented a date for them.
+    expect(rendered).not.toContain(`Starts ${ppDate(week(0))}`);
+
+    // INDEPENDENT DATABASE READ-BACK. Not the page's opinion of itself.
+    expect(await countActiveDated()).toBe(12);
+    const row = await readEnrollment(seeded.unscheduledEnrollmentId);
+    expect(row.start_date).toBeNull();
+    expect(row.start_date_source).toBeNull();
+    expect(row.end_date).toBeNull();
+    expect(["onboarding", "active"]).toContain(row.status);
+  });
+
+  test("the genuine open week is still visible, because nothing erased it", async ({
+    page,
+  }) => {
+    // The second half of the 13 / 12 failure, and the one that cost Leif
+    // something: an active count above the ceiling leaves nothing to
+    // offer, so the week the early finisher frees disappeared too.
+    await signIn(page, email);
+    await openProgramme(page, OFFER_ID);
+
+    const rendered = await page.locator("body").innerText();
+    // Somewhere ahead there is a week a new client could start in.
+    expect(rendered).toMatch(/Week of \w{3} \d+/);
+    expect(rendered).toMatch(/\d+ opening/);
+    // Said as a month, because a projected finish is arithmetic rather
+    // than a commitment (monthLabel.ts).
+    expect(rendered).toContain("Early Finisher");
+  });
+
+  test("stating the start week through the real UI reaches the database", async ({
+    page,
+  }) => {
+    await signIn(page, email);
+    const writes = watchEnrollmentWrites(page);
+    const before = await snapshotEnrollments();
+
+    await openClient(page, seeded.unscheduledEnrollmentId);
+    await expect(page.getByText("Start week not set")).toBeVisible();
+    await page.getByRole("button", { name: "Set start week" }).click();
+
+    const chosen = week(4);
+    await stateTheStartWeek(page, chosen);
+
+    // A. the success message, which is now earned from the saved record.
+    await expect(page.getByText("Client updated")).toBeVisible();
+    expect(await page.locator("body").innerText()).not.toContain("Not saved");
+
+    // B. the provider actually executed. Before the repair this list was
+    // empty: ra-core had queued the write and the toast discarded it.
+    const patches = writes.filter((write) =>
+      write.url.includes(`id=eq.${seeded.unscheduledEnrollmentId}`),
+    );
+    expect(patches.length).toBeGreaterThanOrEqual(1);
+    expect(patches[0]!.body).toContain(chosen);
+    expect(patches[0]!.body).toContain("owner");
+
+    // C. INDEPENDENT DATABASE READ-BACK.
+    const row = await readEnrollment(seeded.unscheduledEnrollmentId);
+    expect(row.start_date).toBe(chosen);
+    expect(row.start_date_source).toBe("owner");
+
+    // D. exactly one row changed, and it is the intended one.
+    const after = await snapshotEnrollments();
+    expect(changedBetween(before, after)).toEqual([
+      seeded.unscheduledEnrollmentId,
+    ]);
+  });
+
+  test("a fresh browser shows the same week, so nothing was cache-only", async ({
+    page,
+    browser,
+  }) => {
+    await signIn(page, email);
+    await openClient(page, seeded.unscheduledEnrollmentId);
+    await page.getByRole("button", { name: "Set start week" }).click();
+    const chosen = week(4);
+    await stateTheStartWeek(page, chosen);
+    await expect(page.getByText("Client updated")).toBeVisible();
+
+    // Nothing from the browser that did the saving survives into this one.
+    const { context, page: fresh } = await freshBrowserAt(
+      browser,
+      email,
+      `#/programs/individual/${OFFER_ID}`,
+    );
+    try {
+      await expect(
+        fresh.getByRole("heading", { name: "Upcoming Openings" }),
+      ).toBeVisible();
+      const rendered = await fresh.locator("body").innerText();
+      expect(rendered).toContain(`Starts ${ppDate(chosen)}`);
+      // And the question is no longer being asked, because it is answered.
+      expect(rendered).not.toContain(
+        `No start week yet for ${UNSCHEDULED_NAME}`,
+      );
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("a future start week is a commitment, not an occupancy", async ({
+    page,
+  }) => {
+    await signIn(page, email);
+    await openClient(page, seeded.unscheduledEnrollmentId);
+    await page.getByRole("button", { name: "Set start week" }).click();
+    const chosen = week(4);
+    await stateTheStartWeek(page, chosen);
+    await expect(page.getByText("Client updated")).toBeVisible();
+
+    await openProgramme(page, OFFER_ID);
+    const rendered = await page.locator("body").innerText();
+
+    // Still twelve clients today. A week four weeks out is an obligation,
+    // not somebody Leif is working with now.
+    expect(rendered).toContain("12 / 12 active");
+    expect(rendered).not.toContain("13 / 12");
+    // Counted from exactly the week stated, under its own heading.
+    expect(rendered).toContain("Starting Later");
+    expect(rendered).toContain(`Starts ${ppDate(chosen)}`);
+    // And no earlier week was consumed on their behalf.
+    expect(rendered).not.toContain(`Starts ${ppDate(week(3))}`);
+    expect(await countActiveDated()).toBe(12);
+  });
+
+  test("changing it moves the commitment, and leaves nothing behind", async ({
+    page,
+    browser,
+  }) => {
+    await signIn(page, email);
+    await openClient(page, seeded.unscheduledEnrollmentId);
+    await page.getByRole("button", { name: "Set start week" }).click();
+    const first = week(4);
+    await stateTheStartWeek(page, first);
+    await expect(page.getByText("Client updated")).toBeVisible();
+
+    // Dismiss the first save's toast, so the second save's success cannot
+    // be read off a message that was already on screen.
+    await page.getByLabel("Close toast").first().click();
+    await expect(page.getByText("Client updated")).toBeHidden();
+    const before = await snapshotEnrollments();
+
+    // Through the same UI again — the /edit door this time, which is a
+    // thin wrapper around the same modal (AGENTS.md -> Operational UX).
+    const second = week(8);
+    await goTo(page, `#/enrollments/${seeded.unscheduledEnrollmentId}/edit`);
+    await stateTheStartWeek(page, second, { from: first });
+    await expect(page.getByText("Client updated")).toBeVisible();
+
+    const row = await readEnrollment(seeded.unscheduledEnrollmentId);
+    expect(row.start_date).toBe(second);
+    expect(row.start_date_source).toBe("owner");
+    expect(changedBetween(before, await snapshotEnrollments())).toEqual([
+      seeded.unscheduledEnrollmentId,
+    ]);
+
+    const { context, page: fresh } = await freshBrowserAt(
+      browser,
+      email,
+      `#/programs/individual/${OFFER_ID}`,
+    );
+    try {
+      await expect(
+        fresh.getByRole("heading", { name: "Upcoming Openings" }),
+      ).toBeVisible();
+      const rendered = await fresh.locator("body").innerText();
+      // The new week is consumed, exactly once, and the old one released.
+      expect(rendered).toContain(`Starts ${ppDate(second)}`);
+      expect(rendered).not.toContain(`Starts ${ppDate(first)}`);
+      expect(rendered.split(`Starts ${ppDate(second)}`).length - 1).toBe(1);
+      expect(rendered).toContain("12 / 12 active");
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("clearing it returns them to needing a week, and frees nothing dated", async ({
+    page,
+  }) => {
+    // Clearing IS supported through the real UI: the Start week field is a
+    // DateInput and emptying it is an owner statement, which
+    // ClientEditModal turns back into start_date null / source null. There
+    // is no second field and nothing infers one.
+    await signIn(page, email);
+    await openClient(page, seeded.unscheduledEnrollmentId);
+    await page.getByRole("button", { name: "Set start week" }).click();
+    const chosen = week(4);
+    await stateTheStartWeek(page, chosen);
+    await expect(page.getByText("Client updated")).toBeVisible();
+    expect(
+      (await readEnrollment(seeded.unscheduledEnrollmentId)).start_date,
+    ).toBe(chosen);
+    await page.getByLabel("Close toast").first().click();
+    await expect(page.getByText("Client updated")).toBeHidden();
+
+    await goTo(page, `#/enrollments/${seeded.unscheduledEnrollmentId}/edit`);
+    await stateTheStartWeek(page, "", { from: chosen });
+    await expect(page.getByText("Client updated")).toBeVisible();
+
+    const row = await readEnrollment(seeded.unscheduledEnrollmentId);
+    expect(row.start_date).toBeNull();
+    // No source either — the only honest way to say "not decided yet".
+    expect(row.start_date_source).toBeNull();
+
+    await openProgramme(page, OFFER_ID);
+    const rendered = await page.locator("body").innerText();
+    expect(rendered).toContain(`No start week yet for ${UNSCHEDULED_NAME}`);
+    expect(rendered).toContain("12 / 12 active");
+    expect(rendered).not.toContain("13 / 12");
+    expect(rendered).not.toContain(`Starts ${ppDate(chosen)}`);
+    expect(await countActiveDated()).toBe(12);
+  });
+
+  test("another programme's Offer cannot answer for this one", async ({
+    page,
+  }) => {
+    // The fortnightly CI failure, as a real browser journey. The decoy is
+    // an individual programme with a ceiling of three, so if its Offer
+    // survives into the Living Example's page the numbers cannot hide it.
+    await signIn(page, email);
+
+    await openProgramme(page, OTHER_OFFER_ID);
+    await expect(
+      page.getByRole("heading", { name: OTHER_OFFER_NAME }),
+    ).toBeVisible();
+    expect(await page.locator("body").innerText()).toContain(
+      `0 / ${OTHER_OFFER_MAX} active`,
+    );
+
+    await openProgramme(page, OFFER_ID);
+
+    // Business data, not an empty storage key: the right programme, the
+    // right ceiling, the right count.
+    await expect(
+      page.getByRole("heading", { name: "The Living Example" }),
+    ).toBeVisible();
+    const rendered = await page.locator("body").innerText();
+    expect(rendered).toContain("12 / 12 active");
+    expect(rendered).not.toContain(OTHER_OFFER_NAME);
+    expect(rendered).not.toContain(`/ ${OTHER_OFFER_MAX} active`);
+    expect(rendered).toContain("Full — 12 of 12 slots filled.");
+  });
+});
