@@ -121,26 +121,37 @@ describe("what an unset Start Week costs is said, not hidden", () => {
     );
   });
 
-  test("they keep holding a slot, because not knowing frees nothing", () => {
-    // classifyEnrollment/slotOccupancy treat a null start as occupied; this
-    // contract exists so a later "tidy-up" cannot quietly exclude them.
-    const occupancy = code(
-      read("src/components/atomic-crm/capacity/slotOccupancy.ts"),
-    );
+  test("they consume no dated slot, and the reversal stays written down", () => {
+    // REVERSED 2026-10-03. This contract used to protect the opposite
+    // wording — "counts as occupied" — so a tidy-up could not quietly stop
+    // counting them. Todd Jacobsen is why it now protects the other
+    // direction: counting an unplaced commitment as occupying TODAY made a
+    // twelve-client programme read 13 / 12, and an active count above the
+    // ceiling erased a real open week.
+    //
+    // What the contract protects either way is the same thing: that the
+    // choice is deliberate and its cost is written down, never quietly
+    // flipped by whoever is tidying up next.
+    const path = "src/components/atomic-crm/capacity/slotOccupancy.ts";
+    const occupancy = code(read(path));
     expect(occupancy).toMatch(/classifyEnrollment/);
-    expect(read("src/components/atomic-crm/capacity/slotOccupancy.ts")).toMatch(
-      /An Enrollment with no start_date at all counts as occupied/,
+    expect(occupancy).toMatch(/"unscheduled"/);
+    expect(read(path)).toMatch(
+      /An Enrollment with no start_date at all is UNSCHEDULED/,
     );
+    expect(read(path)).toMatch(/13 \/ 12/);
+    // And nothing may invent one to make the arithmetic tidier.
+    expect(read(path)).toMatch(/nothing infers a start week/i);
   });
 
   test("the card says what it costs and offers the fix", () => {
     expect(CARD).toMatch(/Start week not set/);
-    expect(CARD).toMatch(/can only be a minimum/);
+    expect(CARD).toMatch(/aren't counted in/);
     expect(code(CARD)).toMatch(/ClientEditModal/);
     // Operator language in the two sentences Leif reads: what is true, and
     // what it costs. Not a word about how any of it is stored.
     const sentences = [
-      "openings count this client as taking a place from now on, and can only be a minimum until you set the week they start",
+      "openings until you set the week they start, so those numbers may look more open than they really are",
       "This date came from their first booked session, not from you",
     ];
     for (const sentence of sentences) {

@@ -83,16 +83,24 @@ describe("which Enrollments consume a slot", () => {
     expect(capacity.committed).toHaveLength(0);
   });
 
-  test("a live container with no Start Date still counts, and cannot be ended", () => {
+  test("a live container with no Start Date claims no slot, and cannot be ended", () => {
+    // REVERSED 2026-10-03, deliberately. This asserted active === 1: a
+    // commitment with no week counted as occupying today, so openings could
+    // never over-promise. Todd Jacobsen made a twelve-client programme read
+    // 13 / 12 that way, and an active count over the ceiling erased a real
+    // open week from the openings view. It is an obligation Leif has to
+    // place, not somebody he is working with today — see slotOccupancy.ts.
     const capacity = computeIndividualCapacity(
       [enrollment({ start_date: null, start_date_source: null })],
       MAX,
       CALENDAR,
       NOW,
     );
-    expect(capacity.active).toBe(1);
+    expect(capacity.active).toBe(0);
+    expect(capacity.unscheduled).toHaveLength(1);
+    // Still unendable, and still a missing decision rather than a calendar
+    // that is too short — neither of those changed.
     expect(capacity.unknownEnd).toHaveLength(1);
-    // Not a calendar problem — a missing decision.
     expect(capacity.needsCalendar).toHaveLength(0);
   });
 });
@@ -271,7 +279,7 @@ describe("a client nobody has given a start week", () => {
     );
   });
 
-  test("still holds a place, because not knowing cannot free capacity", () => {
+  test("does not hold a dated place, and is named instead", () => {
     const withWeek = computeIndividualCapacity(
       [enrollment({ name: "Has a week" })],
       MAX,
@@ -292,9 +300,15 @@ describe("a client nobody has given a start week", () => {
       NOW,
     );
 
-    // They count as occupying today, exactly as classifyEnrollment says.
-    expect(withoutWeek.active).toBe(withWeek.active + 1);
-    // And their container never ends, so any openings number is a floor.
+    // REVERSED 2026-10-03: this asserted withWeek.active + 1. The trade is
+    // now taken the other way — openings may be too generous rather than
+    // silently hiding real availability, and the risk is carried in the
+    // open by naming everybody who still needs a week.
+    expect(withoutWeek.active).toBe(withWeek.active);
+    expect(withoutWeek.missingStartWeek.map((h) => h.name)).toEqual([
+      "No week",
+    ]);
+    // And their container still never ends, because nothing infers a start.
     const holder = withoutWeek.missingStartWeek[0]!;
     expect(holder.end).toBeNull();
   });

@@ -59,6 +59,11 @@ export type IndividualCapacity = {
   //
   // They still hold a slot for the whole horizon, exactly as before: not
   // knowing when somebody starts cannot free capacity.
+  // Commitments with no start week: not active, claiming no dated slot,
+  // and surfaced rather than counted. Same rows as missingStartWeek today,
+  // kept as its own field because one is a phase and the other is a
+  // question for Leif.
+  unscheduled: SlotHolder[];
   missingStartWeek: SlotHolder[];
   events: SlotEvent[];
   // The last day Year Tracking reaches. Beyond it the CRM knows nothing,
@@ -117,6 +122,10 @@ export const computeIndividualCapacity = (
   const today = toDateKey(now);
   const occupied: SlotHolder[] = [];
   const committed: SlotHolder[] = [];
+  // Real obligations with no week yet. Deliberately not merged into either
+  // list above: both of those feed dated reasoning, and these have no date
+  // to reason from.
+  const unscheduled: SlotHolder[] = [];
 
   for (const enrollment of enrollments) {
     const phase = slotPhaseOf(enrollment, today);
@@ -126,6 +135,10 @@ export const computeIndividualCapacity = (
       weeks,
       assumeUnresolvedAreReschedules,
     );
+    if (phase === "unscheduled") {
+      unscheduled.push(holder);
+      continue;
+    }
     (phase === "occupied" ? occupied : committed).push(holder);
   }
 
@@ -142,10 +155,11 @@ export const computeIndividualCapacity = (
   // a fact about the person.
   occupied.sort(byStartDescThenName);
   committed.sort(byStartDescThenName);
+  unscheduled.sort(byStartDescThenName);
 
   const active = occupied.length;
   const events = buildSlotEvents(occupied, committed, today);
-  const everyone = [...occupied, ...committed];
+  const everyone = [...occupied, ...committed, ...unscheduled];
   const sorted = [...weeks].sort((a, b) => a.start.localeCompare(b.start));
 
   return {
@@ -158,6 +172,7 @@ export const computeIndividualCapacity = (
     overCapacityBy: max == null ? 0 : Math.max(active - max, 0),
     occupied,
     committed,
+    unscheduled,
     unknownEnd: everyone.filter((holder) => holder.end?.status !== "known"),
     needsCalendar: everyone.filter(
       (holder) => holder.end?.status === "incomplete",
@@ -242,8 +257,9 @@ export type FutureOpenings = {
   unknownEnd: SlotHolder[];
   needsCalendar: SlotHolder[];
   unconfirmedStartWeek: SlotHolder[];
-  // Holders with no Start Week at all — the numbers above are a floor
-  // until Leif says when they begin.
+  // Holders with no Start Week at all. The numbers above do NOT count
+  // them, so they can read more open than they are until Leif says when
+  // each begins — which is why this list is rendered rather than kept.
   missingStartWeek: SlotHolder[];
   calendarHorizon: string | null;
 };

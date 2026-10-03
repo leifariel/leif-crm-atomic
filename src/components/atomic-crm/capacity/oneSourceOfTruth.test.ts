@@ -39,6 +39,22 @@ describe("capacity and the Clients list answer with one voice", () => {
       const listPhase = classifyEnrollment(enrollment, today);
       const capacityPhase = slotPhaseOf(enrollment, today);
 
+      // The two still answer with one voice about every DATED enrollment,
+      // which is what this contract was written to protect: the Clients
+      // list said twelve while the dashboard said eighteen, from the same
+      // rows, because each kept its own copy of "active".
+      //
+      // They now differ in exactly one case, on purpose. A commitment with
+      // NO start week is still a current client to the Clients list — it is
+      // live work — but it consumes no dated capacity slot, because there is
+      // no date to consume one at. Two different questions, and for this row
+      // the honest answers are not the same. Folding them back together is
+      // what produced Todd Jacobsen's 13 / 12.
+      if (enrollment.start_date == null && listPhase !== "past") {
+        expect(capacityPhase).toBe("unscheduled");
+        return;
+      }
+
       const expected = {
         current: "occupied",
         upcoming: "committed",

@@ -14,12 +14,13 @@ import { formatISODateString } from "../deals/dealUtils";
 // commit now and deliberately begin in six weeks. The capacity ledger can
 // only plan around a week he has actually stated.
 //
-// Until then the client still holds a place: the occupancy model counts an
-// Enrollment with no start date as occupying a slot from today with no end
-// it can compute, because not knowing when somebody starts cannot free
-// capacity. So openings stay a floor rather than an answer, and the fix is
-// one field away — which is why it is said here, on the client's own page,
-// rather than left to be discovered inside an edit screen.
+// Until then they consume no dated slot. The occupancy model used to count
+// a client with no start date as occupying one from today, so that openings
+// could never over-promise; Todd Jacobsen made a twelve-client programme
+// read 13 / 12 that way and erased a real open week along with it. That
+// trade is now taken the other way (slotOccupancy.ts), which means openings
+// can be too generous — and the only thing keeping that honest is saying so
+// HERE, on the client's own page, where the fix is one field away.
 //
 // Two different questions, two different cards: a date Leif never stated is
 // "set one", a date the CRM inferred from a booked session is "is this
@@ -57,7 +58,7 @@ export const StartWeekCard = ({
             </span>
             <span className="text-sm text-muted-foreground">
               {missing
-                ? `${offer.name} openings count this client as taking a place from now on, and can only be a minimum until you set the week they start.`
+                ? `They aren't counted in ${offer.name} openings until you set the week they start, so those numbers may look more open than they really are.`
                 : `This date came from their first booked session, not from you — ${formatISODateString(startDate ?? "")}. Confirm it or change it.`}
             </span>
           </div>

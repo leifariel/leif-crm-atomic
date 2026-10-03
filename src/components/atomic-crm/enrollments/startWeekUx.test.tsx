@@ -129,7 +129,7 @@ describe("a client with no start week", () => {
     await expect
       .element(
         screen.getByText(
-          "The Living Example openings count this client as taking a place from now on, and can only be a minimum until you set the week they start.",
+          "They aren't counted in The Living Example openings until you set the week they start, so those numbers may look more open than they really are.",
         ),
       )
       .toBeVisible();

@@ -206,12 +206,13 @@ export const UpcomingOpeningsSection = ({
       )}
 
       {missingStartWeek.length > 0 && (
-        // They hold a slot for the whole horizon, because not knowing when
-        // somebody starts cannot free capacity — so every number above is a
-        // floor until Leif says when they begin.
+        // They consume no dated slot, so every number above may be too
+        // generous until Leif says when they begin. That is the trade
+        // slotOccupancy.ts takes deliberately, and this line is the half of
+        // it that keeps the numbers honest.
         <p className="mt-2 text-xs text-muted-foreground">
           {translate("crm.programs.openings_missing_start_week", {
-            _: "No start week yet for %{names} — they hold a place until you set one, so these numbers are a minimum.",
+            _: "No start week yet for %{names} — they aren't counted here until you set one, so there may be less room than this shows.",
             names: names(missingStartWeek),
           })}
         </p>
