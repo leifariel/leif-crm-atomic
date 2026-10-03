@@ -29,6 +29,9 @@ export default defineConfig({
         test: {
           name: "app",
           globals: true,
+          // Shared-origin storage is shared by every file in the one
+          // browser context. See the file for the CI failure this found.
+          setupFiles: ["./src/test/isolateBrowserStorage.ts"],
           browser: {
             headless: true,
             provider: playwright(),

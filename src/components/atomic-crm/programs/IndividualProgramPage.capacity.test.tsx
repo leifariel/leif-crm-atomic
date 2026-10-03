@@ -236,6 +236,16 @@ const captureState = async (
     // the loading state. This is the single most useful line here.
     pageRenderedAnything: rendered.trim().length > 0,
     renderedLength: rendered.length,
+    // WHAT THE PAGE ACTUALLY SAYS. Added after the first real capture: it
+    // reported the programme name absent while "6 committed to start" was
+    // present, which is impossible on this page (PageHeader has no
+    // breakpoint and always renders offer.name). So either a different
+    // route rendered, or the container is not the one being read — and no
+    // combination of booleans can tell those apart. The text can.
+    //
+    // `route` above cannot: MemoryRouter never touches window.location, so
+    // it only ever reports the test harness URL.
+    renderedHead: rendered.slice(0, 700),
     programmeNamePresent: rendered.includes("The Living Example"),
     // What the page actually says where the assertions look.
     activeCountShown: firstMatch(rendered, /\d+\s*\/\s*\d+\s+active/),
