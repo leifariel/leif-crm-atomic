@@ -423,7 +423,25 @@ export const Task = ({
         previousData: task,
       },
       {
-        mutationMode: "undoable",
+        // Undoable only when COMPLETING, and that is not a style choice.
+        //
+        // ra-core's undoable mode does not send the write: it pushes the
+        // mutation onto a queue (UndoableMutationsContextProvider) which
+        // only ever drains when a notification is displayed and then
+        // dismissed, and then only `if (undoable)`. Completing raises
+        // exactly such a notification, so its write goes.
+        //
+        // Reopening raised NONE — the handler below returns before
+        // notifying — so its mutation sat in that queue and was never
+        // sent. Measured: dataProvider.update was never called, and the
+        // Task was still 'completed' eight seconds later. It is a FIFO
+        // queue shared by the whole app, so the next unrelated undoable
+        // action would have popped this one instead of its own.
+        //
+        // Pessimistic is also the honest mode here: un-ticking a box IS
+        // the undo. Offering an undo window on an undo would be a second
+        // way to get the same answer wrong.
+        mutationMode: completing ? "undoable" : "pessimistic",
         onSuccess: () => {
           if (!completing) return;
           onCompleted?.(task);
