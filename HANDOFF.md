@@ -3655,6 +3655,33 @@ report.
 
 **Do not make Leif do technical work Claude can safely do.**
 
+**Technical guidance for Leif must be operationally explicit.** When a step
+genuinely has to be his — a credential Claude must not handle, a decision only
+he can make, a click only he can perform — the instruction is not finished
+until it says where to click, what to look for, and what to send back.
+
+Never say, on their own:
+
+- "run this in Supabase"
+- "check Vercel"
+- "use Terminal"
+- "run the SQL"
+- "open the logs"
+
+Each of those assumes a workflow. Say instead, in order: the exact place to
+go, the exact control to click (by its label and where on screen it sits),
+what he should expect to see when it worked, and exactly what to copy back.
+Number the steps. One action per step.
+
+Assume **no** familiarity with developer tooling unless Leif has already done
+that exact workflow in front of you. Having run one SQL query is not evidence
+he knows where the SQL editor is the next time, and a tool he used a month ago
+is not a tool he remembers.
+
+The cost of getting this wrong is not confusion, it is a stall: the work stops
+and he cannot say why. The cost of over-explaining is a few extra lines he can
+skip.
+
 **Git: agents never push.** Leif owns `git push`. Agents commit locally and
 hand over the exact command.
 
