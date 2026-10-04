@@ -12,6 +12,12 @@ const ACTIVE_ENROLLMENT_STATUSES: ReadonlySet<Enrollment["status"]> = new Set([
 
 export type CohortEnrolledClient = {
   dealId: Identifier;
+  // The canonical client profile. Never inferred: a row only exists below
+  // when its Enrollment has already been found, and the database holds
+  // `enrollments_opportunity_id_key unique (opportunity_id)` — at most one
+  // Enrollment per Opportunity — so there is exactly one and no ambiguity
+  // to guess at. It is the same Enrollment this row's status comes from.
+  enrollmentId: Identifier;
   contactId: Identifier;
   name: string;
   status: Enrollment["status"];
@@ -182,6 +188,7 @@ export const useCohortPageData = (cohortId?: Identifier) => {
     ) {
       enrolledClients.push({
         dealId: deal.id,
+        enrollmentId: enrollment.id,
         contactId: deal.contact_id,
         name: nameForContact(deal.contact_id),
         status: enrollment.status,

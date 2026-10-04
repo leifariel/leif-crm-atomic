@@ -270,7 +270,25 @@ describe("GYU Cohort person links", () => {
     await expect.element(screen.getByText("CTO")).toBeInTheDocument();
   });
 
-  it("an enrolled client links through to their Contact page", async () => {
+  it("an enrolled client links through to their CLIENT profile", async () => {
+    // REVERSED 2026-10-04, deliberately.
+    //
+    // This asserted that an enrolled cohort client opens their Contact
+    // page, and clicked through to prove it. That is the behaviour the
+    // client-navigation invariant removed: presented in a client-management
+    // context, a person opens the canonical client/enrollment profile,
+    // because the generic Contact page shows no start or end dates, no
+    // payment state, no onboarding and no sessions. The same person was
+    // opening two different pages depending on which list Leif clicked
+    // them from.
+    //
+    // It asserts the destination rather than clicking it, for a reason
+    // worth knowing: the row is now a stretched link (absolute inset-0) so
+    // a real button can live beside it, and the "app" vitest project has
+    // no tailwindcss() plugin — every utility class is inert here, so that
+    // anchor computes to zero size and cannot be clicked in this
+    // environment. The click-through is proved against the real stylesheet
+    // in the Golden Journey, on desktop and on a Pixel 5.
     await page.viewport(1280, 900);
     const enrolledDeal: Db["deals"][number] = {
       id: 3,
@@ -302,9 +320,17 @@ describe("GYU Cohort person links", () => {
     await expect
       .element(screen.getByRole("heading", { name: "Enrolled Clients" }))
       .toBeInTheDocument();
-    await screen.getByRole("link", { name: "Ada Lovelace" }).click();
 
-    await expect.element(screen.getByText("Not Found")).not.toBeInTheDocument();
-    await expect.element(screen.getByText("CTO")).toBeInTheDocument();
+    // The Enrollment this row was built from — never inferred, and never
+    // ambiguous: enrollments_opportunity_id_key is unique on
+    // opportunity_id, so a Deal has at most one.
+    await expect
+      .element(screen.getByRole("link", { name: "Ada Lovelace" }))
+      .toHaveAttribute("href", "/enrollments/1/show");
+    expect(
+      [...screen.container.querySelectorAll("a[href]")].map((a) =>
+        a.getAttribute("href"),
+      ),
+    ).not.toContain("/contacts/1/show");
   });
 });

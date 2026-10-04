@@ -149,9 +149,16 @@ const CohortShowContent = () => {
               <PersonCard
                 key={client.dealId}
                 contactId={client.contactId}
+                // Presented as a client, so it opens the client profile.
+                // The generic Contact page shows no start/end dates,
+                // payment state, onboarding or sessions — the same reason
+                // the Clients page and the individual programme page use
+                // this route. A group client is still a client.
+                rowLinkTo={`/enrollments/${client.enrollmentId}/show`}
                 name={client.name}
                 trailing={
-                  <Badge variant="outline">
+                  // Decoration; the row behind it is the link.
+                  <Badge variant="outline" className="pointer-events-none">
                     {enrollmentStatusLabels[client.status]}
                   </Badge>
                 }

@@ -225,13 +225,20 @@ describe("the edit client form's shape", () => {
     await expect
       .element(screen.getByText("Actual end date").first())
       .toBeVisible();
+    // The copy must not imply the projection becomes the end date. It does
+    // not: enrollments.end_date is operational truth and nothing writes the
+    // projection into it, so "leave it empty to use the projection above" —
+    // which this said first — was false about the database it describes.
     await expect
       .element(
-        screen.getByText("Leave it empty to use the projection above", {
+        screen.getByText("intentionally ending the enrollment", {
           exact: false,
         }),
       )
       .toBeVisible();
+    expect(screen.container.textContent).not.toContain(
+      "use the projection above",
+    );
   });
 });
 

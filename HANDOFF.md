@@ -403,6 +403,45 @@ checklist used to mean three different things and no longer does. Lifecycle:
 onboarding → active → offboarding → completed. **Won is a sales fact and is
 never gated on payment.**
 
+### Client navigation — SETTLED 2026-10-04
+
+**When a person is presented in a client-management context, navigation
+opens the canonical client/enrollment profile. A Contact page is not a
+substitute for a client profile.**
+
+The route is `/enrollments/:id/show`. The reason is the one the Clients
+page already recorded: the generic Contact page shows no start or end
+dates, no payment state, no onboarding and no sessions.
+
+Applies to every client list:
+
+- **Clients** — was always correct
+- **Individual programme** — Current Clients, Starting Later, Needs Start
+  Week
+- **Group / cohort** — the enrolled-client list on a Cohort
+
+It does **not** apply to people who are not clients. People Deciding are
+prospects with no Enrollment, and Applications route to the Application.
+There is nothing to open, and inventing a destination would be worse than
+the Contact page.
+
+**Never infer the Enrollment.** Each of those lists already holds the one
+it is describing: the programme lists carry `enrollmentId` on the slot
+holder, and a cohort row cannot be built before `useCohortPageData` has
+found its Enrollment. The database holds
+`enrollments_opportunity_id_key unique (opportunity_id)` — at most one per
+Opportunity — so there is exactly one and no ambiguity to resolve. A list
+that genuinely could not identify one would have to say so, not fall back
+to the Contact page.
+
+Mechanically: `PersonCard`'s `rowLinkTo` makes the whole row the target,
+matching the Clients page. `to` is a different prop and links only the
+name — Applications use it, and overloading it turned their rows into
+links and their Approve button into decoration. In a row with a
+destination, everything in `trailing` is decoration unless it opts back in
+with `pointer-events-auto`; without that the trailing area intercepts the
+tap at the row's centre and a narrow screen cannot open the row at all.
+
 ### Start week and capacity — SETTLED 2026-10-03
 
 Six rules. They are one domain rule stated six ways, because every page that

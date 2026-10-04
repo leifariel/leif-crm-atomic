@@ -438,7 +438,7 @@ export const frenchCrmMessages = {
           "La semaine où ce client commence. C'est vous qui la décidez — une séance réservée ne la définit ni ne la déplace jamais.",
         end_date: "Date de fin réelle",
         end_date_help:
-          "Uniquement si ce client a réellement terminé ou arrêté un jour précis. Laissez vide pour utiliser la projection ci-dessus.",
+          "Facultatif. À renseigner uniquement si vous mettez volontairement fin à l'inscription à une date précise.",
         projected_final_week: "Dernière semaine de séance projetée",
         projected_final_week_help:
           "D'après votre suivi annuel et 12 semaines de séance. Les semaines sans séance sont ignorées.",
