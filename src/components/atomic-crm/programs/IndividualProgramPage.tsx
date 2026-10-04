@@ -276,6 +276,16 @@ const SlotPersonCard = ({ client }: { client: SlotHolder }) => {
   return (
     <PersonCard
       contactId={client.contactId}
+      // The Enrollment, not the Contact — the same destination the Clients
+      // page uses, and for the reason it already records: "this is the
+      // client container, and the generic Contact page does not show
+      // start/end dates, payment state, onboarding or sessions."
+      //
+      // This page sent Leif to /contacts/:id/show instead, because
+      // PersonCard falls back to the Contact when given no destination. So
+      // the same person opened two different pages depending on which list
+      // he clicked them from.
+      rowLinkTo={`/enrollments/${client.enrollmentId}/show`}
       // The CRM never invents a name; when it genuinely does not know
       // one, it says so rather than rendering a blank row.
       name={
@@ -286,7 +296,13 @@ const SlotPersonCard = ({ client }: { client: SlotHolder }) => {
       // day, a worked-out one gets its month and the word "expected".
       meta={startWeekLine(client, translate)}
       trailing={
-        <Badge variant="outline">{enrollmentStatusLabels[client.status]}</Badge>
+        // pointer-events-none: the row is a link and this badge sits above
+        // it. Measured on a Pixel 5 — without this the badge intercepts
+        // the click at the row's centre, so on a narrow screen tapping the
+        // row did nothing. Decoration should not be a click target.
+        <Badge variant="outline" className="pointer-events-none">
+          {enrollmentStatusLabels[client.status]}
+        </Badge>
       }
     />
   );

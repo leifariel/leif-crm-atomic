@@ -85,10 +85,22 @@ describe("the row is actionable, and there is still one start-week editor", () =
     }
   });
 
-  test("the name links to the client's own record", () => {
-    expect(code(SECTION)).toMatch(
-      /to=\{`\/enrollments\/\$\{client\.enrollmentId\}\/show`\}/,
+  test("the row opens the client's own record, not their Contact page", () => {
+    // The destination the Clients page uses, for the reason it records:
+    // the generic Contact page shows no start/end dates, payment state,
+    // onboarding or sessions. rowLinkTo, not to — the whole row is the
+    // target, and `to` keeps its own meaning for callers that only want
+    // the name linked.
+    const body = code(SECTION);
+    expect(body).toMatch(
+      /rowLinkTo=\{`\/enrollments\/\$\{client\.enrollmentId\}\/show`\}/,
     );
+    expect(body).not.toMatch(/\/contacts\//);
+    // And the same destination from the two dated sections.
+    expect(code(PAGE)).toMatch(
+      /rowLinkTo=\{`\/enrollments\/\$\{client\.enrollmentId\}\/show`\}/,
+    );
+    expect(code(PAGE)).not.toMatch(/\/contacts\//);
   });
 
   test("and why, so it is not quietly turned back into a footnote", () => {

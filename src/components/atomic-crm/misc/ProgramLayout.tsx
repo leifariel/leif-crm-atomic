@@ -89,6 +89,7 @@ export const Section = ({
 export const PersonCard = ({
   contactId,
   to,
+  rowLinkTo,
   name,
   meta,
   trailing,
@@ -97,30 +98,84 @@ export const PersonCard = ({
   // is nullable, and a row that links to /contacts//show is worse than a
   // row that simply does not link.
   contactId: string | number | null | undefined;
+  // Where the NAME links. Defaults to the Contact page.
   to?: string;
+  // Where the WHOLE ROW links, matching the Clients page where the entire
+  // row is one link. Its own prop rather than a behaviour of `to`:
+  // Applications already pass `to`, and overloading it silently turned
+  // their rows into links and their Approve button into decoration.
+  // Caught by applicationManualEntry.test.tsx, which is why that test
+  // exists.
+  rowLinkTo?: string;
   name: string;
   meta?: ReactNode;
   trailing?: ReactNode;
-}) => (
-  <Card className="p-0">
-    <CardContent className="flex items-center justify-between gap-3 px-4 py-2.5">
-      <div className="flex min-w-0 flex-col">
-        {to ||
-        (contactId !== null && contactId !== undefined && contactId !== "") ? (
+}) => {
+  const linkable =
+    contactId !== null && contactId !== undefined && contactId !== "";
+
+  if (rowLinkTo) {
+    return (
+      <Card className="p-0">
+        <CardContent className="relative flex items-center justify-between gap-3 px-4 py-2.5">
+          {/* A stretched link rather than a wrapper, so `trailing` can hold
+              a real button. Nesting a <button> inside an <a> is invalid and
+              would navigate on every click of it — which is exactly what
+              "Set start week" must not do. */}
           <Link
-            to={to ?? `/contacts/${contactId}/show`}
-            className="text-sm font-medium hover:underline truncate"
-          >
-            {name}
-          </Link>
-        ) : (
-          <span className="text-sm font-medium truncate">{name}</span>
-        )}
-        {meta && (
-          <span className="text-xs text-muted-foreground truncate">{meta}</span>
-        )}
-      </div>
-      {trailing && <div className="shrink-0">{trailing}</div>}
-    </CardContent>
-  </Card>
-);
+            to={rowLinkTo}
+            aria-label={name}
+            className="absolute inset-0 rounded-xl transition-colors hover:bg-accent/50"
+          />
+          <div className="pointer-events-none relative flex min-w-0 flex-col">
+            <span className="truncate text-sm font-medium">{name}</span>
+            {meta && (
+              <span className="truncate text-xs text-muted-foreground">
+                {meta}
+              </span>
+            )}
+          </div>
+          {/* Transparent, so the link behind it still owns the row.
+              Measured on a Pixel 5: with this wrapper taking clicks, the
+              row's geometric centre fell inside it and tapping the row did
+              nothing at all on a narrow screen.
+
+              The rule for a row with a destination: everything in
+              `trailing` is decoration unless it says otherwise, and a real
+              control opts back in with `pointer-events-auto`. See
+              NeedsStartWeekSection's "Set start week" button. */}
+          {trailing && (
+            <div className="pointer-events-none relative shrink-0">
+              {trailing}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="p-0">
+      <CardContent className="flex items-center justify-between gap-3 px-4 py-2.5">
+        <div className="flex min-w-0 flex-col">
+          {to || linkable ? (
+            <Link
+              to={to ?? `/contacts/${contactId}/show`}
+              className="text-sm font-medium hover:underline truncate"
+            >
+              {name}
+            </Link>
+          ) : (
+            <span className="text-sm font-medium truncate">{name}</span>
+          )}
+          {meta && (
+            <span className="text-xs text-muted-foreground truncate">
+              {meta}
+            </span>
+          )}
+        </div>
+        {trailing && <div className="shrink-0">{trailing}</div>}
+      </CardContent>
+    </Card>
+  );
+};

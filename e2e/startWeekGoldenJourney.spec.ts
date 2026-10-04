@@ -609,6 +609,57 @@ test.describe("the start-week golden journey", () => {
     expect(rendered).toContain(`expected final session week ${inModal}`);
   });
 
+  test("a client row opens the client, not the contact", async ({ page }) => {
+    // From Clients a row opens /enrollments/:id/show. From this page the
+    // SAME person opened /contacts/:id/show, because PersonCard falls back
+    // to the Contact when given no destination. One person, two pages,
+    // depending on which list Leif clicked them from.
+    await signIn(page, email);
+    await openProgramme(page, OFFER_ID);
+
+    // Nothing in the client sections points at a Contact page.
+    const hrefs = await page
+      .locator("a[href]")
+      .evaluateAll((links) =>
+        links.map((link) => link.getAttribute("href") ?? ""),
+      );
+    expect(hrefs.filter((href) => href.includes("/contacts/"))).toEqual([]);
+    expect(
+      hrefs.filter((href) => href.includes("/enrollments/")).length,
+    ).toBeGreaterThan(0);
+
+    // Current Clients: clicking the row lands on the client container.
+    await page.getByRole("link", { name: "Early Finisher" }).click();
+    await expect(page).toHaveURL(/#\/enrollments\/\d+\/show/);
+    const current = page.url();
+    expect(current).not.toContain("/contacts/");
+
+    // Needs Start Week: same destination, for the unscheduled client.
+    await openProgramme(page, OFFER_ID);
+    await page.getByRole("link", { name: UNSCHEDULED_NAME }).click();
+    await expect(page).toHaveURL(/#\/enrollments\/\d+\/show/);
+    await expect(
+      page.getByText(UNSCHEDULED_NAME, { exact: false }).first(),
+    ).toBeVisible();
+  });
+
+  test("Set start week opens the editor and navigates nowhere", async ({
+    page,
+  }) => {
+    // The button sits inside a row that is itself a link. A <button> nested
+    // in an <a> would navigate on every click; the stretched-link layout is
+    // what keeps them apart.
+    await signIn(page, email);
+    await openProgramme(page, OFFER_ID);
+    const before = page.url();
+
+    await page.getByRole("button", { name: "Set start week" }).first().click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByText("Edit client")).toBeVisible();
+    expect(page.url()).toBe(before);
+    expect(page.url()).not.toContain("/contacts/");
+  });
+
   test("another programme's Offer cannot answer for this one", async ({
     page,
   }) => {

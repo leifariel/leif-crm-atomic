@@ -53,7 +53,7 @@ export const NeedsStartWeekSection = ({
               // Their own client page, not their Contact page: that is
               // where the rest of the enrollment lives, and where
               // StartWeekCard asks the same question.
-              to={`/enrollments/${client.enrollmentId}/show`}
+              rowLinkTo={`/enrollments/${client.enrollmentId}/show`}
               name={
                 client.name ||
                 translate("crm.programs.unnamed_client", {
@@ -64,13 +64,21 @@ export const NeedsStartWeekSection = ({
                 _: "Start week not set",
               })}
               trailing={
-                <div className="flex items-center gap-2">
+                // Transparent by default, and only the button takes
+                // clicks back. The row behind this is a link, and measured
+                // on a Pixel 5 it was this wrapper — its own padding and
+                // the gap between badge and button — that intercepted the
+                // tap at the row's centre, so tapping the row did nothing
+                // on a narrow screen. Decoration and whitespace are not
+                // click targets; the control is.
+                <div className="pointer-events-none flex items-center gap-2">
                   <Badge variant="outline">
                     {enrollmentStatusLabels[client.status]}
                   </Badge>
                   <Button
                     type="button"
                     size="sm"
+                    className="pointer-events-auto"
                     onClick={() => setEditing(client)}
                   >
                     {translate("crm.programs.set_start_week", {

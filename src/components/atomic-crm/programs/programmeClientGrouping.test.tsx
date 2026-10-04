@@ -184,6 +184,107 @@ const sectionOf = (body: string, name: string): string | null => {
   return found;
 };
 
+// Where a client row takes you.
+//
+// From Clients, a row opens /enrollments/:id/show — the client container,
+// with start and end dates, payment state, onboarding and sessions. From
+// Programs -> The Living Example the SAME person opened /contacts/:id/show
+// instead, because PersonCard falls back to the Contact when given no
+// destination and this page never gave one. One person, two pages,
+// depending on which list Leif happened to click them from.
+//
+// The invariant: presented as a client, opens the client profile.
+describe("where a client row goes", () => {
+  // MemoryRouter renders plain paths; the real app is hash-routed and
+  // React Router writes the "#" itself. The destination is what matters.
+  const CANONICAL = (id: number) => `/enrollments/${id}/show`;
+
+  const rowLinks = (screen: { container: HTMLElement }) =>
+    [...screen.container.querySelectorAll("a[href]")].map((a) =>
+      (a as HTMLAnchorElement).getAttribute("href"),
+    );
+
+  it("opens the client profile from Current Clients", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm();
+    const screen = await render(element);
+    await expect
+      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .toBeVisible();
+
+    await expect
+      .element(screen.getByRole("link", { name: "Nadia Okoro" }))
+      .toHaveAttribute("href", `${CANONICAL(1)}`);
+  });
+
+  it("opens the client profile from Starting Later", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm();
+    const screen = await render(element);
+    await expect
+      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .toBeVisible();
+
+    await expect
+      .element(screen.getByRole("link", { name: "Pete Bassett" }))
+      .toHaveAttribute("href", `${CANONICAL(2)}`);
+  });
+
+  it("opens the client profile from Needs Start Week", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm();
+    const screen = await render(element);
+    await expect
+      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .toBeVisible();
+
+    await expect
+      .element(screen.getByRole("link", { name: "Unscheduled Commitment" }))
+      .toHaveAttribute("href", `${CANONICAL(3)}`);
+  });
+
+  it("never routes a client row at the generic Contact page", async () => {
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm();
+    const screen = await render(element);
+    await expect
+      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .toBeVisible();
+
+    const links = rowLinks(screen);
+    expect(links.filter((href) => href?.includes("/contacts/"))).toEqual([]);
+    // And all three clients are reachable.
+    for (const id of [1, 2, 3]) {
+      expect(links).toContain(CANONICAL(id));
+    }
+  });
+
+  it("sets the start week without navigating anywhere", async () => {
+    // The button lives inside the row, and the row is a link. Nesting a
+    // button in an anchor would navigate on every click of it; the
+    // stretched-link layout is what keeps the two apart.
+    await page.viewport(1280, 1400);
+    const { element } = buildCrm();
+    const screen = await render(element);
+    await expect
+      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .toBeVisible();
+
+    const before = window.location.hash;
+    await screen
+      .getByRole("button", { name: "Set start week" })
+      .first()
+      .click();
+
+    // The editor opened, over the page it was opened from.
+    await expect.element(screen.getByRole("dialog")).toBeVisible();
+    await expect.element(screen.getByText("Edit client")).toBeVisible();
+    expect(window.location.hash).toBe(before);
+    // Still the programme page underneath.
+    expect(screen.container.textContent).toContain("Current Clients");
+  });
+});
+
 describe("the programme page's client sections", () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
