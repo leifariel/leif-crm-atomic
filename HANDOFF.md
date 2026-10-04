@@ -99,6 +99,25 @@ has not exercised is not evidence of anything, however much of it there is.
   `src/`, so its copy of a task type silently outlived the migration that split
   it. Where a rule must exist twice, the database holds the authority and
   reconciles both directions on a schedule — see §4's Tasks section.
+- **Vitest is not authoritative about layout. Playwright is.** The "app"
+  Vitest browser project is configured with `plugins: [react()]` and no
+  `tailwindcss()`, so `@import "tailwindcss"` is never processed and every
+  Tailwind utility class is **inert** in those tests. Measured: `grid` and
+  `flex` compute to `display: block`, `max-w-lg` has no effect, a date
+  input is 143px because that is its intrinsic size with no CSS, and an
+  `absolute inset-0` stretched link has **zero size and cannot be clicked**.
+  - Vitest MAY assert semantic structure, text, hrefs, ARIA, state and
+    contracts.
+  - Vitest MUST NOT be treated as authoritative for CSS geometry, sizing,
+    click hitboxes, overlap or layout — and must not CLICK anything whose
+    hitbox depends on a utility class.
+  - Playwright against the real built stylesheet is authoritative for all
+    of that.
+  This cost three rounds of assertions that were measuring the user agent,
+  and then a second round of click timeouts in a different guise. It is a
+  documented test boundary, not a defect to fix in passing: adding Tailwind
+  to the test project would change rendering for ~300 files and needs to be
+  its own prioritised piece of work. Worked examples in §8b-stabilize.
 - Critical workflows get contract / end-to-end coverage.
 - Production errors should surface on their own rather than waiting for Leif to
   trip over them.
