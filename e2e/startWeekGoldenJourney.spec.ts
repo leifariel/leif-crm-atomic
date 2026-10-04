@@ -97,7 +97,7 @@ const openClient = async (page: Page, enrollmentId: number) => {
 const stateTheStartWeek = async (
   page: Page,
   iso: string,
-  { from }: { from?: string } = {},
+  { from, save = true }: { from?: string; save?: boolean } = {},
 ) => {
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
@@ -105,7 +105,7 @@ const stateTheStartWeek = async (
   await expect(field).toHaveValue(from ?? "");
   await field.fill(iso);
   await expect(field).toHaveValue(iso);
-  await dialog.getByRole("button", { name: "Save" }).click();
+  if (save) await dialog.getByRole("button", { name: "Save" }).click();
 };
 
 // Every PATCH the browser actually sent to PostgREST for enrollments.
@@ -546,6 +546,67 @@ test.describe("the start-week golden journey", () => {
     } finally {
       await context.close();
     }
+  });
+
+  test("the editor is readable, and its projection is the page's own", async ({
+    page,
+    isMobile,
+  }) => {
+    // The two proofs that cannot be made in vitest.
+    //
+    // GEOMETRY. The app project has no tailwindcss() plugin, so every
+    // utility class is inert there and a date input measures 143px — its
+    // intrinsic size with no CSS. Here the real stylesheet is built, so
+    // the widths below mean something. The reported defect was the End
+    // field collapsing until "mm/dd/yyyy" clipped its own border.
+    //
+    // NO DIVERGENCE. The modal and the Programme row must show the SAME
+    // projected final session week, because they call the same function
+    // over the same calendar. Two engines is the failure this codebase
+    // has already had three times.
+    await signIn(page, email);
+    await openProgramme(page, OFFER_ID);
+    await page.getByRole("button", { name: "Set start week" }).first().click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    const dates = dialog.locator('input[type="date"]');
+    await expect(dates).toHaveCount(2);
+
+    const boxes = [];
+    for (let i = 0; i < 2; i += 1) {
+      boxes.push((await dates.nth(i).boundingBox())!);
+    }
+    // Stacked, not side by side.
+    expect(boxes[1]!.y).toBeGreaterThan(boxes[0]!.y + boxes[0]!.height - 1);
+    // Both the same width, and wide enough that the placeholder cannot
+    // clip. 143px was the squeezed column; a date input needs roughly 110
+    // for "mm/dd/yyyy" plus the picker control and padding.
+    // Within a few pixels of each other. Measured 2.5px apart on a Pixel 5
+    // at devicePixelRatio 2.75 — sub-pixel rounding, not a squeeze. The
+    // defect being guarded against collapsed one of them to a third of
+    // the other.
+    expect(Math.abs(boxes[0]!.width - boxes[1]!.width)).toBeLessThan(4);
+    expect(boxes[0]!.width).toBeGreaterThan(isMobile ? 240 : 320);
+    // Inside the viewport, not spilling out of it.
+    const viewport = page.viewportSize()!;
+    expect(boxes[0]!.x).toBeGreaterThanOrEqual(0);
+    expect(boxes[0]!.x + boxes[0]!.width).toBeLessThanOrEqual(viewport.width);
+
+    // The projection, answered live for the week being chosen.
+    const chosen = week(4);
+    await stateTheStartWeek(page, chosen, { save: false });
+    const projection = dialog.getByText(/^[A-Z][a-z]{2} \d{1,2}, \d{4}$/);
+    await expect(projection.first()).toBeVisible();
+    const inModal = (await projection.first().innerText()).trim();
+
+    await dialog.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByText("Client updated")).toBeVisible();
+
+    // And the Programme row says the same thing, from the same authority.
+    const rendered = await page.locator("body").innerText();
+    expect(rendered).toContain(`Starts ${ppDate(chosen)}`);
+    expect(rendered).toContain(`expected final session week ${inModal}`);
   });
 
   test("another programme's Offer cannot answer for this one", async ({

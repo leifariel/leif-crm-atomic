@@ -435,7 +435,12 @@ export const englishCrmMessages = {
         start_week: "Start week",
         start_week_help:
           "The week this client begins. You decide it — a booked session never sets or moves it.",
-        end_date: "End",
+        end_date: "Actual end date",
+        end_date_help:
+          "Only if this client actually finished or stopped on a particular day. Leave it empty to use the projection above.",
+        projected_final_week: "Projected final session week",
+        projected_final_week_help:
+          "Based on your Year Tracking calendar and 12 session weeks. Off weeks are skipped.",
       },
       empty: "No clients yet.",
       needs_onboarding: "Needs Onboarding",
@@ -1014,6 +1019,9 @@ export const englishCrmMessages = {
       openings_missing_start_week:
         "%{count} client still needs a start week, so future availability may change. |||| %{count} clients still need a start week, so future availability may change.",
       needs_start_week: "Needs Start Week",
+      projection_needs_start_week: "Not available until a start week is set",
+      projection_calendar_too_short:
+        "Can't calculate yet — your Year Tracking calendar reaches %{scheduled} of the %{required} session weeks it needs.",
       needing_a_start_week:
         "%{count} needs a start week |||| %{count} need a start week",
       set_start_week: "Set start week",

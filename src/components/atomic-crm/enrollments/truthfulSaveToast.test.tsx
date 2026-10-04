@@ -340,6 +340,19 @@ describe("clearing the start week on purpose", () => {
     await expect.element(screen.getByRole("dialog")).toBeVisible();
     await expect.element(startWeekField(screen)).toHaveValue("2026-11-09");
     await startWeekField(screen).fill("");
+    // Commit the clear before submitting. DateInput deliberately does NOT
+    // push an empty value through onChange ("The input reset is handled in
+    // the onBlur event handler"), so the field is only cleared once it
+    // loses focus.
+    //
+    // This line became necessary when the modal gained the projected final
+    // session week, which subscribes to start_date via useWatch: the extra
+    // re-render changed the timing enough that this synthetic click raced
+    // the blur. A real browser does not — mousedown blurs before click —
+    // and the Golden Journey proves that path against the production
+    // build, desktop and Pixel 5. So this is the test catching up with the
+    // component, not a defect being papered over.
+    await startWeekField(screen).element().blur();
     await screen.getByRole("button", { name: "Save" }).click();
 
     await expect.element(screen.getByText("Client updated")).toBeVisible();

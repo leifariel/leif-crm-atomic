@@ -436,7 +436,12 @@ export const frenchCrmMessages = {
         start_week: "Semaine de début",
         start_week_help:
           "La semaine où ce client commence. C'est vous qui la décidez — une séance réservée ne la définit ni ne la déplace jamais.",
-        end_date: "Fin",
+        end_date: "Date de fin réelle",
+        end_date_help:
+          "Uniquement si ce client a réellement terminé ou arrêté un jour précis. Laissez vide pour utiliser la projection ci-dessus.",
+        projected_final_week: "Dernière semaine de séance projetée",
+        projected_final_week_help:
+          "D'après votre suivi annuel et 12 semaines de séance. Les semaines sans séance sont ignorées.",
       },
       empty: "Aucun client pour le moment.",
       needs_onboarding: "Intégration à faire",
@@ -987,6 +992,10 @@ export const frenchCrmMessages = {
       openings_missing_start_week:
         "%{count} client n'a pas encore de semaine de début, la disponibilité future peut donc changer. |||| %{count} clients n'ont pas encore de semaine de début, la disponibilité future peut donc changer.",
       needs_start_week: "Semaine de début à définir",
+      projection_needs_start_week:
+        "Indisponible tant qu'une semaine de début n'est pas définie",
+      projection_calendar_too_short:
+        "Calcul impossible pour l'instant — votre suivi annuel atteint %{scheduled} des %{required} semaines de séance nécessaires.",
       needing_a_start_week:
         "%{count} semaine de début à définir |||| %{count} semaines de début à définir",
       set_start_week: "Définir la semaine de début",

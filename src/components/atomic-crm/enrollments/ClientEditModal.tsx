@@ -15,6 +15,7 @@ import {
 
 import type { Enrollment } from "../types";
 import { enrollmentStatuses } from "./enrollmentConstants";
+import { ProjectedFinalWeekField } from "./ProjectedFinalWeekField";
 import { assessEnrollmentSave, saveOutcomeMessage } from "./savedWhatWasStated";
 
 // The three operational facts about a client Leif actually edits: where they
@@ -143,18 +144,37 @@ export const ClientEditModal = ({
               helperText={false}
               validate={required()}
             />
-            <div className="flex flex-col sm:flex-row gap-4">
-              <DateInput
-                source="start_date"
-                label="resources.enrollments.fields.start_week"
-                helperText="resources.enrollments.fields.start_week_help"
-              />
-              <DateInput
-                source="end_date"
-                label="resources.enrollments.fields.end_date"
-                helperText={false}
-              />
-            </div>
+            {/* One field per row, deliberately.
+                These two were side by side, and at this dialog width the
+                End column collapsed far enough that its own placeholder
+                clipped: "mm/dd/yyyy" overlapping its border. Two date
+                inputs sharing a row also implied they were the same kind
+                of thing, which is the worse half of the problem — a start
+                week is a plan and a recorded end is a fact about something
+                that already happened. */}
+            <DateInput
+              source="start_date"
+              label="resources.enrollments.fields.start_week"
+              helperText="resources.enrollments.fields.start_week_help"
+            />
+
+            {/* What that week means, worked out while he chooses it, from
+                the same function the Programme page's client rows use. */}
+            <ProjectedFinalWeekField enrollmentId={enrollmentId} />
+
+            {/* The ACTUAL end, which is a different fact from the
+                projection above and is never written by it.
+                enrollments.end_date is somebody's decision and outranks
+                the calendar arithmetic entirely (individualCapacity.ts);
+                endEnrollment refuses to invent one, because the day
+                somebody stopped is not the day the CRM was told. This
+                modal is the only editor it has, so it stays — below the
+                projection, and saying what it is for. */}
+            <DateInput
+              source="end_date"
+              label="resources.enrollments.fields.end_date"
+              helperText="resources.enrollments.fields.end_date_help"
+            />
             <div className="flex gap-2">
               <Button
                 type="button"

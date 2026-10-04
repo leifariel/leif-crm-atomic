@@ -3245,6 +3245,56 @@ fails for the right reason: the browser sent **zero** PATCH requests to
 PostgREST while the CRM said "Client updated". The broken variant was never
 committed.
 
+### The start week says what it means — 2026-10-04
+
+The Edit client modal put Start week and End side by side. At this dialog
+width the End column collapsed until its own `mm/dd/yyyy` placeholder
+clipped its border — but the worse half was the implication: two date
+inputs sharing a row read as two of the same kind of thing.
+
+They are not, and the audit settled it rather than assuming.
+**`enrollments.end_date` is operational truth** — "a recorded end date is
+somebody's decision and outranks the calendar arithmetic entirely"
+([individualCapacity.ts](src/components/atomic-crm/capacity/individualCapacity.ts)).
+Nothing in the app invents one: `endEnrollment` explicitly refuses,
+because the day somebody stopped is not the day the CRM was told. Only
+group enrollments inherit a cohort's `program_end_at`. So the projection
+is **never** written into it.
+
+The modal is now one field per row: Status, Start week, the projected final
+session week (read-only), then the actual end date — kept, because this
+modal is its **only** editor in the app, and now labelled "Actual end date"
+with "Leave it empty to use the projection above."
+
+[useProjectedFinalWeek.ts](src/components/atomic-crm/enrollments/useProjectedFinalWeek.ts)
+calculates nothing. It gathers the same three inputs the capacity model
+gathers — the offer's live `1:1s` weeks, the start week, one extension per
+cross-week reschedule — and calls the same `computeExpectedEnd`. It is
+**not** start + 12 calendar weeks: between 2 July and 13 September 2026
+Leif's calendar has no eligible week at all. When the calendar cannot reach
+twelve eligible weeks it says so and invents nothing.
+
+**A testing trap worth knowing before it costs somebody else three runs.**
+`vitest.config.ts` gives the "app" project `plugins: [react()]` — **no
+`tailwindcss()`**. So `@import "tailwindcss"` in `index.css` is never
+processed and **every Tailwind utility class is inert in vitest browser
+tests**. Measured: with the stylesheet imported, `grid` and `flex`
+still compute to `display: block`, `max-w-lg` has no effect, and a date
+input is 143px because that is its intrinsic size with no CSS. Any width,
+position or visibility assertion that depends on a utility class is
+measuring the user agent. (`ClientShow.checkboxCursor.test.tsx` works
+because `button:disabled { cursor: not-allowed }` is a literal rule in
+`index.css`, not a utility.)
+
+So: **structure in vitest, geometry in Playwright.** The modal's layout is
+asserted structurally in
+[projectedFinalWeekUx.test.tsx](src/components/atomic-crm/enrollments/projectedFinalWeekUx.test.tsx)
+(no shared row wrapper, projection between the two dates) and measured for
+real in the Golden Journey against the production bundle, on desktop and on
+a Pixel 5 — which also proves the modal's projection and the Programme
+row's "expected final session week" are the same string, because they are
+the same function.
+
 ### A phase and a home arrive together — 2026-10-04
 
 Found by Leif on the real production page, during acceptance, which is
@@ -3368,6 +3418,38 @@ for `75cdfa67` into a durable gate: build a database from
 from the migration chain, failing on any difference. Migrations remain
 production authority; the declaration gets continuously checked against them
 instead of drifting for four slices at a time. Not built — recorded on purpose.
+
+## 8b-buffer. HIGH PRIORITY — LE SAFE-OPENING BUFFER (NOT YET DECIDED)
+
+**Recorded 2026-10-04. Do not implement without Leif's decision.**
+
+The Living Example is twelve client sessions, and the openings engine
+currently treats the twelfth session week as the moment the slot frees. In
+practice that **overbooks Leif**. People skip, reschedule, miss weeks and
+run long, so a container that is nominally finished often is not, and a new
+client advertised for the following week lands on top of the old one.
+
+The desired model is **12 session weeks + an owner safety buffer** before
+another client may start. Likely one eligible working week, possibly two.
+**The exact policy is not decided**, and 13-vs-14 is Leif's call, not an
+implementation detail to guess at.
+
+Two concepts that must not be conflated when this is built:
+
+- **Projected final session week** — still counts the actual 12 sessions
+  (plus one eligible week per cross-week reschedule). This is what the
+  client row and the edit modal show, and it does not change.
+- **Next safe opening** — adds the owner buffer AFTER that container.
+  This is the openings forecast, and it is the only thing the buffer
+  touches.
+
+Where it would go: `capacity/weekCapacity.ts` / `occupancyLedger.ts`
+decide when a slot frees; `computeExpectedEnd` must be left alone.
+
+Priority order from here: (1) finish LE lifecycle production acceptance,
+(2) start/end modal UX and the shared projection — both done,
+(3) the parked Payment Pages (real-Postgres concurrency, Stripe TEST
+proof), (4) **this buffer policy**, (5) Applications-page UX cleanup.
 
 ## 8c. NEXT SLICE — Waitlist quick-create
 
