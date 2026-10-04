@@ -3245,6 +3245,51 @@ fails for the right reason: the browser sent **zero** PATCH requests to
 PostgREST while the CRM said "Client updated". The broken variant was never
 committed.
 
+### LE LIFECYCLE STABILIZATION — PRODUCTION ACCEPTED, 2026-10-04
+
+Accepted by Leif on production, by doing the thing the slice existed to
+make possible.
+
+He opened Programs → The Living Example, found Todd Jacobsen under **Needs
+Start Week**, clicked **Set start week**, chose **13 December 2026**, and
+saved once. Then the authoritative read, from production Postgres rather
+than the browser:
+
+```
+Deal 202            rows 1, stage won
+Enrollment 115      opportunity_id 202, status onboarding
+                    start_date 2026-12-13, start_date_source owner
+                    end_date NULL
+Duplicate guards    1 enrollment for deal 202; 1 across his whole contact
+```
+
+Then Cmd+R, and the page still said it: Todd under **Starting Later**,
+"Starts Dec 13, 2026", absent from Needs Start Week, **12 / 12 active**,
+**9 starting later**, named exactly once, next opening **Week of Jan 10 ·
+2 clients can start** — the same after a full reload as immediately after
+the save.
+
+**The silent-save defect is closed in production:** real UI save → durable
+Postgres write → fresh reload preserves it. That is the whole chain that
+failed, verified end to end on a real record.
+
+Two invariants demonstrated on that record rather than argued:
+
+- **`end_date = NULL`** while the row renders "expected final session
+  week Apr 11, 2027". The projection is arithmetic and never forges the
+  operational end.
+- **`status = onboarding` and he is under Starting Later.** Not a
+  contradiction: `classifyEnrollment` answers from dates, so a
+  non-terminal enrollment starting in the future is *upcoming* whatever
+  its status column says. That is the same distinction that fixed
+  18-vs-12.
+
+The openings answer moved the right way: 3 January was offerable while
+Todd consumed nothing, and is not once he consumes a dated slot from 13
+December — so the earliest safe week slid to 10 January. An opening that
+had stayed put, or moved earlier, would have meant he was still consuming
+nothing.
+
 ### The start week says what it means — 2026-10-04
 
 The Edit client modal put Start week and End side by side. At this dialog
