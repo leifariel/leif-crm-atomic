@@ -13,6 +13,7 @@ import { LivingExampleApplicationPage } from "../public-application/LivingExampl
 import { AddToWaitlistButton } from "../waitlist/AddToWaitlistButton";
 import { WaitlistSection } from "../waitlist/WaitlistSection";
 import { useWaitlistEntries } from "../waitlist/useWaitlistEntries";
+import { NeedsStartWeekSection } from "./NeedsStartWeekSection";
 import { UpcomingOpeningsSection } from "./UpcomingOpeningsSection";
 import { useIndividualProgramData } from "./useIndividualProgramData";
 
@@ -109,6 +110,16 @@ export const IndividualProgramPage = () => {
                   })}
                 </span>
               )}
+              {capacity != null && capacity.unscheduled.length > 0 && (
+                <span>
+                  {" · "}
+                  {translate("crm.programs.needing_a_start_week", {
+                    _: "%{count} needs a start week |||| %{count} need a start week",
+                    smart_count: capacity.unscheduled.length,
+                    count: capacity.unscheduled.length,
+                  })}
+                </span>
+              )}
               {capacity != null && capacity.unconfirmedStartWeek.length > 0 && (
                 <span>
                   {" · "}
@@ -164,6 +175,17 @@ export const IndividualProgramPage = () => {
             ))}
           </div>
         </Section>
+      )}
+
+      {/* Committed, and not yet placed in a week. A third client section
+          rather than a footnote: giving these people their own capacity
+          phase was right, and it took them off the page — Leif found Todd
+          Jacobsen in production as one grey sentence under the openings
+          forecast with no row to click. Above Upcoming Openings on
+          purpose, because it is a client section and not a caveat about a
+          projection. */}
+      {capacity != null && (
+        <NeedsStartWeekSection clients={capacity.unscheduled} />
       )}
 
       {futureOpenings != null && capacity != null && (

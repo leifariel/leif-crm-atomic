@@ -985,7 +985,11 @@ export const frenchCrmMessages = {
       start_week_not_set: "Semaine de début non renseignée",
       opening_starts: "%{names} déjà prévus au démarrage",
       openings_missing_start_week:
-        "Pas encore de semaine de début pour %{names} — ils ne sont pas comptés ici tant que vous ne l'avez pas définie, donc il y a peut-être moins de place que ce qui est affiché.",
+        "%{count} client n'a pas encore de semaine de début, la disponibilité future peut donc changer. |||| %{count} clients n'ont pas encore de semaine de début, la disponibilité future peut donc changer.",
+      needs_start_week: "Semaine de début à définir",
+      needing_a_start_week:
+        "%{count} semaine de début à définir |||| %{count} semaines de début à définir",
+      set_start_week: "Définir la semaine de début",
       openings_unknown_end:
         "Pas encore de date de fin pour %{names} — le suivi annuel n'atteint pas leur 12e semaine de séance.",
       unnamed_client: "un client sans nom",

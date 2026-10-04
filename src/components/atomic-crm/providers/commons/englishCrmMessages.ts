@@ -1012,7 +1012,11 @@ export const englishCrmMessages = {
       // is calendar, and the old wording sent Leif looking for the wrong
       // problem.
       openings_missing_start_week:
-        "No start week yet for %{names} — they aren't counted here until you set one, so there may be less room than this shows.",
+        "%{count} client still needs a start week, so future availability may change. |||| %{count} clients still need a start week, so future availability may change.",
+      needs_start_week: "Needs Start Week",
+      needing_a_start_week:
+        "%{count} needs a start week |||| %{count} need a start week",
+      set_start_week: "Set start week",
       openings_unknown_end:
         "No finish date yet for %{names} — Year Tracking doesn't reach their 12th session week.",
       unnamed_client: "an unnamed client",

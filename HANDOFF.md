@@ -3245,6 +3245,52 @@ fails for the right reason: the browser sent **zero** PATCH requests to
 PostgREST while the CRM said "Client updated". The broken variant was never
 committed.
 
+### A phase and a home arrive together — 2026-10-04
+
+Found by Leif on the real production page, during acceptance, which is
+exactly what acceptance is for.
+
+The capacity arithmetic was right: **12 / 12 active**, Todd no longer
+counted. And Todd had vanished. He was not under Current Clients, not
+under Starting Later, and the only trace of him anywhere on the page was
+one grey sentence beneath the whole openings forecast: *"No start week yet
+for Todd Jacobsen — they aren't counted here until you set one…"*. No row,
+nothing to click, no path from the programme page to the thing the
+sentence was asking for.
+
+The cause is mine and it is simple. The page had two client sections,
+`capacity.occupied` and `capacity.committed`. Giving an unplaced
+commitment its own phase was correct — it consumes no dated slot — but a
+third phase with only two sections renders nowhere. **Correct arithmetic
+is not the same as a correct page**, and the failure mode is quiet: no
+error, no wrong number, just a person who stopped existing.
+
+Repaired as a third client section,
+[NeedsStartWeekSection](src/components/atomic-crm/programs/NeedsStartWeekSection.tsx),
+between Starting Later and Upcoming Openings — with the client sections,
+because it is a client section and not a caveat about a projection. The
+row carries the name (linking to `/enrollments/:id/show`), the status
+badge, "Start week not set", and a **Set start week** button that opens
+`ClientEditModal`: the same component StartWeekCard opens and
+`/enrollments/:id/edit` wraps. There is still exactly one start-week
+editor and one save path — the one repaired after it silently discarded
+Todd's first save. The header gained "1 needs a start week".
+
+The openings footnote is now a **count with no names and no action**
+("1 client still needs a start week, so future availability may change"),
+because the forecast genuinely does depend on it — but it is a caveat
+about numbers, not where those people live. Naming them there is what
+made it their only representation.
+
+**The rule, generalised:** a capacity phase and a place to render it ship
+together. [everyClientHasAHome.test.ts](contracts/programs/everyClientHasAHome.test.ts)
+enforces it — the page must render a section per non-released phase, the
+model must still have exactly those phases (a fourth fails the contract
+and forces the author to decide where those people appear), the section
+must sit above the forecast, and the row may not grow a second editor
+(no `useUpdate`, no `dataProvider`, no `DateInput`, no
+`start_date_source` anywhere in it).
+
 ### What this says about proving things in Postgres
 
 Neither trap is reachable from the database. Both live in the browser,

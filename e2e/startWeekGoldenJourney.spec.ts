@@ -126,6 +126,29 @@ const watchEnrollmentWrites = (page: Page) => {
   return writes;
 };
 
+// Which client section a name is rendered under, by reading the page in
+// order. The three sections are the lifecycle: current, future, and
+// committed-but-unplaced.
+const SECTION_HEADINGS = [
+  "Current Clients",
+  "Starting Later",
+  "Needs Start Week",
+  "Upcoming Openings",
+  "Waitlist",
+];
+const sectionOf = (body: string, name: string): string | null => {
+  const at = body.indexOf(name);
+  if (at === -1) return null;
+  let found: string | null = null;
+  for (const heading of SECTION_HEADINGS) {
+    const h = body.indexOf(heading);
+    if (h !== -1 && h < at) found = heading;
+  }
+  return found;
+};
+
+const occurrences = (body: string, name: string) => body.split(name).length - 1;
+
 const freshBrowserAt = async (
   browser: Browser,
   email: string,
@@ -179,10 +202,17 @@ test.describe("the start-week golden journey", () => {
     expect(rendered).not.toContain("13 / 12");
     expect(rendered).toContain("Full — 12 of 12 slots filled.");
 
-    // The thirteenth is named, in the attention state that asks the
-    // question instead of answering it with "now".
-    expect(rendered).toContain(`No start week yet for ${UNSCHEDULED_NAME}`);
-    expect(rendered).toContain("aren't counted here until you set one");
+    // The thirteenth is on the page, in a client section of their own.
+    // This used to be one grey sentence under the openings forecast, which
+    // is where Leif went looking for Todd in production and found nothing
+    // to click.
+    expect(sectionOf(rendered, UNSCHEDULED_NAME)).toBe("Needs Start Week");
+    expect(occurrences(rendered, UNSCHEDULED_NAME)).toBe(1);
+    // The forecast still admits the numbers depend on it — as a count,
+    // with no names and no action.
+    expect(rendered).toMatch(
+      /1 client still needs a start week, so future availability may change\./,
+    );
 
     // And nothing invented a date for them.
     expect(rendered).not.toContain(`Starts ${ppDate(week(0))}`);
@@ -276,10 +306,11 @@ test.describe("the start-week golden journey", () => {
       ).toBeVisible();
       const rendered = await fresh.locator("body").innerText();
       expect(rendered).toContain(`Starts ${ppDate(chosen)}`);
-      // And the question is no longer being asked, because it is answered.
-      expect(rendered).not.toContain(
-        `No start week yet for ${UNSCHEDULED_NAME}`,
-      );
+      // And the question is no longer being asked, because it is answered:
+      // they have moved sections, exactly once.
+      expect(sectionOf(rendered, UNSCHEDULED_NAME)).toBe("Starting Later");
+      expect(occurrences(rendered, UNSCHEDULED_NAME)).toBe(1);
+      expect(rendered).not.toContain("Needs Start Week");
     } finally {
       await context.close();
     }
@@ -391,11 +422,130 @@ test.describe("the start-week golden journey", () => {
 
     await openProgramme(page, OFFER_ID);
     const rendered = await page.locator("body").innerText();
-    expect(rendered).toContain(`No start week yet for ${UNSCHEDULED_NAME}`);
+    // Back to the section that asks the question, exactly once, and gone
+    // from the one that answers it.
+    expect(sectionOf(rendered, UNSCHEDULED_NAME)).toBe("Needs Start Week");
+    expect(occurrences(rendered, UNSCHEDULED_NAME)).toBe(1);
     expect(rendered).toContain("12 / 12 active");
     expect(rendered).not.toContain("13 / 12");
     expect(rendered).not.toContain(`Starts ${ppDate(chosen)}`);
     expect(await countActiveDated()).toBe(12);
+  });
+
+  test("the unscheduled client has a section of its own, above the forecast", async ({
+    page,
+  }) => {
+    await signIn(page, email);
+    await openProgramme(page, OFFER_ID);
+
+    const rendered = await page.locator("body").innerText();
+    // A client section, with the other client sections — not a caveat
+    // attached to a projection.
+    expect(rendered).toContain("Needs Start Week");
+    expect(rendered.indexOf("Needs Start Week")).toBeGreaterThan(
+      rendered.indexOf("Current Clients"),
+    );
+    expect(rendered.indexOf("Needs Start Week")).toBeLessThan(
+      rendered.indexOf("Upcoming Openings"),
+    );
+    // Nobody appears twice across the three sections.
+    expect(occurrences(rendered, UNSCHEDULED_NAME)).toBe(1);
+    // And the row says what it needs, with the action beside it.
+    await expect(
+      page.getByRole("button", { name: "Set start week" }).first(),
+    ).toBeVisible();
+  });
+
+  test("setting the week from the programme page itself moves them", async ({
+    page,
+    browser,
+  }) => {
+    // The path Leif could not find: straight from the programme page,
+    // through the same modal and the same repaired save.
+    await signIn(page, email);
+    const writes = watchEnrollmentWrites(page);
+    await openProgramme(page, OFFER_ID);
+
+    await page.getByRole("button", { name: "Set start week" }).first().click();
+    const chosen = week(4);
+    await stateTheStartWeek(page, chosen);
+    await expect(page.getByText("Client updated")).toBeVisible();
+
+    // One real write, to the intended Enrollment — no second editor and no
+    // duplicated mutation logic.
+    const patches = writes.filter((write) =>
+      write.url.includes(`id=eq.${seeded.unscheduledEnrollmentId}`),
+    );
+    expect(patches.length).toBeGreaterThanOrEqual(1);
+    const row = await readEnrollment(seeded.unscheduledEnrollmentId);
+    expect(row.start_date).toBe(chosen);
+    expect(row.start_date_source).toBe("owner");
+
+    // Fresh browser: the grouping survived, and did not duplicate.
+    const { context, page: fresh } = await freshBrowserAt(
+      browser,
+      email,
+      `#/programs/individual/${OFFER_ID}`,
+    );
+    try {
+      await expect(
+        fresh.getByRole("heading", { name: "Upcoming Openings" }),
+      ).toBeVisible();
+      const rendered = await fresh.locator("body").innerText();
+      expect(sectionOf(rendered, UNSCHEDULED_NAME)).toBe("Starting Later");
+      expect(occurrences(rendered, UNSCHEDULED_NAME)).toBe(1);
+      expect(rendered).toContain(`Starts ${ppDate(chosen)}`);
+      // Nobody left needing one, so the section and its caveat are gone.
+      expect(rendered).not.toContain("Needs Start Week");
+      expect(rendered).not.toContain("still needs a start week");
+      // Still twelve today: a week four weeks out is not an occupancy.
+      expect(rendered).toContain("12 / 12 active");
+      expect(await countActiveDated()).toBe(12);
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("clearing it from Starting Later returns them to Needs Start Week", async ({
+    page,
+    browser,
+  }) => {
+    await signIn(page, email);
+    await openProgramme(page, OFFER_ID);
+    await page.getByRole("button", { name: "Set start week" }).first().click();
+    const chosen = week(4);
+    await stateTheStartWeek(page, chosen);
+    await expect(page.getByText("Client updated")).toBeVisible();
+    await page.getByLabel("Close toast").first().click();
+    await expect(page.getByText("Client updated")).toBeHidden();
+
+    // Clear it through the real UI, from the client's own edit door.
+    await goTo(page, `#/enrollments/${seeded.unscheduledEnrollmentId}/edit`);
+    await stateTheStartWeek(page, "", { from: chosen });
+    await expect(page.getByText("Client updated")).toBeVisible();
+
+    const row = await readEnrollment(seeded.unscheduledEnrollmentId);
+    expect(row.start_date).toBeNull();
+    expect(row.start_date_source).toBeNull();
+
+    const { context, page: fresh } = await freshBrowserAt(
+      browser,
+      email,
+      `#/programs/individual/${OFFER_ID}`,
+    );
+    try {
+      await expect(
+        fresh.getByRole("heading", { name: "Needs Start Week" }),
+      ).toBeVisible();
+      const rendered = await fresh.locator("body").innerText();
+      expect(sectionOf(rendered, UNSCHEDULED_NAME)).toBe("Needs Start Week");
+      expect(occurrences(rendered, UNSCHEDULED_NAME)).toBe(1);
+      expect(rendered).not.toContain(`Starts ${ppDate(chosen)}`);
+      expect(rendered).toContain("12 / 12 active");
+      expect(await countActiveDated()).toBe(12);
+    } finally {
+      await context.close();
+    }
   });
 
   test("another programme's Offer cannot answer for this one", async ({

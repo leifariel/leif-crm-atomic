@@ -207,13 +207,22 @@ export const UpcomingOpeningsSection = ({
 
       {missingStartWeek.length > 0 && (
         // They consume no dated slot, so every number above may be too
-        // generous until Leif says when they begin. That is the trade
-        // slotOccupancy.ts takes deliberately, and this line is the half of
-        // it that keeps the numbers honest.
+        // generous until Leif says when they begin, and the forecast has to
+        // admit that. But this line is NOT where those people live.
+        //
+        // It used to name them, and for a while it was the only place they
+        // appeared at all: the sections above were occupied and committed,
+        // and an unscheduled client is neither. Leif went looking for Todd
+        // Jacobsen in production and found him here, in grey, under the
+        // forecast, with nothing to click. They have their own section now
+        // (NeedsStartWeekSection), so this is a caveat about the numbers
+        // and nothing else — a count, no names, no action, no second
+        // workflow competing with the first.
         <p className="mt-2 text-xs text-muted-foreground">
           {translate("crm.programs.openings_missing_start_week", {
-            _: "No start week yet for %{names} — they aren't counted here until you set one, so there may be less room than this shows.",
-            names: names(missingStartWeek),
+            _: "%{count} client still needs a start week, so future availability may change. |||| %{count} clients still need a start week, so future availability may change.",
+            smart_count: missingStartWeek.length,
+            count: missingStartWeek.length,
           })}
         </p>
       )}
