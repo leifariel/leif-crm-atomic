@@ -3712,52 +3712,114 @@ covers nothing either. Fixed in `e80d11bc`.
   while the test computes from the unresolved one. Linux CI has no such
   divergence and is green. Tooling debt, no product impact.
 
-## 8c. NEXT SLICE — Waitlist quick-create
+## 8c. ACTIVE SLICE — Applications UX cleanup + Waitlist entry redesign
 
-**Start with diagnosis, not implementation.** The seal audit found that
-inline Contact creation already exists in the code:
-`WaitlistPersonInput.tsx` has `handleCreatePerson` wired to the
-autocomplete's `onCreate`, and `AddToWaitlistSheet.tsx` — the
-`+ Add to Waitlist` entry point — uses that input.
+Scoped 2026-10-05, after §8b-apps-accepted. **Not yet implemented.**
 
-And yet Leif's production try-run could not create a new person and get
-them onto the waitlist in one flow. So something built does not work, and
-building it a second time would leave two half-working paths instead of
-one working one. **Find out why the existing path fails before writing
-anything.**
+### The diagnosis, done — including one dead end not to re-enter
 
-One unverified suspicion to test first, not to trust: the input reads
-through `ReferenceInput source="contact_id" reference="contacts_summary"`
-— a VIEW — while `handleCreatePerson` creates into `contacts`. A freshly
-created person may simply not resolve back through the view.
+The earlier note suspected that `ReferenceInput reference="contacts_summary"`
+(a VIEW) could not resolve a Contact created into `contacts`. **That is
+false.** The view is `from public.contacts` with only LEFT JOINs and no
+WHERE, so a brand-new empty Contact appears in it. Do not spend time there
+again.
 
-Desired behavior:
+What is actually wrong is the **interaction order**, not a broken write:
+
+- `WaitlistPersonInput` asks for the PERSON first, through an autocomplete,
+  with creation buried in the dropdown as "+ Add new person".
+- `handleCreatePerson` creates the Contact with `email_jsonb: []` — no
+  email at all — splitting a typed string on whitespace into first/last.
+- The email is then asked for by a SECOND field,
+  `WaitlistContactEmailInput`, which only appears once a person without an
+  email is already chosen.
+
+So the one fact that identifies a person is asked for last, and the
+operation most often needed is hidden. That is why a try-run could not get
+a new person onto a waitlist in one flow.
+
+There was also a genuine defect here, already fixed, that the redesign must
+not reintroduce: creating the Contact mid-form invalidated the `contacts`
+query, re-rendered the sheet, and ra-core's `useAugmentedForm` reset the
+whole form — silently wiping the just-selected Person. It was contained by
+freezing `joined_at` for the sheet's open lifecycle. **Creating the
+Contact as part of the save, rather than during the form, removes that
+hazard structurally instead of relying on a stable `defaultValues` string.**
+
+### Desired behavior — Leif, 2026-10-05
 
     + Add to Waitlist
-      -> search existing person
-      -> if no match, create the person inline
-      -> save Contact + Waitlist Entry together
-      -> the new person is on the waitlist immediately
+      -> opens with Email (focused, ready to paste) then Name
+      -> exact normalized email match -> show that Contact, ask whether to use them
+      -> no match -> create Contact + Waitlist Entry in one action
+      -> name similarity is advisory, never blocking
 
-Requirements to hold:
+The search-first workflow and the buried "+ Add new person" are **removed**,
+not kept alongside.
 
-- Reuse the existing Contact when one is found.
-- Inline-create only a genuinely new one.
+### Reuse, do not rebuild
+
+- `findContactByEmail` + `normalizeEmail` already implement the exact
+  normalized match. One matcher, not two.
+- `checkEmailOwnership` already returns `free` / `already-theirs` /
+  `belongs-to-another`, and already refuses rather than merging two people
+  or moving an address off someone else. That refusal stays.
+- `isContactDoNotEngage` is the single DNE authority.
+- `findActiveWaitlistEntry` is the duplicate-active-entry guard.
+- **Name similarity has no helper anywhere — it is net new.** Advisory
+  only: it may warn, it may never block or auto-merge.
+
+### Requirements that carry forward unchanged
+
+- Reuse the existing Contact when one is found; never create a duplicate.
 - No navigating to Contacts first.
-- The Do Not Engage guard survives.
-- No duplicate Contacts.
 - Desired timing and Notes stay Waitlist Entry fields, not Contact fields.
-- **No fake placeholder email.** A person Leif met once may not have one.
-- Fast enough to add a batch of people back to back.
+- Source is stamped `manual`, never asked.
+- **No fake placeholder email.**
+- Fast enough to add a batch of people back to back — so the email match
+  runs on blur or debounced, never per keystroke. `findContactByEmail`
+  reads up to 1000 Contacts per call; that is fine at today's scale, and
+  the real hardening is still a normalized indexed column.
+
+### One decision for Leif, not to be guessed
+
+**Is an email REQUIRED to add someone to a waitlist?** The two existing
+rules point opposite ways and only he can settle it:
+
+- `waitlistContactEmail.ts` states the accepted rule — an active entry
+  only means something if the person can be contacted, so the email field
+  is "required rather than offered".
+- This section has long said a person Leif met once **may not have one**,
+  and that no placeholder may be invented.
+
+Email-first implies required, which means someone with no email cannot be
+waitlisted at all. That is a product decision with a real cost either way,
+so it is asked, not assumed.
+
+### Applications page cleanup — what was actually found
+
+- `ApplicationList` does `if (isPending) return null`, so the page is
+  blank while loading with no loading state. Same shape as the regression
+  closed in §8b-apps-accepted, with a milder consequence — it is the page's
+  own primary query, not a second layer withholding a first. It still
+  deserves a real loading state rather than nothing.
+- The page is `max-w-3xl`; worth revisiting now that sections carry more.
+- **Verified NOT broken, do not "fix" it:** the apply link is
+  `${origin}/#${path}`, which is correct for this hash-routed app, on both
+  the list and `CohortShow`.
+- The earlier item 1 requirements are already built: this page IS All
+  Applications, and "+ New Application" exists. Deployed and in daily use;
+  whether that counts as sealed is Leif's call.
 
 ### Then, in order
 
-1. **Applications page cleanup** — the January 2027 GYU applications must
-   surface as real Needs Review; stop using Historical as the catch-all;
-   separate the current funnel from pre-CRM questionnaire history; give
-   the page top-level All Applications / + New Application access.
-   *Built and committed; **not sealed** — awaiting deployment and Leif's
-   try-run. See §4 Applications for what it settled.*
+1. ~~**Applications page cleanup**~~ — the structural half is **built and
+   deployed**: January 2027 GYU applications surface as real Needs Review,
+   Historical is no longer the catch-all, the current funnel is separated
+   from pre-CRM questionnaire history, and the page carries All
+   Applications / + New Application. See §4 Applications for what it
+   settled. What remains is the **visual/interaction** cleanup now scoped
+   at the top of this section.
 2. **Pipeline Application Received → full application lightbox.**
 3. **Gmail** (§9).
 4. **Gmail reliability / human acceptance.**
