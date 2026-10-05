@@ -158,6 +158,49 @@ describe("an Application carrying both storage layers", () => {
   });
 });
 
+describe("while the responses are still unknown", () => {
+  it("never hides an answer behind a second query", async () => {
+    // The case CI caught and these tests missed. This component gated on
+    // isPending, so an imported Application whose answers live ONLY in
+    // raw_answers rendered an empty "Application Answers" section until a
+    // query that had nothing to say about it came back. Local runs were
+    // fast enough never to see it.
+    //
+    // A provider that never answers for responses is the honest way to pin
+    // it: whatever the page shows here, it shows without that query.
+    const base = createDataProvider({
+      db: createCrmDb({ application_responses: [] } as never),
+      silent: true,
+      latency: 0,
+    });
+    const neverAnswers = {
+      ...base,
+      getList: async (resource: string, params: never) =>
+        resource === "application_responses"
+          ? (new Promise(() => {}) as never)
+          : base.getList(resource, params),
+    };
+
+    const screen = await render(
+      <CoreAdminContext
+        dataProvider={neverAnswers as never}
+        i18nProvider={testI18nProvider}
+      >
+        <ApplicationAnswerSections
+          applicationId={APP}
+          rawAnswers={{
+            why_this_program: "I have children - the biggest mirror.",
+          }}
+        />
+      </CoreAdminContext>,
+    );
+
+    await expect
+      .element(screen.getByText("I have children - the biggest mirror."))
+      .toBeVisible();
+  });
+});
+
 describe("an Application with only one layer", () => {
   it("renders a legacy raw-only Application in full", async () => {
     const screen = await render(

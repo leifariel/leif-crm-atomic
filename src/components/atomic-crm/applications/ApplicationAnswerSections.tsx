@@ -42,7 +42,7 @@ export const ApplicationAnswerSections = ({
   applicationId: Identifier;
   rawAnswers: Record<string, unknown> | null | undefined;
 }) => {
-  const { data: responses, isPending } = useGetList<ApplicationResponse>(
+  const { data: responses } = useGetList<ApplicationResponse>(
     "application_responses",
     {
       filter: { application_id: applicationId },
@@ -51,11 +51,19 @@ export const ApplicationAnswerSections = ({
     },
   );
 
-  // Until the responses are known, rendering raw_answers would show the
-  // duplicate for a moment and then remove it. Waiting is the honest
-  // version of the same page.
-  if (isPending) return null;
-
+  // While the responses are still unknown, every raw answer renders.
+  //
+  // This gated on isPending first, and that was wrong in a way local runs
+  // could not see: CI caught an imported Application whose answers live ONLY
+  // in raw_answers rendering an empty "Application Answers" section, because
+  // it was waiting on a query that had nothing to say about it. Hiding a
+  // person's words behind a second round trip is a worse failure than
+  // briefly showing one of them twice — and the duplicate, when it happens
+  // at all, lasts only until the same query the responses already needed
+  // resolves.
+  //
+  // So nothing here can make an answer disappear: an unknown response set
+  // covers nothing, and a failed one covers nothing either.
   const covered = new Set(
     (responses ?? [])
       .map((response) => response.question_key)
