@@ -422,6 +422,39 @@ checklist used to mean three different things and no longer does. Lifecycle:
 onboarding → active → offboarding → completed. **Won is a sales fact and is
 never gated on payment.**
 
+### Mini Deep Dive is not an Offer — SETTLED 2026-10-05
+
+**The Living Example is the offer / programme. Mini Deep Dive is the name of
+its sales call and sales pathway.** It is not a second programme, and the CRM
+must never model it as one.
+
+```
+THE LIVING EXAMPLE          <- the Offer
+    ↳ Mini Deep Dive        <- its sales call / application pathway
+
+GROWING YOURSELF UP         <- a separate Offer
+```
+
+So: an LE Opportunity carries `offer = The Living Example`. An LE Application
+carries the same. A Mini Deep Dive sales call still belongs to The Living
+Example. And `MiniDD_*` names **in Kit** — including
+`MiniDD_NeedsHigherCare`, the Needs Higher Care automation — refer to The
+Living Example's pathway. The Kit name is historical naming, not evidence of
+a second programme.
+
+Never create a separate Mini Deep Dive offer row, programme, enrollment type,
+pricing model, reporting category or Kit mapping namespace. Its Kit mappings
+belong to The Living Example's `offer_id`, under the ordinary decision
+events.
+
+This holds everywhere the CRM reasons about Applications, Opportunities,
+sales calls, Kit tags and automations, payment pages, Enrollments, reporting,
+lifecycle state, and historical imports.
+
+**If code, data or a future requirement appears to treat Mini Deep Dive as a
+third offer, stop and reconcile against this before implementing.** The names
+diverging between Kit and the CRM is expected; the model diverging is not.
+
 ### Client navigation — SETTLED 2026-10-04
 
 **When a person is presented in a client-management context, navigation
