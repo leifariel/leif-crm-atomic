@@ -39,8 +39,6 @@ export const ApplicationList = () => {
   const { isPending, sections, totals } = useApplicationsGrouped();
   const [createOpen, setCreateOpen] = useState(false);
 
-  if (isPending) return null;
-
   const isEmpty = sections.length === 0;
 
   return (
@@ -65,7 +63,18 @@ export const ApplicationList = () => {
 
       <ApplicationCreateDialog open={createOpen} onOpenChange={setCreateOpen} />
 
-      {totals["needs-review"] > 0 && (
+      {/* Loading says so, rather than rendering a blank page. The header
+          and the New Application action are already real and usable while
+          the sections arrive, so only the sections wait. */}
+      {isPending && (
+        <p className="text-sm text-muted-foreground">
+          {translate("resources.applications.loading", {
+            _: "Loading applications…",
+          })}
+        </p>
+      )}
+
+      {!isPending && totals["needs-review"] > 0 && (
         <p className="text-sm text-muted-foreground">
           {translate("resources.applications.waiting_summary", {
             _: "%{count} waiting for you across %{programmes} programmes.",
@@ -77,7 +86,7 @@ export const ApplicationList = () => {
         </p>
       )}
 
-      {isEmpty && (
+      {!isPending && isEmpty && (
         <p className="text-sm text-muted-foreground">
           {translate("resources.applications.empty", {
             _: "No applications yet.",
@@ -134,88 +143,107 @@ const ProgrammeSection = ({ section }: { section: ApplicationSection }) => {
           here. The rest are collapsed history he can open when he wants
           it. An empty subsection is omitted entirely rather than becoming
           a box with nothing in it. */}
-      <BucketSection
-        bucket="needs-review"
+      <OpenBucket
         rows={buckets["needs-review"]}
         label={translate("resources.applications.needs_review", {
           _: "Needs Review",
         })}
-        open
       />
-      <BucketSection
-        bucket="reviewed"
-        rows={buckets.reviewed}
-        label={translate("resources.applications.reviewed", {
-          _: "Reviewed",
-        })}
-      />
-      <BucketSection
-        bucket="pre-crm-active-sales"
-        rows={buckets["pre-crm-active-sales"]}
-        label={translate("resources.applications.pre_crm_active", {
-          _: "Pre-CRM — Active Sales",
-        })}
-        note={translate("resources.applications.pre_crm_active_note", {
-          _: "Old-funnel questionnaires whose sales conversation is still open. No review is owed on these.",
-        })}
-      />
-      <BucketSection
-        bucket="historical"
-        rows={buckets.historical}
-        label={translate("resources.applications.historical", {
-          _: "Historical",
-        })}
-        note={translate("resources.applications.historical_note", {
-          _: "Pre-CRM questionnaires from the old book-a-call funnel. Any decision shown was recorded before this CRM.",
-        })}
+
+      {/* The three history buckets are ONE collapsed group, not three
+          loose headers. Each still opens independently (type="multiple")
+          and each keeps its own name, because "reviewed", "still selling"
+          and "pre-CRM questionnaire" are genuinely different things and
+          collapsing them into one list would lose that. What is removed is
+          the visual sprawl of three Accordion roots per programme. */}
+      <CollapsedBuckets
+        items={[
+          {
+            bucket: "reviewed",
+            rows: buckets.reviewed,
+            label: translate("resources.applications.reviewed", {
+              _: "Reviewed",
+            }),
+          },
+          {
+            bucket: "pre-crm-active-sales",
+            rows: buckets["pre-crm-active-sales"],
+            label: translate("resources.applications.pre_crm_active", {
+              _: "Pre-CRM — Active Sales",
+            }),
+            note: translate("resources.applications.pre_crm_active_note", {
+              _: "Old-funnel questionnaires whose sales conversation is still open. No review is owed on these.",
+            }),
+          },
+          {
+            bucket: "historical",
+            rows: buckets.historical,
+            label: translate("resources.applications.historical", {
+              _: "Historical",
+            }),
+            note: translate("resources.applications.historical_note", {
+              _: "Pre-CRM questionnaires from the old book-a-call funnel. Any decision shown was recorded before this CRM.",
+            }),
+          },
+        ]}
       />
     </section>
   );
 };
 
-const BucketSection = ({
-  bucket,
+// Waiting on Leif — always open, because it is the reason to be here.
+const OpenBucket = ({
   rows,
   label,
-  note,
-  open = false,
 }: {
+  rows: ApplicationRow[];
+  label: string;
+}) => {
+  if (rows.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline gap-2">
+        <h3 className="text-base font-semibold">{label}</h3>
+        <span className="text-sm text-muted-foreground">{rows.length}</span>
+      </div>
+      <ApplicationRows rows={rows} />
+    </div>
+  );
+};
+
+type CollapsedBucket = {
   bucket: ApplicationBucket;
   rows: ApplicationRow[];
   label: string;
   note?: string;
-  open?: boolean;
-}) => {
-  if (rows.length === 0) return null;
+};
 
-  if (open) {
-    return (
-      <div className="flex flex-col gap-2">
-        <div className="flex items-baseline gap-2">
-          <h3 className="text-base font-semibold">{label}</h3>
-          <span className="text-sm text-muted-foreground">{rows.length}</span>
-        </div>
-        <ApplicationRows rows={rows} />
-      </div>
-    );
-  }
+// History he can open when he wants it. An empty bucket is omitted
+// entirely rather than becoming a header with nothing behind it, and when
+// every bucket is empty the whole group disappears instead of leaving a
+// stray rule across the page.
+const CollapsedBuckets = ({ items }: { items: CollapsedBucket[] }) => {
+  const present = items.filter((item) => item.rows.length > 0);
+  if (present.length === 0) return null;
 
   return (
-    <Accordion type="single" collapsible>
-      <AccordionItem value={bucket} className="border-none">
-        <AccordionTrigger className="text-base font-semibold hover:no-underline py-0">
-          {label}
-          <span className="text-sm font-normal text-muted-foreground ml-auto mr-2">
-            {rows.length}
-          </span>
-        </AccordionTrigger>
-        <AccordionContent>
-          <div className="flex flex-col gap-2 pt-2">
-            {note && <p className="text-xs text-muted-foreground">{note}</p>}
-            <ApplicationRows rows={rows} />
-          </div>
-        </AccordionContent>
-      </AccordionItem>
+    <Accordion type="multiple">
+      {present.map(({ bucket, rows, label, note }) => (
+        <AccordionItem key={bucket} value={bucket} className="border-none">
+          <AccordionTrigger className="text-base font-semibold hover:no-underline py-0">
+            {label}
+            <span className="text-sm font-normal text-muted-foreground ml-auto mr-2">
+              {rows.length}
+            </span>
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="flex flex-col gap-2 pt-2">
+              {note && <p className="text-xs text-muted-foreground">{note}</p>}
+              <ApplicationRows rows={rows} />
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      ))}
     </Accordion>
   );
 };

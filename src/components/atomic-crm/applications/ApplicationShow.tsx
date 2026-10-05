@@ -18,6 +18,7 @@ import {
 } from "./applicationConstants";
 import { ApplicationReviewActions } from "./ApplicationReviewActions";
 import { BringIntoCrmCard } from "./BringIntoCrmCard";
+import { applicationAdoption } from "./applicationAdoption";
 import { KitStatusLine } from "./KitStatusLine";
 import { useApplicationReviewData } from "./useApplicationReviewData";
 
@@ -176,11 +177,21 @@ const ApplicationShowContent = () => {
                   cohort={cohort}
                   applicantName={applicantName}
                 />
-                <p className="text-sm text-muted-foreground">
-                  {translate("resources.applications.review.no_opportunity", {
-                    _: "No sales opportunity is linked to this application, so a decision cannot be recorded here yet.",
-                  })}
-                </p>
+                {/* Said ONLY when the card above says nothing. When the
+                    card renders it already names the situation and offers
+                    the action, and printing the generic sentence beneath
+                    it stated the same problem twice in different words —
+                    which is what made Samantha's and Celia's pages read
+                    like a contradiction. The card's own condition is
+                    reused rather than re-derived, so the two can never
+                    disagree about whether it rendered. */}
+                {!applicationAdoption(record, cohort).canAdopt && (
+                  <p className="text-sm text-muted-foreground">
+                    {translate("resources.applications.review.no_opportunity", {
+                      _: "No sales opportunity is linked to this application, so a decision cannot be recorded here yet.",
+                    })}
+                  </p>
+                )}
               </>
             )}
 
