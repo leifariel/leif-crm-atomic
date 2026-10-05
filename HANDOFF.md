@@ -274,6 +274,24 @@ question wording and exact answer are preserved per response
 **99 historical pending Applications are not a review backlog** — only
 genuinely actionable ones surface.
 
+**Immutable means the database refuses, not that we are careful.**
+`reject_application_response_mutation` fires BEFORE UPDATE OR DELETE on
+`application_responses` and refuses both — including a cascading delete
+arriving from its own Application. So anything that clears Applications
+has to delete children first and in order, which is why
+[e2e/fixtures.ts](e2e/fixtures.ts) carries an explicit child-first table list
+rather than relying on cascade. Do not weaken this for fixture convenience.
+
+**An answer carries its own identity, and sometimes has none.**
+`question_key` is the form's own key for a native submission and is NULL for
+recovered history, where only the wording ever existed. Answers are therefore
+deduped against `raw_answers` by `question_key` only — never by displayed
+text, because two different questions may have the same answer and collapsing
+them would delete a person's words
+— [ApplicationAnswerSections.tsx](src/components/atomic-crm/applications/ApplicationAnswerSections.tsx).
+A response set that is unknown or failed covers nothing, so a slow query can
+never hide an answer.
+
 **The Applications page is grouped by Programme/Cohort first**, then by what
 each record needs: Needs Review, Reviewed, Pre-CRM — Active Sales,
 Historical — [classifyApplication.ts](src/components/atomic-crm/applications/classifyApplication.ts).
