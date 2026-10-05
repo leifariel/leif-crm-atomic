@@ -7,6 +7,7 @@ import type { Contact } from "../types";
 import {
   checkEmailOwnership,
   contactHasEmail,
+  CONTACT_EMAIL_SOURCE,
   isPlausibleEmail,
 } from "./waitlistContactEmail";
 
@@ -20,10 +21,9 @@ import {
 // people to ignore it.
 //
 // It writes to the CONTACT, not to the waitlist entry — see
-// waitlistContactEmail.ts. The field name is deliberately not a column on
-// `waitlist_entries`; AddToWaitlistSheet's transform strips it before the
-// entry is created.
-export const CONTACT_EMAIL_SOURCE = "contact_email";
+// waitlistContactEmail.ts, which owns both the field name and the
+// `applyTypedContactEmail` transform every dialog runs on save, so the
+// name cannot drift between the field and the code that strips it.
 
 export const WaitlistContactEmailInput = () => {
   const translate = useTranslate();

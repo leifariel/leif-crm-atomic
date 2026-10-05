@@ -1,6 +1,12 @@
 import { useEffect, useMemo } from "react";
 import { useFormContext, useWatch } from "react-hook-form";
-import { required, useGetOne, useTranslate, type Identifier } from "ra-core";
+import {
+  required,
+  useDataProvider,
+  useGetOne,
+  useTranslate,
+  type Identifier,
+} from "ra-core";
 import { AutocompleteInput } from "@/components/admin/autocomplete-input";
 import { ReferenceInput } from "@/components/admin/reference-input";
 import { TextInput } from "@/components/admin/text-input";
@@ -8,6 +14,8 @@ import { TextInput } from "@/components/admin/text-input";
 import { CreateDialog } from "../misc/CreateDialog";
 import type { Offer } from "../types";
 import { NEW_BUSINESS_OFFERS_FILTER } from "../offers/newBusinessOffers";
+import { WaitlistContactEmailInput } from "./WaitlistContactEmailInput";
+import { applyTypedContactEmail } from "./waitlistContactEmail";
 
 // The Contact-page counterpart to AddToWaitlistSheet.tsx. That one is
 // opened FROM a Program/Cohort page, so the Offer (and sometimes the
@@ -34,10 +42,14 @@ export const ContactAddToWaitlistSheet = ({
   // now() is the truthful join evidence here (unlike an imported
   // historical row, which keeps its own source timestamp).
   const joinedAt = useMemo(() => new Date().toISOString(), [open]);
+  const dataProvider = useDataProvider();
 
   return (
     <CreateDialog
       resource="waitlist_entries"
+      transform={(data: Record<string, unknown>) =>
+        applyTypedContactEmail(dataProvider, data)
+      }
       title={translate("resources.waitlist_entries.sheet.add", {
         _: "Add to Waitlist",
       })}
@@ -56,6 +68,13 @@ export const ContactAddToWaitlistSheet = ({
     >
       <div className="flex flex-col gap-4">
         <OfferAndCohortInputs />
+        {/* The same rule as the quick-add modal, enforced on this door too:
+            an ACTIVE waitlist entry requires a contactable email. This path
+            used to create one for a Contact with no address at all, which
+            made the rule false wherever it was entered from. The field
+            appears only when they have none, writes to the CONTACT, and
+            refuses an address that already belongs to somebody else. */}
+        <WaitlistContactEmailInput />
         <TextInput
           source="desired_timing"
           label={translate("resources.waitlist_entries.fields.desired_timing", {

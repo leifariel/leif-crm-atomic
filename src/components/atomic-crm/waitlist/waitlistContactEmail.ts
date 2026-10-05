@@ -16,6 +16,17 @@ import { normalizeEmail } from "../public-application/submitApplication";
 // waitlist entry: the same person on two waitlists has one email, and
 // copying it would create two places for it to disagree.
 
+/**
+ * The form field that carries a typed email through a waitlist dialog.
+ *
+ * Deliberately NOT a column on `waitlist_entries`: the address is a fact
+ * about the person, so every dialog strips this key and writes it to the
+ * Contact instead (see `applyTypedContactEmail`). It lives here rather
+ * than beside the input because two different sheets and the function
+ * that consumes it all need the same name.
+ */
+export const CONTACT_EMAIL_SOURCE = "contact_email";
+
 // Deliberately loose — one @, something either side, a dot in the domain.
 // The same shape the public application form accepts. A stricter regex
 // rejects real addresses, and the only real proof an address works is
@@ -153,6 +164,44 @@ export const replacePrimaryEmail = async (
  * Appends rather than replaces, so an address Leif adds here never
  * overwrites one already recorded somewhere else on that person.
  */
+/**
+ * The one save: put the typed address on the Contact, then hand back the
+ * waitlist entry without it.
+ *
+ * Shared by both dialogs that can create an entry, so the rule cannot
+ * hold on one door and not the other. The ownership check runs here even
+ * though the field validator already ran: the validator is what Leif
+ * sees, this is what guards the write, because a Contact created in
+ * another tab can land between typing and saving.
+ *
+ * Throws rather than merging two people or moving an address off
+ * somebody else — that decision is Leif's, and made silently it would be
+ * very hard to notice afterwards.
+ */
+export const applyTypedContactEmail = async (
+  dataProvider: DataProvider,
+  data: Record<string, unknown>,
+): Promise<Record<string, unknown>> => {
+  const { [CONTACT_EMAIL_SOURCE]: typed, ...entry } = data;
+  const email = typeof typed === "string" ? typed.trim() : "";
+  if (email === "") return entry;
+
+  const contactId = entry.contact_id as number | string;
+  const ownership = await checkEmailOwnership(dataProvider, email, contactId);
+  if (ownership.status === "belongs-to-another") {
+    const name =
+      `${ownership.owner.first_name ?? ""} ${ownership.owner.last_name ?? ""}`.trim() ||
+      "another contact";
+    throw new Error(`${name} already has this email — nothing was saved.`);
+  }
+
+  const { data: contact } = await dataProvider.getOne<Contact>("contacts", {
+    id: contactId,
+  });
+  await attachEmailToContact(dataProvider, contact, email);
+  return entry;
+};
+
 export const attachEmailToContact = async (
   dataProvider: DataProvider,
   contact: Contact,

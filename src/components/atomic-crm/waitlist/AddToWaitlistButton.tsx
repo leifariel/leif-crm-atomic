@@ -4,7 +4,7 @@ import { useTranslate } from "ra-core";
 import type { Identifier } from "ra-core";
 import { Button } from "@/components/ui/button";
 
-import { AddToWaitlistSheet } from "./AddToWaitlistSheet";
+import { AddToWaitlistModal } from "./AddToWaitlistModal";
 
 // The obvious "+ Add to Waitlist" entry point (Waitlists slice, §9) shared
 // by the Living Example, Group Program, and Cohort pages.
@@ -26,7 +26,7 @@ export const AddToWaitlistButton = ({
           _: "Add to Waitlist",
         })}
       </Button>
-      <AddToWaitlistSheet
+      <AddToWaitlistModal
         open={open}
         onOpenChange={setOpen}
         offerId={offerId}
