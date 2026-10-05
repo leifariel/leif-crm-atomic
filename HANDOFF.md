@@ -422,6 +422,31 @@ checklist used to mean three different things and no longer does. Lifecycle:
 onboarding → active → offboarding → completed. **Won is a sales fact and is
 never gated on payment.**
 
+### Kit identifiers are external, and are never normalized — 2026-10-05
+
+**A Kit TAG name and a Kit AUTOMATION name are two separate external
+identifiers.** They may differ in punctuation, and that difference is real
+rather than a typo to tidy.
+
+```
+Growing Yourself Up   tag  GYU-NeedsHigherCare     automation  GYU_NeedsHigherCare
+The Living Example    tag  MiniDD_NeedsHigherCare  automation  MiniDD_NeedsHigherCare
+```
+
+Note the GYU pair: hyphen in the tag, underscore in the automation. Both are
+correct as written.
+
+So the CRM **preserves `kit_tag_id` and `kit_tag_name` exactly as Kit holds
+them**, and stores an automation name separately when it needs one. Never
+rename a tag, never recreate one to match an automation, never normalize
+hyphens to underscores or the reverse, and never infer one identifier from
+the other. If an automation is not firing from the tag the CRM records, the
+automation is configured against the existing tag — the tag is not changed to
+suit the CRM.
+
+The general rule this is an instance of: an identifier that belongs to
+another system is data to carry, not a string to improve.
+
 ### Mini Deep Dive is not an Offer — SETTLED 2026-10-05
 
 **The Living Example is the offer / programme. Mini Deep Dive is the name of
