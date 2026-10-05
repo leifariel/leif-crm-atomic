@@ -44,6 +44,18 @@ const TABLES = [
   "waitlist_invitations",
   "waitlist_invitation_batches",
   "waitlist_entries",
+  // An Application is deletable ONLY while it has no materialised answers.
+  // application_responses is an immutable submission record whose BEFORE
+  // DELETE trigger refuses even a cascade from its parent, and a Contact
+  // holding such an Application inherits that through
+  // applications_contact_id_fkey — which blocks sales, and then auth.users.
+  //
+  // materialize_native_application_responses() skips an Application whose
+  // raw_answers is null or '{}', so a fixture that does not need answers
+  // should not invent them. One that genuinely needs them must use fixed
+  // ids and reset the fields it cares about, because its rows are permanent
+  // by design. The reset below will say so loudly rather than quietly
+  // leaving them.
   "applications",
   // Deal children
   "deal_payment_schedule_items",
