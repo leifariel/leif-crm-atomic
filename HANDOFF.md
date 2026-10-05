@@ -702,16 +702,20 @@ classes. **Full record, and the tooling debt carried forward, in §8.**
 
 ## 6. Waiting on Leif — do not guess these
 
-**KIT — DEPLOYED AND OPERATIONALLY ACCEPTED 2026-09-28 (§8b-kit-live).** Two
-things are Leif's alone. **(1)** The two Needs Higher Care tags exist and the
-CRM applies them, but **no Kit automation is attached to either yet**, so
-nothing is emailed when they land; that acceptance stays open until he writes
-them in Kit. **(2)** Five live applicants predate the integration boundary and
+**KIT — DEPLOYED AND OPERATIONALLY ACCEPTED 2026-09-28 (§8b-kit-live).**
+**(1) CLOSED 2026-10-05 (§8b-apps-accepted).** Leif has written both
+automations and the CRM records the hand-off: a delivered Needs Higher Care
+tag now reads "Handed off to Kit automation." instead of claiming an email
+still needs sending by hand. Verified in production on Terry Robinson
+Whitney. The tag names and the automation names are different external
+identifiers and both are correct — see §4 "Kit identifiers are external".
+**(2)** Five live applicants predate the integration boundary and
 are **manual Kit handling** — Michelle Smith, Ruth Kirschenbaum, Kseniya
 Prudyus, Kara Blossom, Carey Christian. Their Application pages now say
 `Kit: Not synced — email manually` so this cannot be missed. Original note:
 
-**KIT — ANSWERED AND BUILT 2026-09-28.** All six questions were answered and
+**KIT — ANSWERED AND BUILT 2026-09-28 — SUPERSEDED, kept as the record of
+what was true then.** All six questions were answered and
 the integration is built, proved and committed locally (§8b-kit). **One thing
 is still Leif's alone:** the two Needs Higher Care tags exist and the CRM will
 apply them, but **no Kit automation is attached to either yet**, so nothing is
@@ -3629,6 +3633,84 @@ Priority order from here: (1) finish LE lifecycle production acceptance,
 (2) start/end modal UX and the shared projection — both done,
 (3) the parked Payment Pages (real-Postgres concurrency, Stripe TEST
 proof), (4) **this buffer policy**, (5) Applications-page UX cleanup.
+
+## 8b-apps-accepted. APPLICATIONS STABILIZATION — PRODUCTION ACCEPTED 2026-10-05
+
+Accepted by the owner in production at `8ec9afe3`, against the real
+database and the real deployed bundle. Three defects closed, and one
+regression this slice itself introduced and closed before acceptance.
+
+### What the production audit proved
+
+| | verdict |
+|---|---|
+| 150 migrations, `20261005120000` applied, nothing newer | PASS |
+| parked payment work absent (0 tables, 0 columns) | PASS |
+| GYU: offer 2, tag `24082732` `GYU-NeedsHigherCare` → `GYU_NeedsHigherCare` | PASS |
+| LE: offer 1, tag `24082725` `MiniDD_NeedsHigherCare` → `MiniDD_NeedsHigherCare` | PASS |
+| exactly 2 automation hand-offs, no other event configured | PASS |
+| Application 97 → Deal 268, 146 → 267, same person, same programme | PASS |
+| no duplicate live Opportunity | PASS |
+| Terry 204 and Olivia 211: 4 responses, 4 raw keys, **0 uncovered** | PASS |
+| residual keyless-response + non-empty `raw_answers` class | **0 rows** |
+| `reject_application_response_mutation` present | PASS |
+
+Human UI acceptance, all four: Terry's answers render once and Kit reads
+"Handed off to Kit automation." with no manual-email warning; Olivia's
+answers render once; Samantha and Celia both show normal Review Decision
+controls with the unlinked message **and** the Resolve card gone.
+
+Those last two vanish as a pair by one mechanism, which is why both were
+checked: with `opportunity_id` set, `applicationAdoption` returns
+`already-linked` so `BringIntoCrmCard` renders nothing, and `deal` is
+truthy so `ApplicationReviewActions` replaces the explanation. One without
+the other would mean something is still wrong.
+
+### A row count is not an invariant
+
+The acceptance SQL first asserted `application_responses = 832`, the number
+measured when the table was built. By acceptance day it was **888** — real
+Applications had arrived. Leif caught it before the audit ran: an invariant
+that a legitimate new Application breaks would have reported FAIL on a clean
+database and taught everyone to ignore the audit.
+
+What is durable is the **trigger**, not the count, so that is what is
+asserted now. The same test applies to any future acceptance query: assert
+what the database refuses, never a number that ordinary business changes.
+
+### The regression this slice produced, and the rule it leaves behind
+
+The duplicated-answer fix shipped with `if (isPending) return null` on
+`ApplicationAnswerSections` — reasoning that waiting was more honest than
+showing a duplicate for a moment. It is not. An imported Application whose
+answers live **only** in `raw_answers` then rendered nothing at all until a
+query that had nothing to say about it resolved.
+
+It passed locally three times and failed in CI, which is slower. **Local
+timing is not evidence about a loading state**: the only honest test is one
+whose query never answers, which is what
+`applicationAnswersRenderOnce.test.tsx` now does.
+
+The rule: **a second query may remove a duplicate, never withhold a
+person's words.** An unknown response set covers nothing; a failed one
+covers nothing either. Fixed in `e80d11bc`.
+
+### Still open
+
+- **Residual duplicate class is empty today, which is not a guarantee.**
+  `question_key` is NULL for recovered history, so an Application with
+  keyless responses beside a non-empty `raw_answers` could still show an
+  answer twice. Production has none. Dedupe is by `question_key` only —
+  never by displayed text, because two different questions can share an
+  answer and collapsing them would delete someone's words.
+- **LE historical Needs Higher Care cases: none.** No automatic
+  post-boundary Kit decision has been accepted yet (§8b-accepted). Do not
+  manufacture one.
+- **Harness hook tests fail on macOS only**, in `.claude/hooks/test/`
+  (6 tests). `os.tmpdir()` is `/var/folders/…` while its realpath is
+  `/private/var/folders/…`, so the hook sanitizes git's resolved path
+  while the test computes from the unresolved one. Linux CI has no such
+  divergence and is green. Tooling debt, no product impact.
 
 ## 8c. NEXT SLICE — Waitlist quick-create
 
