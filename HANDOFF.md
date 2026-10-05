@@ -3712,9 +3712,11 @@ covers nothing either. Fixed in `e80d11bc`.
   while the test computes from the unresolved one. Linux CI has no such
   divergence and is green. Tooling debt, no product impact.
 
-## 8c. ACTIVE SLICE — Applications UX cleanup + Waitlist entry redesign
+## 8c. Applications UX cleanup + Waitlist entry redesign — BUILT 2026-10-05, NOT YET ACCEPTED
 
-Scoped 2026-10-05, after §8b-apps-accepted. **Not yet implemented.**
+Scoped and built 2026-10-05, after §8b-apps-accepted. **Deployed state and
+Leif's try-run are what make this complete** (§2) — nothing below is
+accepted yet.
 
 ### The diagnosis, done — including one dead end not to re-enter
 
@@ -3781,29 +3783,73 @@ not kept alongside.
   reads up to 1000 Contacts per call; that is fine at today's scale, and
   the real hardening is still a normalized indexed column.
 
-### One decision for Leif, not to be guessed
+### SETTLED 2026-10-05 — an email is required, and the two rules were never in conflict
 
-**Is an email REQUIRED to add someone to a waitlist?** The two existing
-rules point opposite ways and only he can settle it:
+Leif's decision, and it draws the line at the right place:
 
-- `waitlistContactEmail.ts` states the accepted rule — an active entry
-  only means something if the person can be contacted, so the email field
-  is "required rather than offered".
-- This section has long said a person Leif met once **may not have one**,
-  and that no placeholder may be invented.
+- a **CONTACT** may exist without an email
+- an **ACTIVE WAITLIST ENTRY** may not
 
-Email-first implies required, which means someone with no email cannot be
-waitlisted at all. That is a product decision with a real cost either way,
-so it is asked, not assumed.
+Because a place opening up is only worth holding for somebody who can be
+told about it. So there is no "skip email" path in the modal: a person
+Leif has only a name for can be recorded as a Contact, which is a
+different act on a different page. No placeholder address is ever
+invented, and nothing in the CRM fabricates one.
 
-### Applications page cleanup — what was actually found
+**This rule now holds on both doors.** Adding a known Contact to a
+waitlist from their own page required no email at all, so the rule was
+true from the programme page and false from the Contact page. Both now
+run the same `applyTypedContactEmail` transform, which also refuses an
+address that already belongs to somebody else rather than merging two
+people or moving it off the other one.
 
-- `ApplicationList` does `if (isPending) return null`, so the page is
-  blank while loading with no loading state. Same shape as the regression
-  closed in §8b-apps-accepted, with a milder consequence — it is the page's
-  own primary query, not a second layer withholding a first. It still
-  deserves a real loading state rather than nothing.
-- The page is `max-w-3xl`; worth revisiting now that sections carry more.
+### What was built
+
+| | where |
+|---|---|
+| Email-first modal, focused and paste-ready | [AddToWaitlistModal.tsx](src/components/atomic-crm/waitlist/AddToWaitlistModal.tsx) |
+| Lookup + the two save paths, as one owner action | [waitlistQuickCreate.ts](src/components/atomic-crm/waitlist/waitlistQuickCreate.ts) |
+| Advisory name similarity — never a gate | [contactNameSimilarity.ts](src/components/atomic-crm/waitlist/contactNameSimilarity.ts) |
+| The email rule on the Contact-page door too | [waitlistContactEmail.ts](src/components/atomic-crm/waitlist/waitlistContactEmail.ts) |
+| Real browser, real Postgres, phone width | [e2e/waitlistQuickAdd.spec.ts](e2e/waitlistQuickAdd.spec.ts) |
+
+Removed, not left alongside: `AddToWaitlistSheet.tsx` and
+`WaitlistPersonInput.tsx`. Keeping the search-first path beside the new
+one would have left two half-flows instead of one.
+
+**A created Contact whose entry fails is reported, not hidden.** The
+person IS in the CRM at that point, and saying "nothing happened" would
+send Leif to create them a second time.
+
+**Timing and notes are not asked in the quick-add.** They are still
+Waitlist Entry fields and still editable on the entry itself; asking for
+them here would slow down the one thing this modal exists to make fast.
+Say so if that is wrong — it is a deliberate omission, not an oversight.
+
+**Phone width is tested in Playwright, never in vitest.** The vitest app
+project has no Tailwind plugin, so every utility class is inert there and
+a layout assertion measures the user agent instead. Proven by breaking it:
+shrinking the modal failed the e2e geometry check at 128px against a
+required 200px, in both chromium and Mobile Chrome.
+
+### Applications page cleanup — what was found, and what was done
+
+- `ApplicationList` did `if (isPending) return null`, so the page was
+  blank while loading. Same shape as the regression closed in
+  §8b-apps-accepted, milder consequence — its own primary query, not a
+  second layer withholding a first. **Fixed:** the header and New
+  Application stay usable and the sections say they are loading.
+- **Fixed:** each programme carried three separate Accordion roots for its
+  history buckets. They are one `type="multiple"` group now — each still
+  opens independently and each keeps its own name, because Reviewed,
+  Pre-CRM and Historical are genuinely different things.
+- **Fixed:** Review Decision printed "No sales opportunity is linked…"
+  beneath the card that already named the situation and offered the
+  action. That pair of true sentences was the contradiction itself. The
+  explanation now appears only when the card renders nothing, reusing the
+  card's own condition.
+- The page is `max-w-3xl`; left alone, worth revisiting with Leif rather
+  than widened on a guess.
 - **Verified NOT broken, do not "fix" it:** the apply link is
   `${origin}/#${path}`, which is correct for this hash-routed app, on both
   the list and `CohortShow`.
