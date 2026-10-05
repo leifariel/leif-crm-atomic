@@ -46,6 +46,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/waitlist/waitlistQuickCreate.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/waitlist/waitlistInviteFeature.ts",
           "type": "registry:component"
         },
@@ -82,11 +86,11 @@
           "type": "registry:component"
         },
         {
-          "path": "src/components/atomic-crm/waitlist/WaitlistSection.tsx",
+          "path": "src/components/atomic-crm/waitlist/contactNameSimilarity.ts",
           "type": "registry:component"
         },
         {
-          "path": "src/components/atomic-crm/waitlist/WaitlistPersonInput.tsx",
+          "path": "src/components/atomic-crm/waitlist/WaitlistSection.tsx",
           "type": "registry:component"
         },
         {
@@ -130,7 +134,7 @@
           "type": "registry:component"
         },
         {
-          "path": "src/components/atomic-crm/waitlist/AddToWaitlistSheet.tsx",
+          "path": "src/components/atomic-crm/waitlist/AddToWaitlistModal.tsx",
           "type": "registry:component"
         },
         {
@@ -818,6 +822,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/programs/NeedsStartWeekSection.tsx",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/programs/IndividualProgramPage.tsx",
           "type": "registry:component"
         },
@@ -1094,6 +1102,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/enrollments/useProjectedFinalWeek.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/enrollments/useEnrollmentOperationalData.ts",
           "type": "registry:component"
         },
@@ -1111,6 +1123,10 @@
         },
         {
           "path": "src/components/atomic-crm/enrollments/startOffboarding.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/enrollments/savedWhatWasStated.ts",
           "type": "registry:component"
         },
         {
@@ -1179,6 +1195,10 @@
         },
         {
           "path": "src/components/atomic-crm/enrollments/RepairOnboardingAction.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/enrollments/ProjectedFinalWeekField.tsx",
           "type": "registry:component"
         },
         {
@@ -1486,6 +1506,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/dashboard/useKitNeedsAttentionCount.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/dashboard/useComingUpItems.ts",
           "type": "registry:component"
         },
@@ -1543,6 +1567,10 @@
         },
         {
           "path": "src/components/atomic-crm/dashboard/LatestNotes.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/dashboard/KitWorkRow.tsx",
           "type": "registry:component"
         },
         {
@@ -1679,6 +1707,10 @@
         },
         {
           "path": "src/components/atomic-crm/contacts/ContactShow.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/contacts/ContactSessionsDialog.tsx",
           "type": "registry:component"
         },
         {
@@ -1966,6 +1998,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/applications/resolveApplicationOpportunity.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/applications/kitTagActions.ts",
           "type": "registry:component"
         },
@@ -1998,7 +2034,19 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/applications/applicationAdoption.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/applications/answerLabels.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/adoptApplication.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/ResolveOpportunityDialog.tsx",
           "type": "registry:component"
         },
         {
@@ -2015,6 +2063,22 @@
         },
         {
           "path": "src/components/atomic-crm/applications/KitStatusLine.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/KitConfigBox.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/ConfirmKitTagsDialog.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/ChooseKitTagDialog.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/BringIntoCrmCard.tsx",
           "type": "registry:component"
         },
         {
@@ -2047,6 +2111,10 @@
         },
         {
           "path": "src/components/atomic-crm/applications/ApplicationAnswers.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/ApplicationAnswerSections.tsx",
           "type": "registry:component"
         },
         {
