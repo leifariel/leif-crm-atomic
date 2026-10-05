@@ -11,8 +11,7 @@ import { Button } from "@/components/ui/button";
 import { PageHeader, PersonCard, Section } from "../misc/ProgramLayout";
 import { ApplicationEditDialog } from "./ApplicationEditDialog";
 import { useConfigurationContext } from "../root/ConfigurationContext";
-import { ApplicationAnswers } from "./ApplicationAnswers";
-import { ApplicationResponses } from "./ApplicationResponses";
+import { ApplicationAnswerSections } from "./ApplicationAnswerSections";
 import {
   applicationStatusBadgeVariant,
   applicationStatusLabels,
@@ -139,10 +138,14 @@ const ApplicationShowContent = () => {
             )}
             {/* Recovered and native submissions both land here. Responses
                 carry their own question text; raw_answers is the older
-                native payload and still renders through its labels map
-                for Applications that have no materialised responses. */}
-            <ApplicationResponses applicationId={record.id} />
-            <ApplicationAnswers answers={record.raw_answers} />
+                native payload and renders only for the keys no response
+                already covers — these two used to render unconditionally
+                side by side, so an Application holding both layers showed
+                every answer twice. */}
+            <ApplicationAnswerSections
+              applicationId={record.id}
+              rawAnswers={record.raw_answers}
+            />
           </Section>
 
           <Section
