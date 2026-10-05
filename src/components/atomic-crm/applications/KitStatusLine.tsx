@@ -13,10 +13,7 @@ import { kitStatus } from "./kitStatus";
 import { KitSyncCard } from "./KitSyncCard";
 import { ManageKitTagsModal } from "./ManageKitTagsModal";
 import { addKitTag } from "./kitTagActions";
-import {
-  kitEventRisk,
-  NEEDS_HIGHER_CARE_EMAIL_NOTE,
-} from "./kitAutomationRisk";
+import { kitEventRisk, followupNote } from "./kitAutomationRisk";
 import { ConfirmKitTagsDialog } from "./ConfirmKitTagsDialog";
 import { retryKitSync } from "./retryKitSync";
 
@@ -120,6 +117,25 @@ export const KitStatusLine = ({
       (settings?.[0] as { not_before?: string } | undefined)?.not_before ??
       null,
   });
+
+  // The mapping for the decision this application is actually on, and
+  // whether its tag has landed. Both are needed: the sentence is about what
+  // happens next, and before delivery there is no "next" yet.
+  const decisionMapping = (mappings ?? []).find(
+    (mapping) =>
+      String(mapping.offer_id) === String(application.offer_id) &&
+      mapping.event === application.status,
+  );
+  const decisionDelivered = status.required.some(
+    (tag) =>
+      decisionMapping != null &&
+      Number(tag.kitTagId) === Number(decisionMapping.kit_tag_id) &&
+      tag.done,
+  );
+  const decisionFollowup = followupNote(
+    decisionMapping,
+    decisionDelivered || status.kind === "tagged",
+  );
 
   if (status.kind === "historical") return null;
 
@@ -282,12 +298,15 @@ export const KitStatusLine = ({
         </details>
       )}
 
-      {/* The one thing a Needs Higher Care decision must never let anybody
-          assume. The tag can land and still no email has gone: Leif has not
-          written that automation, and the CRM does not pretend otherwise. */}
-      {application.status === "needs_higher_care" && (
+      {/* What happens after this decision's tag lands — from the mapping,
+          never from a hard-coded assumption about the programme.
+          "Handed off to Kit automation" is a claim about CONFIGURATION, and
+          it is the largest claim the CRM is entitled to: it proves the tag
+          was delivered and knows what that tag is wired to, and it knows
+          nothing about whether Kit sent anything. */}
+      {decisionFollowup && (
         <span className="text-xs text-muted-foreground">
-          {NEEDS_HIGHER_CARE_EMAIL_NOTE}
+          {decisionFollowup}
         </span>
       )}
 

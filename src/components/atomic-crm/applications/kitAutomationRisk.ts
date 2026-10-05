@@ -72,6 +72,44 @@ export const kitRiskSentence = (risk: KitTagRisk, tagName: string): string => {
   }
 };
 
-// The one thing a Needs Higher Care decision must never let anybody assume.
-export const NEEDS_HIGHER_CARE_EMAIL_NOTE =
-  "Needs Higher Care email still needs to be sent manually.";
+// What happens after this tag lands, said only where the configuration
+// actually says it.
+//
+// This used to be one hard-coded sentence — "Needs Higher Care email still
+// needs to be sent manually" — printed on every Needs Higher Care decision
+// for every programme. It was true when Kit Core shipped and became false
+// the day Leif wrote the automations: GYU-NeedsHigherCare now hands off to
+// GYU_NeedsHigherCare, and MiniDD_NeedsHigherCare to its own. A sentence
+// that outlives its fact is worse than no sentence, because Leif acts on it.
+//
+// So it reads kit_tag_mappings.followup_mode, per (offer, event), and says
+// nothing at all for a mapping nobody has characterised.
+//
+// The three claims are deliberately different sizes:
+//
+//   DELIVERED        kit_sync_operations proves it. The CRM may say so.
+//   HANDED OFF       this tag is CONFIGURED to trigger an automation. The
+//                    CRM may say that, because Leif told it so.
+//   ENROLLED / SENT  Kit's own facts. The CRM may never claim either, and
+//                    nothing here does — Terry's actual enrollment in
+//                    GYU_NeedsHigherCare was verified by Leif in Kit, not
+//                    by this CRM.
+export const followupNote = (
+  mapping:
+    | Pick<KitTagMapping, "followup_mode" | "automation_name">
+    | null
+    | undefined,
+  delivered: boolean,
+): string | null => {
+  if (!mapping) return null;
+  if (mapping.followup_mode === "manual_email") {
+    return "That email still needs to be sent by hand.";
+  }
+  if (mapping.followup_mode === "kit_automation") {
+    // Only once the tag has actually landed. Before that the status line
+    // already says what is happening, and "handed off" would be a claim
+    // about work that has not happened.
+    return delivered ? "Handed off to Kit automation." : null;
+  }
+  return null;
+};

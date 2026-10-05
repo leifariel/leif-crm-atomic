@@ -62,6 +62,11 @@ const MAPPINGS = [
     event: "needs_higher_care",
     kit_tag_id: 24082725,
     kit_tag_name: "MiniDD_NeedsHigherCare",
+    // Production configuration. Mini Deep Dive is The Living Example's
+    // sales pathway, so this is offer 1 — and the automation's name is a
+    // separate external identifier from the tag's.
+    followup_mode: "kit_automation",
+    automation_name: "MiniDD_NeedsHigherCare",
     created_at: BOUNDARY,
   },
   {
@@ -319,7 +324,23 @@ describe("the Application's manual Kit work", () => {
     expect(buttons).toContain("Manage Kit tags");
   });
 
-  it("says the Needs Higher Care email is still manual, even after the tag lands", async () => {
+  it("says the Needs Higher Care decision was handed off to its automation", async () => {
+    // REVERSED 2026-10-05, because the business fact changed.
+    //
+    // This asserted "Needs Higher Care email still needs to be sent
+    // manually", and that was true when Kit Core shipped: the tag existed
+    // and Leif had not written its automation. He has now written both —
+    // GYU-NeedsHigherCare hands off to GYU_NeedsHigherCare, and
+    // MiniDD_NeedsHigherCare to its own — so the sentence had outlived its
+    // fact and was telling Leif to go and email people Kit was already
+    // emailing. Terry Robinson Whitney was the case: tagged, succeeded,
+    // subscriber 4315021388, and the page still asking for a manual email.
+    //
+    // What has NOT changed is the size of the claim. "Handed off" is about
+    // CONFIGURATION — this tag is wired to that automation, because Leif
+    // told the CRM so. The CRM still cannot prove the email was sent or the
+    // person enrolled; Terry's actual enrollment was verified by Leif in
+    // Kit, not here.
     await page.viewport(1280, 1400);
     const { element } = build({
       status: "needs_higher_care",
@@ -343,14 +364,20 @@ describe("the Application's manual Kit work", () => {
     await expect
       .element(screen.getByText("Kit: Manual — up to date ✓"))
       .toBeVisible();
-    // Tag success is not email success, and the page never lets that blur.
     await expect
-      .element(
-        screen.getByText(
-          "Needs Higher Care email still needs to be sent manually.",
-        ),
-      )
+      .element(screen.getByText("Handed off to Kit automation."))
       .toBeVisible();
+    // Tag success is still not email success, and the page never lets that
+    // blur: it says where the tag went, never what Kit did with it.
+    const body = screen.container.textContent ?? "";
+    expect(body).not.toContain("sent manually");
+    for (const forbidden of [
+      "email sent",
+      "enrolled",
+      "automation completed",
+    ]) {
+      expect(body.toLowerCase()).not.toContain(forbidden);
+    }
   });
 
   it("offers no Kit action at all for somebody the CRM refused", async () => {

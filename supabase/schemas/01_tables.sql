@@ -2336,6 +2336,45 @@ create table if not exists public.kit_tag_mappings (
     constraint kit_tag_mappings_tag_id_check check (kit_tag_id > 0)
 );
 
+-- What happens AFTER this tag lands, which Kit knows and the CRM cannot
+-- read. Owner-stated configuration, per (offer, event), because the answer
+-- genuinely differs per programme: Growing Yourself Up and The Living
+-- Example each have a Needs Higher Care automation now, and a third
+-- programme might not.
+--
+-- Defaults to 'none' deliberately. 'manual_email' is a real obligation on
+-- Leif, and an uncharacterised mapping must never invent one for him — a
+-- page that says "you still need to email this person" when nobody decided
+-- that is worse than a page that says nothing.
+--
+-- The CRM may say a tag was DELIVERED, because kit_sync_operations proves
+-- it. It may say this tag is CONFIGURED to hand off to an automation,
+-- because this column records what Leif told us. It may never say the email
+-- was sent, the automation completed, or the subscriber enrolled — Kit holds
+-- those facts and does not tell us.
+alter table public.kit_tag_mappings
+    add column if not exists followup_mode text not null default 'none';
+alter table public.kit_tag_mappings
+    drop constraint if exists kit_tag_mappings_followup_mode_check;
+alter table public.kit_tag_mappings
+    add constraint kit_tag_mappings_followup_mode_check
+    check (followup_mode in ('none', 'manual_email', 'kit_automation'));
+
+-- The Kit automation's own name, which is a SEPARATE external identifier
+-- from the tag's: GYU's tag is GYU-NeedsHigherCare and its automation is
+-- GYU_NeedsHigherCare, hyphen against underscore, both correct as written.
+-- Never derived from kit_tag_name, never normalized.
+alter table public.kit_tag_mappings
+    add column if not exists automation_name text;
+alter table public.kit_tag_mappings
+    drop constraint if exists kit_tag_mappings_automation_name_check;
+alter table public.kit_tag_mappings
+    add constraint kit_tag_mappings_automation_name_check
+    check (
+        (automation_name is null or btrim(automation_name) <> '')
+        and (automation_name is null or followup_mode = 'kit_automation')
+    );
+
 alter table public.kit_tag_mappings
     drop constraint if exists kit_tag_mappings_offer_id_fkey;
 alter table public.kit_tag_mappings

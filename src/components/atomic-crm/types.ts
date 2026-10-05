@@ -1323,6 +1323,14 @@ export type KitTagMapping = {
   event: "applicant" | "approved" | "needs_higher_care" | "not_fit";
   kit_tag_id: number;
   kit_tag_name: string;
+  // What happens AFTER this tag lands. Owner-stated, because Kit knows and
+  // the CRM cannot read it. Defaults to 'none': an uncharacterised mapping
+  // must never invent an obligation for Leif.
+  followup_mode?: "none" | "manual_email" | "kit_automation";
+  // The automation's own name, a SEPARATE external identifier from the
+  // tag's — GYU's tag is GYU-NeedsHigherCare and its automation is
+  // GYU_NeedsHigherCare. Never derived from kit_tag_name.
+  automation_name?: string | null;
   created_at: string;
 } & Pick<RaRecord, "id">;
 
