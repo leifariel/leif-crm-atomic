@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useGetOne } from "ra-core";
 import type { Identifier } from "ra-core";
 
@@ -24,9 +25,15 @@ const isRealAddress = (email: string | undefined): boolean =>
 export const PersonEmail = ({
   contactId,
   className,
+  fallback,
 }: {
   contactId: Identifier | undefined;
   className?: string;
+  // What to render when there is no real address. Omitted everywhere it
+  // was already used, which keeps "costs no space" the default. The
+  // Application header passes a line, because there the absence is itself
+  // the answer to a question Leif is asking — can I email this person.
+  fallback?: ReactNode;
 }) => {
   const { data: contact } = useGetOne<Contact>(
     "contacts",
@@ -38,7 +45,16 @@ export const PersonEmail = ({
     .map((entry) => entry.email)
     .filter(isRealAddress);
 
-  if (addresses.length === 0) return null;
+  if (addresses.length === 0) {
+    // A `le-standalone:<notion-page-id>` key lands here too, which is the
+    // point: it is not an address, so the truthful answer is that there
+    // is none rather than a mailto that goes nowhere.
+    return fallback ? (
+      <div className={className} data-testid="person-email-missing">
+        {fallback}
+      </div>
+    ) : null;
+  }
 
   const [primary, ...alternates] = addresses;
 

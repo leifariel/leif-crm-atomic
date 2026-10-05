@@ -58,13 +58,15 @@ const septemberCohort: Cohort = {
 const buildTestCrm = ({
   deal,
   application,
+  contacts = [buildContact({ id: 1 })],
 }: {
   deal: Deal;
   application: Application;
+  contacts?: ReturnType<typeof buildContact>[];
 }) => {
   const dataProvider = createDataProvider({
     db: createCrmDb({
-      contacts: [buildContact({ id: 1 })],
+      contacts,
       offers: [livingExample, gyuOffer],
       offer_payment_options: [],
       cohorts: [septemberCohort],
@@ -254,6 +256,130 @@ describe("ApplicationShow", () => {
       .toBeInTheDocument();
     await expect
       .element(screen.getByRole("button", { name: /Approve/ }))
+      .not.toBeInTheDocument();
+  });
+
+  // Application detail polish: Leif reads an application and wants to
+  // write to the person. The address belongs on the screen he is already
+  // on, under their name, above the programme and the date.
+  it("shows the applicant's email under their name, as a mailto link", async () => {
+    await page.viewport(1280, 900);
+    const screen = await render(
+      buildTestCrm({
+        deal: pendingLivingExampleDeal,
+        application: pendingApplication,
+        contacts: [
+          buildContact({
+            id: 1,
+            first_name: "Carey",
+            last_name: "Christian",
+            email_jsonb: [{ email: "carey@example.com", type: "Work" }],
+          }),
+        ],
+      }),
+    );
+
+    const link = screen.getByRole("link", { name: "carey@example.com" });
+    await expect.element(link).toBeInTheDocument();
+    await expect
+      .element(link)
+      .toHaveAttribute("href", "mailto:carey@example.com");
+
+    // Name first, then the address, then the programme and the date —
+    // the address is secondary to who it belongs to.
+    await expect
+      .element(screen.getByRole("heading", { name: "Carey Christian" }))
+      .toBeInTheDocument();
+    await expect
+      .element(screen.getByText(/The Living Example · Submitted/))
+      .toBeInTheDocument();
+  });
+
+  it("takes the address from the Contact, never from the application answers", async () => {
+    await page.viewport(1280, 900);
+    const screen = await render(
+      buildTestCrm({
+        deal: pendingLivingExampleDeal,
+        application: {
+          ...pendingApplication,
+          // A stale address sitting in the submitted payload. The Contact
+          // is the authority; this must not be what Leif is offered.
+          raw_answers: {
+            le_main_pattern: "A pattern",
+            email: "typo-in-the-form@example.com",
+          },
+        },
+        contacts: [
+          buildContact({
+            id: 1,
+            first_name: "Carey",
+            last_name: "Christian",
+            email_jsonb: [{ email: "carey@example.com", type: "Work" }],
+          }),
+        ],
+      }),
+    );
+
+    await expect
+      .element(screen.getByRole("link", { name: "carey@example.com" }))
+      .toBeInTheDocument();
+    await expect
+      .element(
+        screen.getByRole("link", { name: "typo-in-the-form@example.com" }),
+      )
+      .not.toBeInTheDocument();
+  });
+
+  it("says there is no email rather than inventing one", async () => {
+    await page.viewport(1280, 900);
+    const screen = await render(
+      buildTestCrm({
+        deal: pendingLivingExampleDeal,
+        application: pendingApplication,
+        contacts: [
+          buildContact({
+            id: 1,
+            first_name: "Carey",
+            last_name: "Christian",
+            email_jsonb: [],
+          }),
+        ],
+      }),
+    );
+
+    await expect
+      .element(screen.getByText("No email on file"))
+      .toBeInTheDocument();
+    // The page still renders, and nothing offers to send mail.
+    await expect
+      .element(screen.getByRole("heading", { name: "Carey Christian" }))
+      .toBeInTheDocument();
+  });
+
+  it("treats an import placeholder as no email, not as a clickable address", async () => {
+    await page.viewport(1280, 900);
+    const screen = await render(
+      buildTestCrm({
+        deal: pendingLivingExampleDeal,
+        application: pendingApplication,
+        contacts: [
+          buildContact({
+            id: 1,
+            first_name: "Carey",
+            last_name: "Christian",
+            // Twenty-two real Contacts carry one of these as their only
+            // "email" because the import had no address for them.
+            email_jsonb: [{ email: "le-standalone:abc123", type: "Other" }],
+          }),
+        ],
+      }),
+    );
+
+    await expect
+      .element(screen.getByText("No email on file"))
+      .toBeInTheDocument();
+    await expect
+      .element(screen.getByText("le-standalone:abc123"))
       .not.toBeInTheDocument();
   });
 

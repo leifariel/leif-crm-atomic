@@ -1,5 +1,6 @@
 import { ShowBase, useRecordContext, useTranslate } from "ra-core";
 import { contactDisplayNameOr } from "../contacts/contactDisplayName";
+import { PersonEmail } from "../contacts/PersonEmail";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -73,6 +74,24 @@ const ApplicationShowContent = () => {
         <div className="min-w-0">
           <PageHeader
             title={applicantName}
+            // Under the name, before the programme and the date: when
+            // Leif wants to write to somebody he is reading about, the
+            // address should already be on screen. Same component as the
+            // Opportunity drawer and the Client detail — the Contact's own
+            // authoritative address, never anything parsed back out of the
+            // application answers.
+            afterTitle={
+              <PersonEmail
+                contactId={contact.id}
+                fallback={
+                  <span className="text-sm text-muted-foreground">
+                    {translate("resources.applications.review.no_email", {
+                      _: "No email on file",
+                    })}
+                  </span>
+                }
+              />
+            }
             summary={
               <span className="flex flex-wrap items-center gap-2">
                 <span>{contextLine}</span>

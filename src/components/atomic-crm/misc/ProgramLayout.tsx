@@ -12,15 +12,23 @@ import { Card, CardContent } from "@/components/ui/card";
 export const PageHeader = ({
   eyebrow,
   title,
+  afterTitle,
   summary,
 }: {
   eyebrow?: ReactNode;
   title: string;
+  // A line that belongs to the person or thing named in the title rather
+  // than to the summary beneath it — the Application page puts the
+  // applicant's email here. It is a sibling of the summary, not part of
+  // it, because `summary` renders inside a <p> and the things that belong
+  // here (PersonEmail) render block elements of their own.
+  afterTitle?: ReactNode;
   summary?: ReactNode;
 }) => (
   <div>
     {eyebrow && <p className="text-sm text-muted-foreground">{eyebrow}</p>}
     <h1 className="text-2xl font-semibold">{title}</h1>
+    {afterTitle}
     {summary && <p className="text-lg text-muted-foreground">{summary}</p>}
   </div>
 );
