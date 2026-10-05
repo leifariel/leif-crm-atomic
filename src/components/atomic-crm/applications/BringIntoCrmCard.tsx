@@ -14,6 +14,8 @@ import {
   adoptImportedApplication,
   type AdoptionResult,
 } from "./adoptApplication";
+import { ResolveOpportunityDialog } from "./ResolveOpportunityDialog";
+import { resolveApplicationOpportunity } from "./resolveApplicationOpportunity";
 import {
   applicationAdoption,
   adoptionConflict,
@@ -43,6 +45,7 @@ export const BringIntoCrmCard = ({
   const notify = useNotify();
   const refresh = useRefresh();
   const [open, setOpen] = useState(false);
+  const [resolving, setResolving] = useState(false);
   const [working, setWorking] = useState(false);
 
   // The person's other Opportunities, so the page does not offer an action
@@ -62,13 +65,39 @@ export const BringIntoCrmCard = ({
 
   const conflict = adoptionConflict(application, deals ?? []);
   if (conflict) {
-    // Named, not hidden. There is a live sales conversation for this
-    // programme, and which one this application belongs to is Leif's call.
+    // A live sales conversation exists for this programme, so adoption
+    // refuses — correctly, because a second Opportunity beside a live one
+    // is worse than the problem. But refusing used to be ALL this did, and
+    // the Application still pointed at nothing, so the page said both "a
+    // conversation already exists" and "no decision can be recorded here".
+    // Samantha Herold and Celia were stuck between those two sentences.
+    //
+    // The third option is to link this Application to the conversation that
+    // already exists. Offered only when there is something to link to, and
+    // always confirmed by Leif.
+    const resolution = resolveApplicationOpportunity(
+      application,
+      (deals ?? []) as Deal[],
+    );
     return (
-      <div className="rounded-md border px-3 py-2">
+      <div className="rounded-md border px-3 py-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <span className="text-sm text-muted-foreground">
           {adoptionRefusalSentence(conflict)}
         </span>
+        {resolution.kind !== "none" && (
+          <>
+            <Button type="button" size="sm" onClick={() => setResolving(true)}>
+              Resolve sales conversation
+            </Button>
+            <ResolveOpportunityDialog
+              application={application}
+              applicantName={applicantName}
+              verdict={resolution}
+              open={resolving}
+              onOpenChange={setResolving}
+            />
+          </>
+        )}
       </div>
     );
   }
