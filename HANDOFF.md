@@ -3602,6 +3602,90 @@ from the migration chain, failing on any difference. Migrations remain
 production authority; the declaration gets continuously checked against them
 instead of drifting for four slices at a time. Not built — recorded on purpose.
 
+## 8b-testimonial-built. TESTIMONIAL SEQUENCE — DEPLOYED + PRODUCTION DATABASE VERIFIED 2026-10-06
+
+Day 0 at `active -> offboarding`: collect the testimonial. Day 7 and Day 14:
+ask again, each only if it has not arrived and the previous ask is done.
+Then stop.
+
+    CODE GREEN                   YES
+    SYSTEM GREEN                 YES
+    DEPLOYED                     YES  (e6680426)
+    PRODUCTION DATABASE VERIFIED YES
+    HUMAN ACCEPTANCE             PENDING the next real LE offboarding
+
+**Production evidence, read back by Leif:** 152 migrations with
+`20261006120000` applied exactly once and nothing newer;
+`testimonial_received_at` present; all three stage types accepted; the
+stage uniqueness index, the reconciler and `testimonial_person()` all
+present; **The Living Example only**, GYU off; the full ACL posture green
+(anon cannot drive reconciliation or probe a client name, the owner can
+still Start offboarding, service_role can reconcile); cron hourly at :53;
+zero parked payment tables.
+
+**The boundary, as deployed: 2026-10-06 21:59.** 17 active LE enrollments
+will enter the sequence prospectively when they offboard. **2 enrollments
+began offboarding before the boundary and are deliberately excluded** —
+nothing was backfilled, and whether either should be enrolled by hand is
+Leif's call. 0 testimonials recorded and 0 open testimonial tasks
+immediately after deploy, which is what a prospective boundary should look
+like on day one.
+
+**Not human accepted.** The cadence is system-proved against real Postgres,
+but nobody has yet watched a real client go through it. The next genuine LE
+offboarding is the acceptance.
+
+**It is NOT an offboarding requirement, and that is the design.**
+`enforce_enrollment_completion_requirements()` refuses
+`offboarding -> completed` while any `is_required` item is undone. A
+testimonial depends on the CLIENT replying, so a required item would strand
+the Enrollment on somebody who may never answer. Leif controls whether he
+ASKS; he does not control whether they ANSWER.
+
+| | |
+|---|---|
+| Authority | `enrollments.testimonial_received_at` (nullable) |
+| Anchor | `enrollment_status_events.entered_at` of the `offboarding` event |
+| Stage identity | task types `collect_testimonial`, `testimonial_followup_1`, `testimonial_followup_2` |
+| Idempotency | unique index on `(enrollment_id, type)` — NOT scoped to open tasks, so a spent stage never returns |
+| Suppression | `status = 'cancelled'` with a `done_date` — never a false "completed" |
+| Boundary | `testimonial_sequence_settings.not_before` singleton |
+| Schedule | `reconcile-testimonial-tasks`, hourly at :53 |
+
+**Outreach done is not a testimonial received.** Completing a stage means
+Leif asked. Only the timestamp means it arrived, and exhausting both
+follow-ups never sets it — "asked twice, never received" is a state the CRM
+holds truthfully.
+
+### DURABILITY NOTE — the Offer flag is seeded by name
+
+`offers.collects_testimonial` is set prospectively onto the EXISTING The
+Living Example row, matched on the exact Offer name, the same posture as
+the Kit tag mappings and the offboarding requirement templates.
+
+**If The Living Example is ever recreated as a new Offer row, that row
+defaults to `false`** and the testimonial sequence silently stops for new
+clients until it is deliberately switched on. Non-blocking, recorded so it
+is not rediscovered as a mystery. Growing Yourself Up uses the same
+offboarding engine and is deliberately OFF; switching it on is one update
+and Leif's decision.
+
+### Two security bugs found by building it
+
+`reconcile_testimonial_tasks` is SECURITY DEFINER, which Postgres creates
+with EXECUTE to PUBLIC — anon could have driven reconciliation through
+PostgREST. Locked to `postgres` + `service_role`, matching both sibling
+reconcilers.
+
+Then locking `testimonial_person()` down the same way **broke Start
+offboarding outright** ("permission denied for function
+testimonial_person"), because the offboarding trigger runs as whoever
+pressed the button. It keeps EXECUTE for `authenticated` and
+`service_role` and is revoked from `anon`. The migration asserts BOTH
+halves, because only asserting the lockdown is how the first fix broke the
+product. **The Golden Journey is what caught it** — the migration's own
+assertions run as `postgres` and could not have.
+
 ## 8b-testimonial. HIGH PRIORITY — CLIENT OFFBOARDING TESTIMONIAL SEQUENCE (NOT YET DECIDED)
 
 **Not built. Not to be built inside an Applications slice.** Recorded
