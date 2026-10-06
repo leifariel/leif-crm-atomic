@@ -3602,7 +3602,7 @@ from the migration chain, failing on any difference. Migrations remain
 production authority; the declaration gets continuously checked against them
 instead of drifting for four slices at a time. Not built — recorded on purpose.
 
-## 8b-testimonial-built. TESTIMONIAL SEQUENCE — DEPLOYED + PRODUCTION DATABASE VERIFIED 2026-10-06
+## 8b-testimonial-built. TESTIMONIAL SEQUENCE — LE PRODUCTION ACCEPTED 2026-10-06, GYU AWAITING ITS FIRST OFFBOARDING
 
 Day 0 at `active -> offboarding`: collect the testimonial. Day 7 and Day 14:
 ask again, each only if it has not arrived and the previous ask is done.
@@ -3610,9 +3610,32 @@ Then stop.
 
     CODE GREEN                   YES
     SYSTEM GREEN                 YES
-    DEPLOYED                     YES  (e6680426)
+    DEPLOYED                     YES  (441cd2d9)
     PRODUCTION DATABASE VERIFIED YES
-    HUMAN ACCEPTANCE             PENDING the next real LE offboarding
+    LE HUMAN ACCEPTANCE          YES  — on Jules (48) and Adriano (50)
+    GYU HUMAN ACCEPTANCE         PENDING its first real offboarding
+
+**Accepted on the two real clients the boundary had excluded.** Jules
+(Enrollment 48) is still Offboarding with Session notes archived unchanged,
+the Testimonial card visible, Not received, and exactly one Collect
+testimonial task. Adriano (50) is still **Completed** — the Enrollment was
+not reopened — with the card visible after completion, Not received, and
+exactly one ask. That second case is the one worth remembering: the card and
+the sequence both keep working after ordinary offboarding has finished,
+which is the whole reason a testimonial was never made a requirement.
+
+**Production, read back by Leif:** 154 migrations, both testimonial
+migrations applied once, the old global boundary gone, **LE activation
+2026-10-06 21:59 and GYU 22:54 — independent**, exactly LE + GYU collecting,
+testimonial not a requirement on either, GYU's Slack and Calendar
+requirements and LE's notes_archived all unchanged, opt-ins limited to 48
+and 50, no other pre-boundary client eligible, security PASS, one cron at
+:53, and 2 open testimonial tasks — Jules's and Adriano's. 17 active LE and
+7 active GYU clients will enter prospectively.
+
+**GYU is deliberately untested in production.** Nobody will force a GYU
+lifecycle transition to exercise it; its acceptance is the next genuine GYU
+offboarding.
 
 **Production evidence, read back by Leif:** 152 migrations with
 `20261006120000` applied exactly once and nothing newer;
