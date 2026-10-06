@@ -24,18 +24,27 @@ import { CompanyAvatar } from "../companies/CompanyAvatar";
 import { Markdown } from "../misc/Markdown";
 import { RelativeDate } from "../misc/RelativeDate";
 import { Status } from "../misc/Status";
-import type { ContactNote, DealNote } from "../types";
+import type { ApplicationNote, ContactNote, DealNote } from "../types";
 import { NoteAttachments } from "./NoteAttachments";
 import { NoteInputs } from "./NoteInputs";
 import { useGetSalesName } from "../sales/useGetSalesName";
+import { formatTimestampWithTimeString } from "../deals/dealUtils";
 
 export const Note = ({
   showStatus,
   note,
+  variant = "default",
 }: {
   showStatus?: boolean;
-  note: DealNote | ContactNote;
+  note: DealNote | ContactNote | ApplicationNote;
   isLast: boolean;
+  // "compact" is for a note that already sits inside its own bordered
+  // container and belongs to a record with no company — an Application.
+  // It drops the company avatar and replaces "You added a note" plus the
+  // right-aligned relative date with one secondary byline, so the note's
+  // own words are the primary thing on the row. Every other caller keeps
+  // "default", unchanged.
+  variant?: "default" | "compact";
 }) => {
   const [isHover, setHover] = useState(false);
   const [isEditing, setEditing] = useState(false);
@@ -47,8 +56,11 @@ export const Note = ({
   const translate = useTranslate();
   const { identity } = useGetIdentity();
   const isCurrentUser = note.sales_id === identity?.id;
+  const compact = variant === "compact";
+  // The compact byline names the author even when it is the current user,
+  // so the name has to be fetched in that case too.
   const salesName = useGetSalesName(note.sales_id, {
-    enabled: !isCurrentUser,
+    enabled: compact || !isCurrentUser,
   });
 
   // Detect if content is truncated
@@ -104,19 +116,25 @@ export const Note = ({
     <div
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      className="mb-4"
+      className={compact ? undefined : "mb-4"}
     >
       <div className="flex items-center space-x-4 w-full">
-        <ReferenceField source="company_id" reference="companies" link="show">
-          <CompanyAvatar width={20} height={20} />
-        </ReferenceField>
+        {!compact && (
+          <ReferenceField source="company_id" reference="companies" link="show">
+            <CompanyAvatar width={20} height={20} />
+          </ReferenceField>
+        )}
         <div className="inline-flex h-full items-center text-sm text-muted-foreground">
-          {translate(
-            isCurrentUser
-              ? "resources.notes.you_added"
-              : "resources.notes.author_added",
-            { name: salesName },
-          )}{" "}
+          {compact
+            ? [salesName, formatTimestampWithTimeString(note.date)]
+                .filter(Boolean)
+                .join(" · ")
+            : translate(
+                isCurrentUser
+                  ? "resources.notes.you_added"
+                  : "resources.notes.author_added",
+                { name: salesName },
+              )}{" "}
           {showStatus && note.status && (
             <Status className="ml-2" status={note.status} />
           )}
@@ -158,9 +176,11 @@ export const Note = ({
           </TooltipProvider>
         </span>
         <div className="flex-1"></div>
-        <span className="text-sm text-muted-foreground">
-          <RelativeDate date={note.date} />
-        </span>
+        {!compact && (
+          <span className="text-sm text-muted-foreground">
+            <RelativeDate date={note.date} />
+          </span>
+        )}
       </div>
       {isEditing ? (
         <Form onSubmit={handleNoteUpdate} record={note} className="mt-1">

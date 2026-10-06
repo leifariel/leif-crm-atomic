@@ -3602,6 +3602,86 @@ from the migration chain, failing on any difference. Migrations remain
 production authority; the declaration gets continuously checked against them
 instead of drifting for four slices at a time. Not built — recorded on purpose.
 
+## 8b-testimonial. HIGH PRIORITY — CLIENT OFFBOARDING TESTIMONIAL SEQUENCE (NOT YET DECIDED)
+
+**Not built. Not to be built inside an Applications slice.** Recorded
+2026-10-06 at Leif's instruction, with the design traps already found so
+that whoever picks it up does not rediscover them.
+
+### What offboarding is today, and why it is not enough
+
+Offboarding a Living Example client raises exactly ONE requirement:
+
+    offer 1  notes_archived  "Move {name}'s session notes to Past Clients"
+
+(Growing Yourself Up has two: `slack_removed`, `calendar_removed`.) They
+live in `offboarding_requirement_templates`, are SNAPSHOTTED into
+`enrollment_offboarding_items` by `handle_enrollment_offboarding_started()`
+at the moment an Enrollment genuinely moves `active -> offboarding`, and
+each item gets one Task pointing at it through `tasks.offboarding_item_id`.
+
+Archiving the notes is not the end of offboarding. The sequence Leif wants:
+
+1. Archive client notes page
+2. Collect testimonial
+3. Testimonial follow-up #1 — **only if no testimonial yet**
+4. Testimonial follow-up #2 — **only if still no testimonial**
+
+### The rule that shapes the whole design
+
+**#3 and #4 are NOT unconditional reminders.** There must be a durable
+"testimonial received" authority, and once it is true:
+
+- pending testimonial follow-ups stop surfacing
+- Leif stops being nagged
+- the FACT that a testimonial was received is preserved as history
+
+Either shape is acceptable, and whichever is chosen has to be proved:
+
+- **pre-created** follow-ups must be cancellable/suppressed the moment
+  received becomes true, or
+- **conditionally generated** follow-ups must be proved to appear only
+  when due AND received is false.
+
+### The precedent to copy
+
+This CRM already has exactly this pattern, and it works:
+`schedule_application_review_escalations()` creates a task only while its
+condition holds and CLOSES it when the condition stops — which is why
+§4 Tasks records that a system Task reappears if deleted while its
+condition is live. A testimonial follow-up is the same kind of object: a
+projection of "no testimonial yet, and it is time to ask again", not a
+row somebody remembered to tick off.
+
+### Two obstacles that are already known
+
+**1. `tasks_one_open_per_offboarding_item` allows ONE open task per item.**
+So follow-up #1 and #2 cannot both be open against the same offboarding
+item. Either they are separate items, or that index needs exactly the
+treatment `tasks_one_open_review_per_application` just received in
+§8b-appnotes — narrow the predicate to the type it is really about. Do not
+simply drop it.
+
+**2. The requirement set is snapshotted at the START of offboarding.** A
+follow-up that becomes due WEEKS later does not fit "create every item at
+transition". Adding it to `offboarding_requirement_templates` would raise
+all three testimonial steps at once, on day one, which is the nagging the
+rule above forbids. That is the crux of the design, and it is why this is
+not a seed-data migration.
+
+**3. There is no admin UI for requirements by design** — "a future
+requirement is a migration like this one, not a schema change". A new
+durable `testimonial_received_at` (or equivalent) IS a schema change, and
+needs the same deliberateness as any other.
+
+### WAITING ON LEIF — do not invent it
+
+**The follow-up cadence is TBD by Leif.** How long after offboarding
+starts does #3 fire, and how long after that #4, and is there a point at
+which the CRM stops asking entirely? Nothing should be built until he
+says, because a guessed cadence is indistinguishable from a bug to the
+person being nagged.
+
 ## 8b-buffer. HIGH PRIORITY — LE SAFE-OPENING BUFFER (NOT YET DECIDED)
 
 **Recorded 2026-10-04. Do not implement without Leif's decision.**
@@ -3712,11 +3792,30 @@ covers nothing either. Fixed in `e80d11bc`.
   while the test computes from the unresolved one. Linux CI has no such
   divergence and is green. Tooling debt, no product impact.
 
-## 8b-appnotes. APPLICATION NOTES + FOLLOW-UPS — BUILT 2026-10-06, NOT YET ACCEPTED
+## 8b-appnotes. APPLICATION EMAIL HEADER + NOTES & FOLLOW-UP — PRODUCTION ACCEPTED 2026-10-06
 
 A private working area at the foot of every Application: what Leif is
-thinking while reviewing it, and what he must do before deciding. Built
-and system-proved; **awaiting his try-run** (§2).
+thinking while reviewing it, and what he must do before deciding — plus
+the applicant's email under their name, so writing to someone he is
+reading about costs no navigation.
+
+**Accepted in production on Carey Christian** (Application 195). The
+header shows his canonical Contact email beneath his name and the mailto
+opens; notes and a follow-up task both survived a full reload; and adding
+either left the Application's decision state untouched. Production SQL
+confirmed all of it independently: 151 migrations, `application_notes`
+with RLS and four policies, **anon DML = 0**, `application_id` NOT NULL,
+the review-task index scoped to `type = 'review_application'`, and no
+parked payment tables.
+
+A presentation pass followed acceptance: saved notes floated under the
+composer with a generic "You added a note" and read as loose text rather
+than records. They now sit in their own bordered rows under a **Private
+notes** subsection, each with a truthful byline — the note's own
+`sales_id`, resolved through `useGetSalesName`, beside the time — and the
+note's words as the primary content. The shared `Note` component gained a
+`variant="compact"` for this; every other caller keeps `"default"`,
+unchanged.
 
 **Notes are scoped to ONE Application.** `application_notes` is a sibling
 of `contact_notes` and `deal_notes` — same shape, same semantics, the same

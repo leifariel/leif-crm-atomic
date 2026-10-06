@@ -81,17 +81,27 @@ export const ApplicationNotesAndFollowUp = ({
           ApplicationNoteComposer for why — but each note is rendered,
           edited and deleted by the shared Note component, which is
           resource-agnostic and reads its resource from this list. */}
-      <InfiniteListBase
-        resource="application_notes"
-        filter={{ application_id: applicationId }}
-        sort={{ field: "date", order: "DESC" }}
-        perPage={25}
-        disableSyncWithLocation
-        storeKey={false}
-      >
-        <ApplicationNoteComposer applicationId={applicationId} />
-        <ApplicationNoteList />
-      </InfiniteListBase>
+      {/* A restrained subsection, so the composer and the notes beneath it
+          read as one thing — Leif's own thinking — rather than as loose
+          text under the follow-up tasks. */}
+      <div className="flex flex-col gap-3">
+        <h3 className="text-sm font-medium">
+          {translate("resources.applications.review.private_notes", {
+            _: "Private notes",
+          })}
+        </h3>
+        <InfiniteListBase
+          resource="application_notes"
+          filter={{ application_id: applicationId }}
+          sort={{ field: "date", order: "DESC" }}
+          perPage={25}
+          disableSyncWithLocation
+          storeKey={false}
+        >
+          <ApplicationNoteComposer applicationId={applicationId} />
+          <ApplicationNoteList />
+        </InfiniteListBase>
+      </div>
     </Section>
   );
 };
@@ -103,9 +113,19 @@ const ApplicationNoteList = () => {
   if (isPending || error || data.length === 0) return null;
 
   return (
-    <div className="mt-4 space-y-4" data-testid="application-notes">
+    <div className="flex flex-col gap-2" data-testid="application-notes">
       {data.map((note, index) => (
-        <Note key={note.id} note={note} isLast={index === data.length - 1} />
+        // Each note in its own bordered card, in the CRM's existing
+        // language (the same rounded-md border the operational cards on
+        // this page already use) — so a saved note reads as a record
+        // rather than as text floating under the box it was typed in.
+        <div key={note.id} className="rounded-md border px-3 py-2">
+          <Note
+            note={note}
+            isLast={index === data.length - 1}
+            variant="compact"
+          />
+        </div>
       ))}
     </div>
   );

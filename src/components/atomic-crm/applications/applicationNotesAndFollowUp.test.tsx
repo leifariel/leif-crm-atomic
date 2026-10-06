@@ -215,6 +215,76 @@ describe("Application notes & follow-up", () => {
       .not.toBeInTheDocument();
   });
 
+  // Presentation pass: a saved note has to read as a record, not as text
+  // floating under the box it was typed in.
+  it("renders a saved note inside its own container, with a truthful byline", async () => {
+    await page.viewport(1280, 900);
+    const { element } = buildTestCrm({
+      applications: [applicationFor(1)],
+      application_notes: [
+        note(
+          1,
+          1,
+          "I want to email Carey individually about getting the scholarship",
+          "2026-09-01T11:36:00.000Z",
+        ),
+      ],
+      applicationId: 1,
+    });
+    const screen = await render(element);
+
+    await expect.element(screen.getByText("Private notes")).toBeInTheDocument();
+
+    // The note text is INSIDE the notes container, not merely somewhere on
+    // the page — the same distinction that once let a test pass on the
+    // composer's own value.
+    const saved = screen.getByTestId("application-notes");
+    await expect
+      .element(
+        saved.getByText(
+          "I want to email Carey individually about getting the scholarship",
+        ),
+      )
+      .toBeInTheDocument();
+
+    // The generic line is gone, replaced by who wrote it and when.
+    await expect
+      .element(screen.getByText(/You added a note/))
+      .not.toBeInTheDocument();
+    await expect.element(saved.getByText(/Jane Doe · /)).toBeInTheDocument();
+  });
+
+  it("stacks two notes, each in its own container, newest first", async () => {
+    await page.viewport(1280, 900);
+    const { element } = buildTestCrm({
+      applications: [applicationFor(1)],
+      application_notes: [
+        note(1, 1, "The older thought.", "2026-09-01T09:00:00.000Z"),
+        note(2, 1, "The newer thought.", "2026-09-02T09:00:00.000Z"),
+      ],
+      applicationId: 1,
+    });
+    const screen = await render(element);
+
+    const saved = screen.getByTestId("application-notes");
+    await expect
+      .element(saved.getByText("The older thought."))
+      .toBeInTheDocument();
+    await expect
+      .element(saved.getByText("The newer thought."))
+      .toBeInTheDocument();
+
+    // Newest first, which is the order the list already asked for.
+    const container = saved.element() as HTMLElement;
+    const texts = container.textContent ?? "";
+    expect(texts.indexOf("The newer thought.")).toBeLessThan(
+      texts.indexOf("The older thought."),
+    );
+
+    // Two notes, two containers.
+    expect(container.children.length).toBe(2);
+  });
+
   it("lists this Application's follow-up tasks and leaves the review task to Review Decision", async () => {
     await page.viewport(1280, 900);
     const { element } = buildTestCrm({
