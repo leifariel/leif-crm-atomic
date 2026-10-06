@@ -103,7 +103,7 @@ const ApplicationNoteList = () => {
   if (isPending || error || data.length === 0) return null;
 
   return (
-    <div className="mt-4 space-y-4">
+    <div className="mt-4 space-y-4" data-testid="application-notes">
       {data.map((note, index) => (
         <Note key={note.id} note={note} isLast={index === data.length - 1} />
       ))}
@@ -125,7 +125,7 @@ const ApplicationFollowUpTasks = ({ tasks }: { tasks: Task[] }) => {
   if (followUps.length === 0) return null;
 
   return (
-    <ul className="flex flex-col gap-1">
+    <ul className="flex flex-col gap-1" data-testid="application-follow-ups">
       {followUps.map((task) => (
         <li key={task.id} className="text-sm flex items-baseline gap-2">
           <span

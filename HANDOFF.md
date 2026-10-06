@@ -3712,6 +3712,83 @@ covers nothing either. Fixed in `e80d11bc`.
   while the test computes from the unresolved one. Linux CI has no such
   divergence and is green. Tooling debt, no product impact.
 
+## 8b-appnotes. APPLICATION NOTES + FOLLOW-UPS — BUILT 2026-10-06, NOT YET ACCEPTED
+
+A private working area at the foot of every Application: what Leif is
+thinking while reviewing it, and what he must do before deciding. Built
+and system-proved; **awaiting his try-run** (§2).
+
+**Notes are scoped to ONE Application.** `application_notes` is a sibling
+of `contact_notes` and `deal_notes` — same shape, same semantics, the same
+`Note` component rendering, editing and deleting each one. It exists
+because a Contact may apply more than once, and reasoning about one
+application must never surface on another, which a Contact-scoped note
+cannot express. `anon` is revoked outright and the table is listed in the
+posture spec: these are notes ABOUT an applicant and must never be
+reachable BY one.
+
+**Tasks reuse the task system**, pointed at the Application through the
+`application_id` the table already carried, with type `other` — which the
+schema already calls "Leif's own note" and already exempts from the
+machinery that cancels sales-driven tasks when an Opportunity ends. No new
+type, no second task engine.
+
+### The index was stricter than its own name
+
+`tasks_one_open_review_per_application` keyed on `application_id` alone,
+so it allowed one open task of ANY type. Since an Application awaiting
+review HAS an open `review_application` task, adding a follow-up was
+refused outright. The predicate now includes `type = 'review_application'`.
+Nothing relied on the broader reading:
+`schedule_application_review_escalations()` guards with its own
+`not exists (... and t.type = 'review_application' ...)` and uses no
+`ON CONFLICT`, and `review_application()` closes the review task by type.
+Migration `20261005140000`, whose assertions run against rows inside a
+subtransaction it always rolls back — so it proves behaviour without
+writing data, and without a cleanup DELETE that would have to succeed in a
+database where contact deletion is closed on purpose.
+
+### Two things the e2e work taught, both worth keeping
+
+**`resetDb` is an automatic fixture: it empties every table before EVERY
+test.** So seeded rows cannot be shared across tests in a journey. A
+journey split into "add a note", then "add another", then "check
+isolation" has its fixture deleted underneath it between steps, and the
+symptom is not an empty table — it is the page's own honest "That note
+could not be saved", because the Application the note points at no longer
+exists. **A multi-step database journey belongs in ONE test.** It is why
+[applicationNotesAndTasks.spec.ts](e2e/applicationNotesAndTasks.spec.ts)
+does the whole write journey in a single test, on the desktop project
+only, with the mobile project proving layout and writing nothing.
+
+**A `getByText` assertion can be satisfied by the textarea the text was
+just typed into.** An earlier version of that spec passed while nothing
+had been saved at all. Assertions about saved notes are scoped to
+`data-testid="application-notes"`, and the reload step additionally
+asserts the composer is empty, so typed text cannot satisfy them.
+
+### BACKLOG — the shared note composer takes only one note per page load
+
+**Not this slice, and not caused by it.** `notes/NoteCreate.tsx` can
+reliably add only ONE note per page load: the first saves, the box keeps
+its text, and the next is dropped. `CreateBase` holds the record it just
+created and the form re-seeds from it, landing after the handler's own
+`reset()`. **Reproduced on the Opportunity drawer with every file of this
+slice reverted**, so Opportunities have this today.
+
+This is why the Application page owns its own small composer
+([ApplicationNoteComposer.tsx](src/components/atomic-crm/applications/ApplicationNoteComposer.tsx))
+rather than depending on the shared one — the file says so. The repair
+deserves a bounded slice with the Opportunity and Contact pages in scope
+and their own acceptance.
+
+One real fix WAS taken here, because it is a correctness bug rather than a
+lifecycle one: the shared composer wrote the note's status back onto its
+parent record for every reference. For a deal that was a no-op; for any
+parent with a meaningful status — an Application — it would have sent a
+status to the record itself, so a private note could reach its own
+decision state. It now says which record it is for.
+
 ## 8c. Applications UX cleanup + Waitlist entry redesign — PRODUCTION ACCEPTED 2026-10-05
 
 Scoped, built and accepted 2026-10-05, after §8b-apps-accepted.
