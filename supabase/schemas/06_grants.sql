@@ -101,6 +101,10 @@ revoke all on function public.testimonial_person(bigint) from public;
 revoke all on function public.testimonial_person(bigint) from anon;
 grant execute on function public.testimonial_person(bigint) to authenticated;
 grant execute on function public.testimonial_person(bigint) to service_role;
+revoke all on function public.testimonial_sequence_enrollments() from public;
+revoke all on function public.testimonial_sequence_enrollments() from anon;
+revoke all on function public.testimonial_sequence_enrollments() from authenticated;
+grant execute on function public.testimonial_sequence_enrollments() to service_role;
 revoke all on function public.handle_enrollment_testimonial_start() from public;
 revoke all on function public.handle_enrollment_testimonial_start() from anon;
 revoke all on function public.handle_enrollment_testimonial_start() from authenticated;
@@ -311,11 +315,6 @@ grant all on table public.offboarding_requirement_templates to service_role;
 -- role, only through service_role. See 20260913230000_anon_table_grant_hardening.sql.
 revoke select, insert, update, delete on table public.offboarding_requirement_templates from anon;
 
-grant all on table public.testimonial_sequence_settings to anon;
-grant all on table public.testimonial_sequence_settings to authenticated;
-grant all on table public.testimonial_sequence_settings to service_role;
--- Deployment configuration, not business data. anon reads nothing.
-revoke select, insert, update, delete on table public.testimonial_sequence_settings from anon;
 
 grant all on table public.enrollment_offboarding_items to anon;
 grant all on table public.enrollment_offboarding_items to authenticated;

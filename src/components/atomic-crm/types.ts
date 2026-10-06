@@ -158,6 +158,10 @@ export type Offer = {
   // testimonial. The Living Example does; Growing Yourself Up uses the
   // same offboarding engine but is deliberately not switched on.
   collects_testimonial?: boolean;
+  // When this Offer began asking. Null means it never has, so none of its
+  // Enrollments are eligible — which is also what stops a recreated Offer
+  // row being enabled by inheriting a name.
+  testimonial_activated_at?: string | null;
   is_active: boolean;
   // Acuity/Sales Call Lifecycle slice: only meaningful for an individual
   // Offer (e.g. The Living Example) — a group Offer maps per-Cohort
@@ -450,6 +454,9 @@ export type Enrollment = {
   // Null is truthful even once both asks are spent — exhausting the
   // follow-ups never means it was received.
   testimonial_received_at?: string | null;
+  // Set when Leif deliberately included this one Enrollment despite its
+  // Offer's activation boundary excluding it. Never set in bulk.
+  testimonial_sequence_opted_in_at?: string | null;
   created_at: string;
   updated_at: string;
 } & Pick<RaRecord, "id">;

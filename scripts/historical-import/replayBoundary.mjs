@@ -130,6 +130,25 @@ export const REVIEW_THRESHOLD = 2;
  */
 export const REVIEWED_DETERMINISTIC = {
   // Matched "a table of named real clients" on
+  //   values ('Gyu', 'Assertion', ...)
+  // a synthetic Contact inside a subtransaction the block always rolls
+  // back. The migration owns durable structure — offers.testimonial_
+  // activated_at, enrollments.testimonial_sequence_opted_in_at, the
+  // testimonial_sequence_enrollments() eligibility function, the rewritten
+  // reconciler and trigger, and the removal of the superseded global
+  // boundary singleton — and the only rows it writes outside that block are
+  // configuration on the canonical Offer rows themselves.
+  //
+  // The probe proves, at deploy time, what the migration is FOR: a GYU
+  // client offboarding now enters the sequence exactly once, repeated
+  // reconciliation does not duplicate it, both GYU requirements are still
+  // raised and still complete the Enrollment with no testimonial, an
+  // Enrollment before its programme's boundary is NOT eligible, and an
+  // explicitly opted-in one is.
+  20261006160000:
+    "Synthetic GYU cadence probe, rolled back. Owns the per-Offer activation boundary, the opt-in column and the eligibility function; writes only Offer configuration.",
+
+  // Matched "a table of named real clients" on
   //   values ('Cadence', 'Assertion', ...) / ('Silent', 'Assertion', ...)
   // and "a hardcoded business-record id" on the settings singleton's
   // id = 1 — which is deployment configuration, not a business record.

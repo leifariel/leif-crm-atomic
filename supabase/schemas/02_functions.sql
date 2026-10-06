@@ -4660,6 +4660,42 @@ as $$
    where e.id = p_enrollment_id;
 $$;
 
+-- One definition of "in the sequence": either Leif put this client in by
+-- hand, or their programme was already asking when they offboarded.
+create or replace function public.testimonial_sequence_enrollments()
+  returns table (enrollment_id bigint, contact_id bigint,
+                 started_at timestamp with time zone)
+  language sql
+  stable
+  security definer
+  set search_path to 'public'
+as $$
+  -- One definition of "in the sequence", read by the reconciler and by
+  -- anything that needs to ask the same question later.
+  select e.id,
+         d.contact_id,
+         ev.started_at
+    from enrollments e
+    join deals d on d.id = e.opportunity_id
+    join offers o on o.id = d.offer_id
+    cross join lateral (
+      select max(s.entered_at) as started_at
+        from enrollment_status_events s
+       where s.enrollment_id = e.id
+         and s.status = 'offboarding'
+    ) ev
+   where o.collects_testimonial
+     and e.testimonial_received_at is null
+     and ev.started_at is not null
+     and (
+       -- Either Leif put this one client in by hand...
+       e.testimonial_sequence_opted_in_at is not null
+       -- ...or their programme was already asking when they offboarded.
+       or (o.testimonial_activated_at is not null
+           and ev.started_at >= o.testimonial_activated_at)
+     );
+$$;
+
 create or replace function public.reconcile_testimonial_tasks()
   returns integer
   language plpgsql
@@ -4668,21 +4704,14 @@ create or replace function public.reconcile_testimonial_tasks()
 as $$
 declare
   v_sales_id bigint;
-  v_not_before timestamp with time zone;
   v_created int := 0;
   v_cancelled int;
 begin
   select id into v_sales_id from sales where administrator = true
    order by id limit 1;
-  select not_before into v_not_before
-    from testimonial_sequence_settings where id = 1;
-  if v_not_before is null then
-    return 0;
-  end if;
 
   -- The testimonial arrived, so nothing further is wanted. Cancelled, not
-  -- completed: Leif did not do these, they stopped being necessary. The
-  -- status says which, and the history stays.
+  -- completed: Leif did not do these, they stopped being necessary.
   update tasks t
      set status = 'cancelled', done_date = now()
    where t.type in ('collect_testimonial', 'testimonial_followup_1',
@@ -4695,27 +4724,9 @@ begin
      );
   get diagnostics v_cancelled = row_count;
 
-  -- Every Enrollment eligible for the sequence, with its Day 0.
-  with eligible as (
-    select e.id as enrollment_id,
-           d.contact_id,
-           (select max(ev.entered_at)
-              from enrollment_status_events ev
-             where ev.enrollment_id = e.id
-               and ev.status = 'offboarding') as started_at
-      from enrollments e
-      join deals d on d.id = e.opportunity_id
-      join offers o on o.id = d.offer_id
-     where o.collects_testimonial
-       and e.testimonial_received_at is null
+  with dated as (
+    select * from testimonial_sequence_enrollments()
   ),
-  dated as (
-    select * from eligible
-     where started_at is not null
-       and started_at >= v_not_before
-  ),
-  -- Stage 1 the moment offboarding starts. The trigger below normally
-  -- gets there first; this is what makes a missed trigger recoverable.
   stage_1 as (
     insert into tasks (contact_id, type, text, due_date, status,
                        enrollment_id, sales_id)
@@ -4735,10 +4746,6 @@ begin
     on conflict do nothing
     returning 1
   ),
-  -- Day 7, and only once the first ask is genuinely DONE. If the initial
-  -- request is still open on day 7 there is no honest "follow-up" to
-  -- raise, so none is raised; when Leif finishes it later, this becomes
-  -- due on the next run, because its date has already passed.
   stage_2 as (
     insert into tasks (contact_id, type, text, due_date, status,
                        enrollment_id, sales_id)
@@ -4765,7 +4772,6 @@ begin
     on conflict do nothing
     returning 1
   ),
-  -- Day 14, same rule one stage along. After this one there is nothing.
   stage_3 as (
     insert into tasks (contact_id, type, text, due_date, status,
                        enrollment_id, sales_id)
@@ -4815,18 +4821,17 @@ begin
     if exists (
       select 1 from deals d
         join offers o on o.id = d.offer_id
-       where d.id = new.opportunity_id and o.collects_testimonial
-    ) and exists (
-      select 1 from testimonial_sequence_settings
-       where id = 1 and now() >= not_before
+       where d.id = new.opportunity_id
+         and o.collects_testimonial
+         and (new.testimonial_sequence_opted_in_at is not null
+              or (o.testimonial_activated_at is not null
+                  and now() >= o.testimonial_activated_at))
     ) then
       select d.contact_id into v_contact_id
         from deals d where d.id = new.opportunity_id;
       select id into v_sales_id from sales where administrator = true
        order by id limit 1;
 
-      -- ON CONFLICT so the unique index, not this function, is what
-      -- guarantees one stage-1 task.
       insert into tasks (contact_id, type, text, due_date, status,
                          enrollment_id, sales_id)
       values (v_contact_id, 'collect_testimonial',
