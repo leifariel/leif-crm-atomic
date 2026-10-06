@@ -1190,6 +1190,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/enrollments/TestimonialCard.tsx",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/enrollments/StartWeekCard.tsx",
           "type": "registry:component"
         },

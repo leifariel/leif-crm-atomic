@@ -78,6 +78,36 @@ revoke all on function public.merge_contacts(bigint, bigint) from anon;
 revoke all on function public.merge_contacts(bigint, bigint) from authenticated;
 revoke all on function public.merge_contacts(bigint, bigint) from service_role;
 
+-- The testimonial sequence is the scheduler's, not a browser's. A SECURITY
+-- DEFINER function is created with EXECUTE to PUBLIC, which would let anon
+-- drive the reconciler through PostgREST; both sibling reconcilers are
+-- locked to postgres, and these match them. service_role keeps EXECUTE on
+-- the reconciler only — it is the server-side key, never shipped to a
+-- browser. testimonial_person() is locked down because it returns a
+-- client's NAME and is only called from inside the two functions above.
+revoke all on function public.reconcile_testimonial_tasks() from public;
+revoke all on function public.reconcile_testimonial_tasks() from anon;
+revoke all on function public.reconcile_testimonial_tasks() from authenticated;
+grant execute on function public.reconcile_testimonial_tasks() to service_role;
+-- testimonial_person() stays callable by the signed-in owner and the
+-- server key, and is revoked from anon. It is NOT locked to postgres: the
+-- offboarding trigger is a plain trigger function, so it runs as whoever
+-- made the UPDATE, and locking this away made "Start offboarding" fail
+-- outright with "permission denied for function testimonial_person" for
+-- every real user. The function only formats a name out of contacts and
+-- deals, both of which an authenticated owner can already read, so this
+-- grants nothing they did not have — while anon still gets nothing.
+revoke all on function public.testimonial_person(bigint) from public;
+revoke all on function public.testimonial_person(bigint) from anon;
+grant execute on function public.testimonial_person(bigint) to authenticated;
+grant execute on function public.testimonial_person(bigint) to service_role;
+revoke all on function public.handle_enrollment_testimonial_start() from public;
+revoke all on function public.handle_enrollment_testimonial_start() from anon;
+revoke all on function public.handle_enrollment_testimonial_start() from authenticated;
+revoke all on function public.handle_testimonial_received() from public;
+revoke all on function public.handle_testimonial_received() from anon;
+revoke all on function public.handle_testimonial_received() from authenticated;
+
 grant all on function public.set_sales_id_default() to anon;
 grant all on function public.set_sales_id_default() to authenticated;
 grant all on function public.set_sales_id_default() to service_role;
@@ -280,6 +310,12 @@ grant all on table public.offboarding_requirement_templates to service_role;
 -- public Edge Function -- reads or writes this table through the anon
 -- role, only through service_role. See 20260913230000_anon_table_grant_hardening.sql.
 revoke select, insert, update, delete on table public.offboarding_requirement_templates from anon;
+
+grant all on table public.testimonial_sequence_settings to anon;
+grant all on table public.testimonial_sequence_settings to authenticated;
+grant all on table public.testimonial_sequence_settings to service_role;
+-- Deployment configuration, not business data. anon reads nothing.
+revoke select, insert, update, delete on table public.testimonial_sequence_settings from anon;
 
 grant all on table public.enrollment_offboarding_items to anon;
 grant all on table public.enrollment_offboarding_items to authenticated;

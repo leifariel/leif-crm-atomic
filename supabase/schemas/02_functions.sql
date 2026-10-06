@@ -4631,3 +4631,229 @@ BEGIN
   );
 END;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Asking for a testimonial, twice, and then stopping (20261006120000)
+-- ---------------------------------------------------------------------------
+-- The sequence deliberately hangs off the Enrollment and the task system
+-- rather than off an offboarding requirement item:
+-- enforce_enrollment_completion_requirements() refuses
+-- offboarding -> completed while a required item is undone, and a
+-- testimonial depends on the client replying. Completing a stage means
+-- Leif ASKED; only enrollments.testimonial_received_at means it ARRIVED.
+-- Day 0 is the entered_at of the Enrollment's 'offboarding' status event,
+-- which survives the Enrollment later becoming completed or ended.
+
+create or replace function public.testimonial_person(p_enrollment_id bigint)
+  returns text
+  language sql
+  stable
+  set search_path to 'public'
+as $$
+  select coalesce(
+    nullif(btrim(coalesce(c.first_name, '') || ' ' || coalesce(c.last_name, '')), ''),
+    d.name,
+    'this client')
+    from enrollments e
+    join deals d on d.id = e.opportunity_id
+    left join contacts c on c.id = d.contact_id
+   where e.id = p_enrollment_id;
+$$;
+
+create or replace function public.reconcile_testimonial_tasks()
+  returns integer
+  language plpgsql
+  security definer
+  set search_path to 'public'
+as $$
+declare
+  v_sales_id bigint;
+  v_not_before timestamp with time zone;
+  v_created int := 0;
+  v_cancelled int;
+begin
+  select id into v_sales_id from sales where administrator = true
+   order by id limit 1;
+  select not_before into v_not_before
+    from testimonial_sequence_settings where id = 1;
+  if v_not_before is null then
+    return 0;
+  end if;
+
+  -- The testimonial arrived, so nothing further is wanted. Cancelled, not
+  -- completed: Leif did not do these, they stopped being necessary. The
+  -- status says which, and the history stays.
+  update tasks t
+     set status = 'cancelled', done_date = now()
+   where t.type in ('collect_testimonial', 'testimonial_followup_1',
+                    'testimonial_followup_2')
+     and t.done_date is null
+     and exists (
+       select 1 from enrollments e
+        where e.id = t.enrollment_id
+          and e.testimonial_received_at is not null
+     );
+  get diagnostics v_cancelled = row_count;
+
+  -- Every Enrollment eligible for the sequence, with its Day 0.
+  with eligible as (
+    select e.id as enrollment_id,
+           d.contact_id,
+           (select max(ev.entered_at)
+              from enrollment_status_events ev
+             where ev.enrollment_id = e.id
+               and ev.status = 'offboarding') as started_at
+      from enrollments e
+      join deals d on d.id = e.opportunity_id
+      join offers o on o.id = d.offer_id
+     where o.collects_testimonial
+       and e.testimonial_received_at is null
+  ),
+  dated as (
+    select * from eligible
+     where started_at is not null
+       and started_at >= v_not_before
+  ),
+  -- Stage 1 the moment offboarding starts. The trigger below normally
+  -- gets there first; this is what makes a missed trigger recoverable.
+  stage_1 as (
+    insert into tasks (contact_id, type, text, due_date, status,
+                       enrollment_id, sales_id)
+    select dated.contact_id,
+           'collect_testimonial',
+           format('Collect %s''s testimonial', testimonial_person(dated.enrollment_id)),
+           dated.started_at,
+           'pending',
+           dated.enrollment_id,
+           v_sales_id
+      from dated
+     where not exists (
+       select 1 from tasks t
+        where t.enrollment_id = dated.enrollment_id
+          and t.type = 'collect_testimonial'
+     )
+    on conflict do nothing
+    returning 1
+  ),
+  -- Day 7, and only once the first ask is genuinely DONE. If the initial
+  -- request is still open on day 7 there is no honest "follow-up" to
+  -- raise, so none is raised; when Leif finishes it later, this becomes
+  -- due on the next run, because its date has already passed.
+  stage_2 as (
+    insert into tasks (contact_id, type, text, due_date, status,
+                       enrollment_id, sales_id)
+    select dated.contact_id,
+           'testimonial_followup_1',
+           format('Follow up for %s''s testimonial — 1/2', testimonial_person(dated.enrollment_id)),
+           dated.started_at + interval '7 days',
+           'pending',
+           dated.enrollment_id,
+           v_sales_id
+      from dated
+     where now() >= dated.started_at + interval '7 days'
+       and exists (
+         select 1 from tasks t
+          where t.enrollment_id = dated.enrollment_id
+            and t.type = 'collect_testimonial'
+            and t.status = 'completed'
+       )
+       and not exists (
+         select 1 from tasks t
+          where t.enrollment_id = dated.enrollment_id
+            and t.type = 'testimonial_followup_1'
+       )
+    on conflict do nothing
+    returning 1
+  ),
+  -- Day 14, same rule one stage along. After this one there is nothing.
+  stage_3 as (
+    insert into tasks (contact_id, type, text, due_date, status,
+                       enrollment_id, sales_id)
+    select dated.contact_id,
+           'testimonial_followup_2',
+           format('Follow up for %s''s testimonial — 2/2', testimonial_person(dated.enrollment_id)),
+           dated.started_at + interval '14 days',
+           'pending',
+           dated.enrollment_id,
+           v_sales_id
+      from dated
+     where now() >= dated.started_at + interval '14 days'
+       and exists (
+         select 1 from tasks t
+          where t.enrollment_id = dated.enrollment_id
+            and t.type = 'testimonial_followup_1'
+            and t.status = 'completed'
+       )
+       and not exists (
+         select 1 from tasks t
+          where t.enrollment_id = dated.enrollment_id
+            and t.type = 'testimonial_followup_2'
+       )
+    on conflict do nothing
+    returning 1
+  )
+  select (select count(*) from stage_1)
+       + (select count(*) from stage_2)
+       + (select count(*) from stage_3)
+    into v_created;
+
+  return v_created + v_cancelled;
+end;
+$$;
+
+create or replace function public.handle_enrollment_testimonial_start()
+  returns trigger
+  language plpgsql
+  set search_path to 'public'
+as $$
+declare
+  v_contact_id bigint;
+  v_sales_id bigint;
+begin
+  if new.status = 'offboarding' and old.status = 'active'
+     and new.testimonial_received_at is null then
+    if exists (
+      select 1 from deals d
+        join offers o on o.id = d.offer_id
+       where d.id = new.opportunity_id and o.collects_testimonial
+    ) and exists (
+      select 1 from testimonial_sequence_settings
+       where id = 1 and now() >= not_before
+    ) then
+      select d.contact_id into v_contact_id
+        from deals d where d.id = new.opportunity_id;
+      select id into v_sales_id from sales where administrator = true
+       order by id limit 1;
+
+      -- ON CONFLICT so the unique index, not this function, is what
+      -- guarantees one stage-1 task.
+      insert into tasks (contact_id, type, text, due_date, status,
+                         enrollment_id, sales_id)
+      values (v_contact_id, 'collect_testimonial',
+              format('Collect %s''s testimonial', testimonial_person(new.id)),
+              now(), 'pending', new.id, v_sales_id)
+      on conflict do nothing;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function public.handle_testimonial_received()
+  returns trigger
+  language plpgsql
+  set search_path to 'public'
+as $$
+begin
+  if new.testimonial_received_at is not null
+     and old.testimonial_received_at is null then
+    update tasks
+       set status = 'cancelled', done_date = now()
+     where enrollment_id = new.id
+       and done_date is null
+       and type in ('collect_testimonial', 'testimonial_followup_1',
+                    'testimonial_followup_2');
+  end if;
+  return new;
+end;
+$$;

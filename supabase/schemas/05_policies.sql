@@ -30,6 +30,7 @@ alter table public.onboarding_requirement_templates enable row level security;
 alter table public.deal_payment_schedule_items enable row level security;
 alter table public.enrollment_onboarding_items enable row level security;
 alter table public.offboarding_requirement_templates enable row level security;
+alter table public.testimonial_sequence_settings enable row level security;
 alter table public.enrollment_offboarding_items enable row level security;
 alter table public.enrollment_status_events enable row level security;
 alter table public.scholarship_slots enable row level security;
@@ -158,6 +159,7 @@ create policy "Enrollment Onboarding Items Delete Policy" on public.enrollment_o
 
 -- Offboarding Requirement Templates
 create policy "Enable read access for authenticated users" on public.offboarding_requirement_templates for select to authenticated using (true);
+create policy "Enable read access for authenticated users" on public.testimonial_sequence_settings for select to authenticated using (true);
 create policy "Enable insert for authenticated users only" on public.offboarding_requirement_templates for insert to authenticated with check (true);
 create policy "Enable update for authenticated users only" on public.offboarding_requirement_templates for update to authenticated using (true) with check (true);
 create policy "Offboarding Requirement Templates Delete Policy" on public.offboarding_requirement_templates for delete to authenticated using (true);

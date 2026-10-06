@@ -283,3 +283,21 @@ create trigger on_application_kit_decision
   for each row
   when (old.status is distinct from new.status)
   execute function public.enqueue_kit_application_decision();
+
+-- Day 0 immediately on active -> offboarding, rather than up to an hour
+-- later when the reconciler next runs. The unique index, not this trigger,
+-- is what guarantees one stage-1 task, so the hourly reconciler remains
+-- free to create it if a transition ever happened without this firing.
+drop trigger if exists on_enrollment_testimonial_start on public.enrollments;
+create trigger on_enrollment_testimonial_start
+  after update on public.enrollments
+  for each row execute function public.handle_enrollment_testimonial_start();
+
+-- Receipt suppresses the open ask at once. Without it, a reminder would
+-- keep surfacing until the next hourly run — the CRM telling Leif to chase
+-- something it already knows arrived. Cancelled, never completed: he did
+-- not do it, it stopped being necessary.
+drop trigger if exists on_testimonial_received on public.enrollments;
+create trigger on_testimonial_received
+  after update of testimonial_received_at on public.enrollments
+  for each row execute function public.handle_testimonial_received();

@@ -154,6 +154,10 @@ export type Offer = {
   // Only meaningful for individual offers; group offers manage capacity
   // per-Cohort instead.
   max_active_clients?: number | null;
+  // Whether offboarding a client of this programme asks them for a
+  // testimonial. The Living Example does; Growing Yourself Up uses the
+  // same offboarding engine but is deliberately not switched on.
+  collects_testimonial?: boolean;
   is_active: boolean;
   // Acuity/Sales Call Lifecycle slice: only meaningful for an individual
   // Offer (e.g. The Living Example) — a group Offer maps per-Cohort
@@ -442,6 +446,10 @@ export type Enrollment = {
   // Null only when start_date is null.
   start_date_source?: "owner" | "session_derived" | "unknown" | null;
   end_date?: string | null;
+  // Did the client's testimonial arrive? The one authoritative answer.
+  // Null is truthful even once both asks are spent — exhausting the
+  // follow-ups never means it was received.
+  testimonial_received_at?: string | null;
   created_at: string;
   updated_at: string;
 } & Pick<RaRecord, "id">;

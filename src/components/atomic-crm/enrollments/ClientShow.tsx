@@ -11,6 +11,7 @@ import type { Identifier } from "ra-core";
 import { Link } from "react-router";
 
 import { ClientEditModal } from "./ClientEditModal";
+import { TestimonialCard } from "./TestimonialCard";
 import { StartWeekCard } from "./StartWeekCard";
 import { Show } from "@/components/admin/show";
 import { Badge } from "@/components/ui/badge";
@@ -286,6 +287,15 @@ const EnrollmentOperationalHome = () => {
           answer, and because a client sold today with no start week is
           exactly the case this card exists to stop from going unnoticed. */}
       <div className="m-4 flex flex-col gap-3">
+        {/* Whether the testimonial ever arrived. Shown from the moment
+            offboarding genuinely started (which is when the checklist
+            snapshot exists) and NOT withdrawn once the Enrollment
+            completes — a testimonial can arrive after everything else is
+            finished, and Leif still needs somewhere to record it. The card
+            renders nothing for a programme that does not ask. */}
+        {showOffboarding && (
+          <TestimonialCard enrollment={enrollment} offer={offer} />
+        )}
         <StartWeekCard enrollment={enrollment} offer={offer} />
       </div>
 

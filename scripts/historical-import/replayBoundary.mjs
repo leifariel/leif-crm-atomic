@@ -130,6 +130,29 @@ export const REVIEW_THRESHOLD = 2;
  */
 export const REVIEWED_DETERMINISTIC = {
   // Matched "a table of named real clients" on
+  //   values ('Cadence', 'Assertion', ...) / ('Silent', 'Assertion', ...)
+  // and "a hardcoded business-record id" on the settings singleton's
+  // id = 1 — which is deployment configuration, not a business record.
+  //
+  // The Contacts, Opportunities and Enrollments are synthetic probes
+  // inside a subtransaction the block always rolls back by raising its own
+  // sentinel. The migration owns durable structure
+  // (enrollments.testimonial_received_at, offers.collects_testimonial,
+  // testimonial_sequence_settings, three task types, the stage uniqueness
+  // index, four functions, two triggers and the hourly cron job) and
+  // writes no business data: the one UPDATE outside the rolled-back block
+  // sets collects_testimonial on an Offer matched by NAME, which is
+  // deterministic configuration that reconstructs in any database.
+  //
+  // The probes exist to prove, at deploy time, the cadence the migration
+  // is FOR: day 7 raises nothing while the first ask is open, raises
+  // exactly one follow-up once it is done, receipt cancels an open ask
+  // truthfully rather than completing it, an exhausted sequence stops for
+  // good, and a missing testimonial never blocks offboarding completion.
+  20261006120000:
+    "Synthetic testimonial-cadence probes, rolled back. Owns the sequence's structure, functions, triggers and schedule; writes no business data.",
+
+  // Matched "a table of named real clients" on
   //   values ('Index', 'Assertion', ...)
   // which is a synthetic Contact — plus two Applications and several
   // Tasks — inserted inside a subtransaction the block always rolls back
