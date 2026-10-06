@@ -17,12 +17,17 @@ export interface TaskCreateSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   contact_id?: Identifier;
+  // Set when the task is being created from an Application, so it points
+  // at the review it belongs to rather than floating on the Contact.
+  // Nothing else changes: same resource, same form, same authority.
+  application_id?: Identifier;
 }
 
 export const TaskCreateSheet = ({
   open,
   onOpenChange,
   contact_id,
+  application_id,
 }: TaskCreateSheetProps) => {
   const { identity } = useGetIdentity();
   const translate = useTranslate();
@@ -79,6 +84,7 @@ export const TaskCreateSheet = ({
         type: "other",
         status: "pending",
         contact_id,
+        application_id,
         due_date: new Date().toISOString(),
         sales_id: identity.id,
       }}

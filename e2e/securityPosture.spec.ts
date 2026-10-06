@@ -200,6 +200,9 @@ test.describe("anon reaches nothing it should not", () => {
       "contact_external_identities",
       "contact_merges",
       "historical_import_records",
+      // Leif private review notes. The applicant must never reach what he
+      // wrote while deciding about them.
+      "application_notes",
     ]) {
       const read = await client.from(relation).select("id").limit(1);
       expect(read.error, `anon could read ${relation}`).not.toBeNull();

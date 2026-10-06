@@ -405,6 +405,7 @@ const DesktopAdmin = (
       <Resource name="sales_calls" />
       <Resource name="contact_notes" />
       <Resource name="deal_notes" />
+      <Resource name="application_notes" />
       <Resource name="tasks" />
       <Resource name="sales" {...sales} />
       <Resource name="tags" />

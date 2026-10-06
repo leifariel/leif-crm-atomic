@@ -9,6 +9,7 @@ alter table public.contacts enable row level security;
 alter table public.contact_notes enable row level security;
 alter table public.deals enable row level security;
 alter table public.deal_notes enable row level security;
+alter table public.application_notes enable row level security;
 alter table public.sales enable row level security;
 alter table public.tags enable row level security;
 alter table public.tasks enable row level security;
@@ -77,6 +78,14 @@ create policy "Enable read access for authenticated users" on public.deal_notes 
 create policy "Enable insert for authenticated users only" on public.deal_notes for insert to authenticated with check (true);
 create policy "Deal Notes Update Policy" on public.deal_notes for update to authenticated using (true);
 create policy "Deal Notes Delete Policy" on public.deal_notes for delete to authenticated using (true);
+
+-- Leif's private review notes. Readable and writable by the authenticated
+-- owner only; anon is revoked outright in 06_grants.sql, because the
+-- applicant must never reach what he wrote while deciding about them.
+create policy "Enable read access for authenticated users" on public.application_notes for select to authenticated using (true);
+create policy "Enable insert for authenticated users only" on public.application_notes for insert to authenticated with check (true);
+create policy "Application Notes Update Policy" on public.application_notes for update to authenticated using (true);
+create policy "Application Notes Delete Policy" on public.application_notes for delete to authenticated using (true);
 
 -- Sales
 create policy "Enable read access for authenticated users" on public.sales for select to authenticated using (true);

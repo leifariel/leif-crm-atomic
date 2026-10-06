@@ -20,6 +20,7 @@ import {
 import { ApplicationReviewActions } from "./ApplicationReviewActions";
 import { BringIntoCrmCard } from "./BringIntoCrmCard";
 import { applicationAdoption } from "./applicationAdoption";
+import { ApplicationNotesAndFollowUp } from "./ApplicationNotesAndFollowUp";
 import { KitStatusLine } from "./KitStatusLine";
 import { useApplicationReviewData } from "./useApplicationReviewData";
 
@@ -238,6 +239,13 @@ const ApplicationShowContent = () => {
           />
         </Section>
       )}
+
+      {/* Last on the page, after everything the applicant sent and
+          everything the business has decided: Leif's own working area. */}
+      <ApplicationNotesAndFollowUp
+        applicationId={record.id}
+        contactId={contact.id}
+      />
     </div>
   );
 };

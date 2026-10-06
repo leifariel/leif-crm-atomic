@@ -88,15 +88,23 @@ const NoteCreateButton = ({
 
     reset(resetValues, { keepValues: false });
     refetch();
-    update(reference, {
-      id: (record && record.id) as unknown as Identifier,
-      data: {
-        last_seen:
-          reference === "contacts" ? new Date().toISOString() : undefined,
-        status: data.status,
-      },
-      previousData: record,
-    });
+    // Writing back to the parent record is a CONTACT behaviour: a note is
+    // evidence the person was seen, and the Contact status follows the
+    // note status. It was issued for every reference, which for a deal
+    // happened to be a no-op (a deal note has no status of its own). Any
+    // future caller whose parent record HAS a meaningful status would
+    // have had that status overwritten by a note, so the behaviour now
+    // says which record it is for.
+    if (reference === "contacts") {
+      update(reference, {
+        id: (record && record.id) as unknown as Identifier,
+        data: {
+          last_seen: new Date().toISOString(),
+          status: data.status,
+        },
+        previousData: record,
+      });
+    }
     notify("resources.notes.added", {
       messageArgs: {
         _: "Note added",

@@ -1115,6 +1115,20 @@ export type DealNote = {
   status?: undefined;
 } & Pick<RaRecord, "id">;
 
+// Leif's own thinking about one Application, while he reviews it. Same
+// shape as DealNote; the `status` compatibility field is likewise absent
+// because an Application note has no status of its own.
+export type ApplicationNote = {
+  application_id: Identifier;
+  text: string;
+  date: string;
+  sales_id: Identifier;
+  attachments?: AttachmentNote[];
+
+  // Defined for compatibility with `ContactNote`, as DealNote does.
+  status?: undefined;
+} & Pick<RaRecord, "id">;
+
 export type Tag = {
   id: number;
   name: string;

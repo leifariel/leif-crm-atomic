@@ -41,6 +41,7 @@ const baseSale: Sale = {
 export const createCrmDb = (overrides: Partial<Db> = {}): Db =>
   ({
     application_responses: [],
+    application_notes: [],
     companies: [],
     configuration: [{ config: {}, id: 1 }],
     contact_notes: [],

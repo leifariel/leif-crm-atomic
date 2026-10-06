@@ -1,4 +1,5 @@
 import type {
+  ApplicationNote,
   ContactStripeCustomer,
   DealPaymentScheduleItem,
   DealStripePlanObject,
@@ -58,6 +59,7 @@ export interface Db {
   kit_integration_settings: Array<{ id: number; not_before: string }>;
   applications: Application[];
   application_responses: ApplicationResponse[];
+  application_notes: ApplicationNote[];
   enrollments: Enrollment[];
   onboarding_requirement_templates: OnboardingRequirementTemplate[];
   enrollment_onboarding_items: EnrollmentOnboardingItem[];

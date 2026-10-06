@@ -154,6 +154,13 @@ grant all on table public.deal_notes to service_role;
 -- Narrowed for anon: same rationale as contacts above.
 revoke select, insert, update, delete on table public.deal_notes from anon;
 
+grant all on table public.application_notes to anon;
+grant all on table public.application_notes to authenticated;
+grant all on table public.application_notes to service_role;
+-- Private to Leif. The grant above matches its siblings; this is the line
+-- that matters.
+revoke select, insert, update, delete on table public.application_notes from anon;
+
 grant all on table public.sales to anon;
 grant all on table public.sales to authenticated;
 grant all on table public.sales to service_role;

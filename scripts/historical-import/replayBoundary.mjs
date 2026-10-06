@@ -130,6 +130,23 @@ export const REVIEW_THRESHOLD = 2;
  */
 export const REVIEWED_DETERMINISTIC = {
   // Matched "a table of named real clients" on
+  //   values ('Index', 'Assertion', ...)
+  // which is a synthetic Contact — plus two Applications and several
+  // Tasks — inserted inside a subtransaction the block always rolls back
+  // by raising its own sentinel. The migration owns durable structure
+  // (public.application_notes, its policies and grants, and the narrowed
+  // tasks_one_open_review_per_application index) and writes no business
+  // data at all. The rows exist only to prove, at deploy time, the two
+  // rules the migration is FOR: a second open review task is still
+  // refused, and a review task now coexists with Leif's own follow-ups.
+  //
+  // Deliberately not "insert, check, delete": a cleanup DELETE would have
+  // to succeed in a database where contact deletion is closed on purpose,
+  // and a cleanup that cannot run is how fixtures end up in production.
+  20261005140000:
+    "Synthetic review-task and notes probes, rolled back. Owns application_notes and the narrowed review-task index; writes no data.",
+
+  // Matched "a table of named real clients" on
   //   values ('Won', 'Probe', v_sales)
   // which is a synthetic Contact inserted inside a block the migration
   // then rolls back. The migration owns handle_deal_won()'s definition and

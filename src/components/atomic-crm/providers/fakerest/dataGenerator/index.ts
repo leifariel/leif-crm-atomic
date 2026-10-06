@@ -33,6 +33,7 @@ export default (): Db => {
   db.offer_payment_options = offerPaymentOptions;
   db.cohorts = generateCohorts();
   db.applications = [];
+  db.application_notes = [];
   db.enrollments = [];
   db.onboarding_requirement_templates =
     generateOnboardingRequirementTemplates();
