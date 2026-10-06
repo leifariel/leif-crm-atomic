@@ -45,13 +45,8 @@
       "",
       "Discovered by replaying into an empty project, not assumed."
     ],
-    "extensions": [
-      "pg_cron",
-      "pg_net"
-    ],
-    "vault_secrets": [
-      "cron_invoke_secret"
-    ],
+    "extensions": ["pg_cron", "pg_net"],
+    "vault_secrets": ["cron_invoke_secret"],
     "asserted_by": [
       "20260906070000_sync_year_planning_calendar_cron.sql",
       "20260918130000_schedule_acuity_reconciliation.sql"
