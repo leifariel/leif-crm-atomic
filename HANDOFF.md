@@ -3657,18 +3657,50 @@ Leif asked. Only the timestamp means it arrived, and exhausting both
 follow-ups never sets it — "asked twice, never received" is a state the CRM
 holds truthfully.
 
-### DURABILITY NOTE — the Offer flag is seeded by name
+### Both programmes now ask, each from its own moment — 2026-10-06
 
-`offers.collects_testimonial` is set prospectively onto the EXISTING The
-Living Example row, matched on the exact Offer name, the same posture as
-the Kit tag mappings and the offboarding requirement templates.
+Growing Yourself Up was switched on the same day, which broke the single
+global boundary: one `not_before` could only have dragged The Living
+Example's activation forward (silently un-enrolling its clients) or handed
+GYU every client it had ever offboarded. **So the boundary moved onto the
+Offer**, beside the flag:
 
-**If The Living Example is ever recreated as a new Offer row, that row
-defaults to `false`** and the testimonial sequence silently stops for new
-clients until it is deliberately switched on. Non-blocking, recorded so it
-is not rediscovered as a mystery. Growing Yourself Up uses the same
-offboarding engine and is deliberately OFF; switching it on is one update
-and Leif's decision.
+| | |
+|---|---|
+| Enabled + boundary | `offers.collects_testimonial` + `offers.testimonial_activated_at` |
+| Explicit per-client inclusion | `enrollments.testimonial_sequence_opted_in_at` |
+| One definition of "in the sequence" | `testimonial_sequence_enrollments()` |
+| Retired | the `testimonial_sequence_settings` singleton — its value was carried onto LE's row to the second |
+
+**This also closed the name fragility.** Enablement used to be a flag
+seeded by exact Offer name, so a recreated Offer would quietly never ask.
+Configuration now lives on the canonical row, both fields defaulting to
+"no", and the one-time seeding is scoped to the row the offboarding
+requirement templates themselves point at — not to a name. A new Offer is
+never enabled by inheriting one.
+
+GYU's ordinary offboarding is unchanged and still what completes it:
+`slack_removed` and `calendar_removed`, both required. A testimonial is
+still not a requirement on either programme.
+
+### Two clients who offboarded three hours too early
+
+Jules Litman-Cleper (Enrollment 48, still offboarding) and Adriano Castro
+(50, completed) both entered offboarding at 2026-10-06 16:56 — about three
+hours before LE's activation at 21:59. Leif decided they should still be
+asked.
+
+**Moving LE's boundary backwards was refused**, because a boundary that
+moves to catch two people also catches everyone earlier, which is the broad
+backfill this design exists to prevent. They are opted in individually by
+`20261006160100`, a MAIN-ONLY migration listed in the replay manifest: it
+owns no structure, asserts the two records' real shape, and proves that
+nothing else became eligible and neither status changed. Their Day 0 task
+is raised by the engine, not written by hand.
+
+**No GYU backfill.** GYU is prospective from its own activation; whether any
+historical GYU client should be opted in is a separate decision, like these
+two were.
 
 ### Two security bugs found by building it
 
