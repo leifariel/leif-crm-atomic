@@ -3615,7 +3615,7 @@ Then stop.
     LE HUMAN ACCEPTANCE          YES  — on Jules (48) and Adriano (50)
     GYU HUMAN ACCEPTANCE         PENDING its first real offboarding
     TASK LABEL REPAIR            PRODUCTION ACCEPTED 2026-10-07 (02b12a1e)
-    OFFBOARDING CONTAINER UX     PENDING Leif seeing it in production
+    OFFBOARDING CONTAINER UX     PRODUCTION ACCEPTED 2026-10-07 (7478f8ff)
 
 **TESTIMONIAL TASK LABEL REPAIR — PRODUCTION ACCEPTED** (2026-10-07, tip
 `02b12a1e`). Jules's Enrollment page reads "Ask for testimonial" rather
@@ -3630,11 +3630,15 @@ Why it needed a repair at all is the durability note at the end of this
 section — a configuration saved before a release shadows what the release
 ships.
 
-**The visual polish is NOT accepted yet.** The testimonial was its own card
-floating beneath the offboarding checklist; it is now a row inside that one
-container, divided from the requirements by the container's own row rule.
-Awaiting Leif seeing the unified container in production. The domain rule it
-must keep is that visual grouping changes nothing: the row is not an
+**TESTIMONIAL / OFFBOARDING UNIFIED LAYOUT — PRODUCTION ACCEPTED**
+(2026-10-07, tip `7478f8ff`). The testimonial was its own card floating
+beneath the offboarding checklist; it is now a row inside that one container,
+divided from the requirements by the container's own row rule. Accepted on
+Jules (48) — one container, shared divider, no standalone card, denominator
+still 0/1, no checkbox on the row — and on Adriano (50), still Completed,
+with the row visible inside the history container without reopening anything
+or inventing a requirement. The domain rule it keeps is that visual grouping
+changes nothing: the row is not an
 `enrollment_offboarding_item`, carries no checkbox, never enters the x/y
 count (LE stays 0/1 on `notes_archived`, GYU 0/2 on Slack + Calendar) and
 can never hold a completion. On a completed Enrollment the requirements fold
