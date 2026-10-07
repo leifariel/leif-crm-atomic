@@ -10,6 +10,13 @@ import {
 import { DateField } from "@/components/admin/date-field";
 
 import { PersonCard } from "../misc/ProgramLayout";
+import {
+  CohortHeading,
+  ProgrammeHeading,
+  SECTION_COUNT_CLASS,
+  SECTION_TRIGGER_CLASS,
+  SectionHeading,
+} from "../misc/programmeHierarchy";
 import { humanizeCohortName } from "../cohorts/humanizeCohortName";
 import { CopyApplicationLinkButton } from "../public-application/CopyApplicationLinkButton";
 import {
@@ -62,33 +69,32 @@ export const ApplicationProgrammeCard = ({
       data-programme={offer.name}
     >
       <CardContent className="p-0">
-        {/* The programme's own heading, inside its container rather than
+        {/* The programme own heading, inside its container rather than
             floating above it. */}
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
-          <div className="flex min-w-0 items-baseline gap-2">
-            <h2 className="text-lg font-semibold truncate">{offer.name}</h2>
-            <span className="text-sm text-muted-foreground tabular-nums">
-              {total}
-            </span>
-            {needsReview > 0 && (
-              <span className="text-xs text-muted-foreground">
-                {translate("resources.applications.needs_review_inline", {
+        <ProgrammeHeading
+          count={total}
+          note={
+            needsReview > 0
+              ? translate("resources.applications.needs_review_inline", {
                   _: "%{count} waiting",
                   count: needsReview,
+                })
+              : undefined
+          }
+          trailing={
+            programmeApplyPath ? (
+              <CopyApplicationLinkButton
+                path={programmeApplyPath}
+                label={translate("resources.applications.apply_link_label", {
+                  _: "%{name} application",
+                  name: offer.name,
                 })}
-              </span>
-            )}
-          </div>
-          {programmeApplyPath && (
-            <CopyApplicationLinkButton
-              path={programmeApplyPath}
-              label={translate("resources.applications.apply_link_label", {
-                _: "%{name} application",
-                name: offer.name,
-              })}
-            />
-          )}
-        </div>
+              />
+            ) : undefined
+          }
+        >
+          {offer.name}
+        </ProgrammeHeading>
 
         {/* Every section of this programme, divided from each other and from
             the heading by the container's own rule. */}
@@ -145,25 +151,22 @@ const ProgrammeSubsection = ({
       data-subsection={heading}
     >
       {showCohortHeading && (
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
-          <div className="flex min-w-0 items-baseline gap-2">
-            {/* Subordinate to the programme heading above: smaller, and a
-                heading level down. A cohort is not a programme. */}
-            <h3 className="text-sm font-medium truncate">{heading}</h3>
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {total}
-            </span>
-          </div>
-          {cohortApplyPath && (
-            <CopyApplicationLinkButton
-              path={cohortApplyPath}
-              label={translate("resources.applications.apply_link_label", {
-                _: "%{name} application",
-                name: heading,
-              })}
-            />
-          )}
-        </div>
+        <CohortHeading
+          count={total}
+          trailing={
+            cohortApplyPath ? (
+              <CopyApplicationLinkButton
+                path={cohortApplyPath}
+                label={translate("resources.applications.apply_link_label", {
+                  _: "%{name} application",
+                  name: heading,
+                })}
+              />
+            ) : undefined
+          }
+        >
+          {heading}
+        </CohortHeading>
       )}
 
       {/* Waiting on Leif — always open, because it is the reason to be
@@ -226,12 +229,7 @@ const OpenBucket = ({
   if (rows.length === 0) return null;
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-baseline gap-2">
-        <h4 className="text-sm font-semibold">{label}</h4>
-        <span className="text-sm text-muted-foreground tabular-nums ml-auto">
-          {rows.length}
-        </span>
-      </div>
+      <SectionHeading count={rows.length}>{label}</SectionHeading>
       <ApplicationRows rows={rows} />
     </div>
   );
@@ -259,11 +257,9 @@ const CollapsedBuckets = ({ items }: { items: CollapsedBucket[] }) => {
           {/* The chevron is the Accordion's own, so every collapsible thing
               on the page opens the same way. Counts sit at the same right
               edge as the open subsection's, so the column lines up. */}
-          <AccordionTrigger className="text-sm font-semibold hover:no-underline py-1">
+          <AccordionTrigger className={SECTION_TRIGGER_CLASS}>
             {label}
-            <span className="text-sm font-normal text-muted-foreground tabular-nums ml-auto mr-2">
-              {rows.length}
-            </span>
+            <span className={SECTION_COUNT_CLASS}>{rows.length}</span>
           </AccordionTrigger>
           <AccordionContent>
             <div className="flex flex-col gap-2 pt-2">

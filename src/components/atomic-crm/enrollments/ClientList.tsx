@@ -11,6 +11,14 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { ReferenceField } from "@/components/admin/reference-field";
 
+import { humanizeCohortName } from "../cohorts/humanizeCohortName";
+import {
+  CohortHeading,
+  ProgrammeHeading,
+  SECTION_COUNT_CLASS,
+  SECTION_TRIGGER_CLASS,
+  SectionHeading,
+} from "../misc/programmeHierarchy";
 import { isStartWeekConfirmed } from "../capacity/slotHolder";
 import { formatISODateString } from "../deals/dealUtils";
 import { enrollmentStatusLabels } from "./enrollmentConstants";
@@ -114,7 +122,18 @@ export const ClientList = () => {
               same section treatment as Current/Upcoming above, inside the
               one Growing Yourself Up container. */}
           {gyuCohorts.map((group: CohortGroup) => (
-            <Group key={group.key} title={group.title} rows={group.rows} />
+            <Group
+              key={group.key}
+              level="cohort"
+              // "Growing Yourself Up — January 2027" inside a "Growing
+              // Yourself Up" container says it twice. The stored name is
+              // untouched; only what Leif reads changes.
+              title={humanizeCohortName(
+                group.title,
+                group.rows[0]?.offer?.name ?? "",
+              )}
+              rows={group.rows}
+            />
           ))}
 
           {gyuPast.length > 0 && (
@@ -165,9 +184,7 @@ const ProgrammeCard = ({
   // so it never has to reach for class names or tag structure.
   <Card className="p-0" data-testid="client-programme" data-programme={title}>
     <CardContent className="p-0">
-      <div className="px-4 py-3">
-        <h2 className="text-lg font-semibold">{title}</h2>
-      </div>
+      <ProgrammeHeading>{title}</ProgrammeHeading>
       <div className="divide-y border-t">{children}</div>
     </CardContent>
   </Card>
@@ -177,25 +194,27 @@ const Group = ({
   title,
   hint,
   rows,
+  level = "section",
 }: {
   title: string;
   hint?: string;
   rows: ClientRow[];
+  /** A cohort of the programme, or one of its lifecycle sections. */
+  level?: "cohort" | "section";
 }) => (
   <div
     className="flex flex-col gap-2 px-4 py-3"
     data-testid="client-group"
     data-group={title}
+    data-level={level}
   >
-    <div className="flex items-baseline gap-2">
-      <h3 className="text-sm font-medium">{title}</h3>
-      <span className="text-sm text-muted-foreground tabular-nums">
-        {rows.length}
-      </span>
-      {hint && (
-        <span className="text-xs text-muted-foreground ml-auto">{hint}</span>
-      )}
-    </div>
+    {level === "cohort" ? (
+      <CohortHeading count={rows.length}>{title}</CohortHeading>
+    ) : (
+      <SectionHeading count={rows.length} hint={hint}>
+        {title}
+      </SectionHeading>
+    )}
     <ClientRows rows={rows} />
   </div>
 );
@@ -217,11 +236,9 @@ const CollapsedGroup = ({
     data-group={title}
   >
     <AccordionItem value={value} className="border-none">
-      <AccordionTrigger className="text-sm font-medium hover:no-underline py-0">
+      <AccordionTrigger className={SECTION_TRIGGER_CLASS}>
         {title}
-        <span className="text-sm font-normal text-muted-foreground tabular-nums ml-auto mr-2">
-          {rows.length}
-        </span>
+        <span className={SECTION_COUNT_CLASS}>{rows.length}</span>
       </AccordionTrigger>
       <AccordionContent>
         <div className="pt-2">

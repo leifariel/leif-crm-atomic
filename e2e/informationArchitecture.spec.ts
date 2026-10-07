@@ -209,6 +209,7 @@ const measure = (page: Page, containerTestId: string, childTestId: string) =>
 
       return {
         containerCount: containers.length,
+        programmeNames: containers.map((c) => c.getAttribute("data-programme")),
         // Each container draws its own border — one bounded box, not a bare
         // stack of rows.
         bordered: containers.every(
@@ -247,6 +248,27 @@ const measure = (page: Page, containerTestId: string, childTestId: string) =>
           };
         }),
         scrollWidth: document.documentElement.scrollWidth,
+        // The programme / cohort / section ladder, read off the real CSS.
+        // Production acceptance failed because a cohort heading and a
+        // section heading were the same size and weight, so a cohort read as
+        // just another subsection. Weight alone would not have caught it.
+        levels: ["programme", "cohort", "section"].map((level) => {
+          const nodes = [
+            ...document.querySelectorAll<HTMLElement>(
+              `[data-level="${level}"]`,
+            ),
+          ];
+          if (nodes.length === 0) return { level, present: false };
+          const style = getComputedStyle(nodes[0]);
+          return {
+            level,
+            present: true,
+            count: nodes.length,
+            fontSize: parseFloat(style.fontSize),
+            fontWeight: parseInt(style.fontWeight, 10),
+            texts: nodes.map((n) => (n.textContent ?? "").trim()),
+          };
+        }),
       };
     },
     { containerTestId, childTestId },
@@ -309,6 +331,37 @@ for (const subject of PAGES) {
       for (const box of m.boxes) {
         expect(Math.abs(box.left - first.left)).toBeLessThanOrEqual(1);
         expect(Math.abs(box.width - first.width)).toBeLessThanOrEqual(1);
+      }
+
+      // PROGRAMME > COHORT > SECTION, strictly, by size.
+      const level = (name: string) =>
+        m.levels.find((l) => l.level === name && l.present) ?? null;
+      const programme = level("programme");
+      expect(programme, "a programme heading is present").toBeTruthy();
+      const cohort = level("cohort");
+      const section = level("section");
+
+      if (cohort) {
+        expect(
+          programme!.fontSize,
+          "programme is larger than cohort",
+        ).toBeGreaterThan(cohort.fontSize!);
+        // And a cohort label never repeats the programme it sits inside.
+        for (const text of cohort.texts ?? []) {
+          for (const name of m.programmeNames) {
+            expect(
+              text.toLowerCase().startsWith(String(name).toLowerCase()),
+              `cohort "${text}" repeats its programme`,
+            ).toBe(false);
+          }
+        }
+      }
+      if (section) {
+        const above = cohort ?? programme!;
+        expect(
+          above.fontSize,
+          "a cohort (or the programme) is larger than a section",
+        ).toBeGreaterThan(section.fontSize!);
       }
 
       // At least one real internal rule: the separators are the container's
