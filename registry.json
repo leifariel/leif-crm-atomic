@@ -2026,6 +2026,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/applications/groupSectionsByProgramme.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/applications/createManualApplication.ts",
           "type": "registry:component"
         },
@@ -2099,6 +2103,10 @@
         },
         {
           "path": "src/components/atomic-crm/applications/ApplicationResponses.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/ApplicationProgrammeCard.tsx",
           "type": "registry:component"
         },
         {
