@@ -42,18 +42,16 @@ import { SalesCallResolutionModal } from "../sales-calls/SalesCallResolutionModa
 import type { TaskActionDestination } from "./useTaskActionDestination";
 import { useTaskActionDestination } from "./useTaskActionDestination";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { resolveTaskTypeLabel } from "./taskTypeLabel";
 
-// The configured label for a task's type (e.g. "review_application" ->
-// "Review Application"), falling back to the raw value for a type not in
-// the configured list, or null if the task has none at all (nullable at
-// the DB level — see supabase/schemas/01_tables.sql's tasks.type).
+// What Leif reads for a task type. The rules, and the production failure
+// that produced the second and third fallbacks, are in taskTypeLabel.ts —
+// kept there so the decision can be tested against a vocabulary the test
+// chooses, which is not reachable through this component.
 const typeLabel = (
   task: Pick<TData, "type">,
   taskTypes: LabeledValue[],
-): string | null => {
-  if (!task.type) return null;
-  return taskTypes.find((t) => t.value === task.type)?.label ?? task.type;
-};
+): string | null => resolveTaskTypeLabel(task.type, taskTypes);
 
 // Contracts + Onboarding slice, human-acceptance repair: some task types
 // carry a fully-formed, task-SPECIFIC sentence as their own `text` (e.g.
