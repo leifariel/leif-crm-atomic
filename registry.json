@@ -958,6 +958,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/misc/programmeHierarchy.tsx",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/misc/isLinkedInUrl.ts",
           "type": "registry:component"
         },
