@@ -356,12 +356,12 @@ describe("creating an Application by hand", () => {
 
     await expect.element(screen.getByText("Ada Lovelace")).toBeInTheDocument();
 
-    const section = [...screen.container.querySelectorAll("section")].find(
-      (el) =>
-        [...el.querySelectorAll("h2")].some(
-          (h) => h.textContent === "The Living Example",
-        ),
+    // One programme = one container, so the programme is addressed by its
+    // own testid rather than by a loose <section> with a matching <h2>.
+    const section = screen.container.querySelector<HTMLElement>(
+      '[data-testid="application-programme"][data-programme="The Living Example"]',
     );
+    expect(section, "the Living Example container").not.toBeNull();
     expect(section?.textContent).toContain("Needs Review");
     expect(section?.textContent).toContain("Ada Lovelace");
   });
@@ -720,11 +720,8 @@ describe("reviewing a manual Application through the normal controls", () => {
       .element(screen.getByText("The Living Example"))
       .toBeInTheDocument();
 
-    const section = [...screen.container.querySelectorAll("section")].find(
-      (el) =>
-        [...el.querySelectorAll("h2")].some(
-          (h) => h.textContent === "The Living Example",
-        ),
+    const section = screen.container.querySelector<HTMLElement>(
+      '[data-testid="application-programme"][data-programme="The Living Example"]',
     )!;
     // Needs Review is always open and Reviewed is collapsed, so her being
     // out of sight in her own programme's section IS the move.

@@ -142,13 +142,32 @@ const Wrapper = ({ children }: { children: React.ReactNode }) => (
   </CoreAdminContext>
 );
 
+// One programme = one container, so "the section for X" is either a
+// programme container or a cohort subsection inside one. Both carry a stable
+// testid; scoping by tag structure is what broke when the page stopped
+// rendering a loose <section> per cohort.
+const programmeFor = (
+  screen: { container: HTMLElement },
+  name: string,
+): HTMLElement | null =>
+  screen.container.querySelector<HTMLElement>(
+    `[data-testid="application-programme"][data-programme="${name}"]`,
+  );
+
+const subsectionFor = (
+  screen: { container: HTMLElement },
+  heading: string,
+): HTMLElement | null =>
+  screen.container.querySelector<HTMLElement>(
+    `[data-testid="application-subsection"][data-subsection="${heading}"]`,
+  );
+
+/** A programme container, or the cohort subsection of that name. */
 const sectionFor = (
   screen: { container: HTMLElement },
   heading: string,
 ): HTMLElement | null =>
-  [...screen.container.querySelectorAll("section")].find((el) =>
-    [...el.querySelectorAll("h2")].some((h) => h.textContent === heading),
-  ) ?? null;
+  programmeFor(screen, heading) ?? subsectionFor(screen, heading);
 
 describe("ApplicationList", () => {
   it("puts the individual (1:1) offer's pending application under Needs Review, with the simplified heading", async () => {
@@ -190,16 +209,17 @@ describe("ApplicationList", () => {
     const { container } = screen;
     await expect.element(screen.getByText("Spring Cohort")).toBeInTheDocument();
 
-    const sections = [...container.querySelectorAll("h2")];
-    const novemberSection = sections
-      .find((el) => el.textContent === "Spring Cohort")
-      ?.closest("section");
-    expect(novemberSection?.textContent).not.toContain("Priya Nair");
+    void container;
+    // Cohort isolation, unchanged by the regrouping: each cohort is now a
+    // subsection inside the one Growing Yourself Up container rather than a
+    // peer section, and an applicant must still appear only in their own.
+    const spring = subsectionFor(screen, "Spring Cohort");
+    expect(spring, "the Spring Cohort subsection exists").not.toBeNull();
+    expect(spring!.textContent).not.toContain("Priya Nair");
 
-    const septemberSection = sections
-      .find((el) => el.textContent === "September Cohort")
-      ?.closest("section");
-    expect(septemberSection?.textContent).not.toContain("Jordan Lee");
+    const september = subsectionFor(screen, "September Cohort");
+    expect(september, "the September Cohort subsection exists").not.toBeNull();
+    expect(september!.textContent).not.toContain("Jordan Lee");
   });
 
   it("makes imported Applications browsable under Historical Applications instead of hiding the whole page", async () => {
@@ -255,13 +275,101 @@ describe("ApplicationList", () => {
       .toBeInTheDocument();
   });
 
-  it("shows the offer group label above its cohorts", async () => {
+  it("names the programme once, as the container its cohorts live inside", async () => {
+    // This used to read "appears once per cohort section", because the page
+    // repeated the offer name beside every cohort title. ONE PROGRAMME = ONE
+    // CONTAINER: the name belongs to the container, and the cohorts are
+    // subsections within it.
     const screen = await render(<ApplicationList />, { wrapper: Wrapper });
-    // The parent programme is named beside each of its cohorts, so it
-    // appears once per cohort section rather than once overall.
     await expect
       .element(screen.getByText("Growing Yourself Up").first())
       .toBeInTheDocument();
+
+    const gyu = programmeFor(screen, "Growing Yourself Up");
+    expect(gyu, "exactly one Growing Yourself Up container").not.toBeNull();
+    expect(
+      screen.container.querySelectorAll(
+        '[data-testid="application-programme"][data-programme="Growing Yourself Up"]',
+      ),
+    ).toHaveLength(1);
+
+    // Both of its cohorts are inside that one container.
+    for (const cohort of ["September Cohort", "Spring Cohort"]) {
+      const sub = subsectionFor(screen, cohort);
+      expect(sub, cohort).not.toBeNull();
+      expect(gyu!.contains(sub!), `${cohort} is inside the programme`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("leaves no programme, cohort or subsection heading floating outside a container", async () => {
+    // The page used to render a loose <section> per cohort-or-offer with its
+    // headings directly on the page. Every heading now belongs to a
+    // programme container.
+    const screen = await render(<ApplicationList />, { wrapper: Wrapper });
+    await expect
+      .element(screen.getByText("The Living Example"))
+      .toBeInTheDocument();
+
+    const containers = [
+      ...screen.container.querySelectorAll<HTMLElement>(
+        '[data-testid="application-programme"]',
+      ),
+    ];
+    expect(containers.length).toBeGreaterThan(1);
+
+    // h1 is the page title and belongs outside; everything below it does not.
+    const headings = [
+      ...screen.container.querySelectorAll<HTMLElement>("h2, h3, h4"),
+    ];
+    expect(headings.length).toBeGreaterThan(0);
+    for (const heading of headings) {
+      expect(
+        containers.some((c) => c.contains(heading)),
+        `"${heading.textContent}" is inside a programme container`,
+      ).toBe(true);
+    }
+  });
+
+  it("puts the Copy Application Link at the level that actually has one form", async () => {
+    // The Living Example has a single public form, so its link belongs to
+    // the programme. Growing Yourself Up does not — each cohort has its own
+    // — so there is no programme-level link to guess at, and the links live
+    // on the cohort subsections.
+    const screen = await render(<ApplicationList />, { wrapper: Wrapper });
+    await expect
+      .element(screen.getByText("The Living Example"))
+      .toBeInTheDocument();
+
+    const copyButtons = (root: HTMLElement) =>
+      [...root.querySelectorAll("button")].filter((b) =>
+        /copy/i.test(b.textContent ?? ""),
+      );
+
+    const le = programmeFor(screen, "The Living Example")!;
+    const gyu = programmeFor(screen, "Growing Yourself Up")!;
+
+    // LE: one link, and it is NOT inside a cohort subsection (it has none).
+    const leButtons = copyButtons(le);
+    expect(leButtons).toHaveLength(1);
+    expect(
+      leButtons[0].closest('[data-testid="application-subsection"]'),
+    ).toBeNull();
+
+    // GYU: every link sits on a cohort subsection, never at programme level.
+    const gyuButtons = copyButtons(gyu);
+    expect(gyuButtons.length).toBeGreaterThan(0);
+    for (const button of gyuButtons) {
+      const subsection = button.closest<HTMLElement>(
+        '[data-testid="application-subsection"]',
+      );
+      expect(subsection, "a GYU link belongs to a cohort").not.toBeNull();
+      // And to a real cohort, never to the cohortless catch-all.
+      expect(subsection!.getAttribute("data-subsection")).not.toBe(
+        "No cohort recorded",
+      );
+    }
   });
 
   it("demotes an already-reviewed application into the collapsed Reviewed Applications section, hidden from Needs Review until expanded", async () => {

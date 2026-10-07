@@ -184,6 +184,14 @@ const measure = (page: Page) =>
       contentPaddingRight: contentStyle
         ? parseFloat(contentStyle.paddingRight)
         : null,
+      action: (() => {
+        const button = [...row.querySelectorAll("button")].find((b) =>
+          /mark testimonial received/i.test(b.textContent ?? ""),
+        );
+        if (!button) return null;
+        const b = button.getBoundingClientRect();
+        return { x: b.left, right: b.right, y: b.top, bottom: b.bottom };
+      })(),
       cardsMentioningTestimonial,
       // A nested card between the row and the shared container would show up
       // here as a card that is a descendant of `card` and an ancestor of the
@@ -235,17 +243,13 @@ test.describe("the Offboarding container holds the testimonial", () => {
     // Left-aligned with the requirement row above it.
     expect(Math.abs(m.row.left - m.requirement!.left)).toBeLessThanOrEqual(1);
 
-    // The action sits at the right-hand end of the row, inside the container.
-    const mark = page.getByRole("button", {
-      name: "Mark testimonial received",
-    });
-    const markBox = (await mark.boundingBox())!;
-    expect(markBox.x).toBeGreaterThan(m.row.left + m.row.width / 2);
-    expect(markBox.x + markBox.width).toBeLessThanOrEqual(m.row.right + 1);
-    expect(markBox.y).toBeGreaterThanOrEqual(m.row.top - 1);
-    expect(markBox.y + markBox.height).toBeLessThanOrEqual(
-      m.row.top + m.row.height + 1,
-    );
+    // The action sits at the right-hand end of the row, inside it. Measured
+    // in the same pass as the row, so both rects come from one layout.
+    expect(m.action, "the action was measured inside the row").not.toBeNull();
+    expect(m.action!.x).toBeGreaterThan(m.row.left + m.row.width / 2);
+    expect(m.action!.right).toBeLessThanOrEqual(m.row.right + 1);
+    expect(m.action!.y).toBeGreaterThanOrEqual(m.row.top - 1);
+    expect(m.action!.bottom).toBeLessThanOrEqual(m.row.top + m.row.height + 1);
   });
 
   test("Pixel 5: the action stacks below, nothing overflows", async ({
