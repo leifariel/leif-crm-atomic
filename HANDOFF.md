@@ -3741,6 +3741,50 @@ halves, because only asserting the lockdown is how the first fix broke the
 product. **The Golden Journey is what caught it** — the migration's own
 assertions run as `postgres` and could not have.
 
+### A saved configuration shadows newly-shipped defaults (durability note, NON-BLOCKING)
+
+Found by a production acceptance failure, not by a test. Leif read
+`collect_testimonial` on Enrollment 48 while the deployed bundle
+demonstrably contained "Ask for testimonial" — both true at once.
+
+`useConfigurationContext` merges the stored `app.configuration` over
+`defaultConfiguration` **one key deep**, and `useConfigurationLoader` fills
+that store from the `configuration` singleton row. So **any persisted
+configuration ARRAY replaces its shipped counterpart wholesale**: a value
+added to a default array by a later release is not relabelled, it is
+absent. `taskTypes` is the instance that bit; `companySectors`,
+`dealCategories`, `dealStages` and `noteStatuses` have the same shape. It
+also explains why exactly one of two changes in one deploy landed — the
+card polish is markup, the label was configuration.
+
+`tasks/taskTypeLabel.ts` closes it **for task labels only**: a saved
+vocabulary falls through to this release's own, then to the Needs
+Attention inventory, and only then to the stored identifier. Leif's own
+relabelling still wins. Deliberately not generalised into a configuration
+merge change — that would resurrect entries he may have removed on
+purpose, and the Add Task picker is driven by
+`MANUALLY_CREATABLE_TASK_TYPES` (derived from the inventory's `origin`),
+so the three stages stay **unavailable for manual creation**, which is
+correct. They are system projections.
+
+Consequence to expect, and it is fine: Settings still lists only the saved
+vocabulary, so the three stages do not appear there to edit.
+
+**The testing lesson is the larger half.** Every component fixture builds a
+fresh `memoryStore` over a `configuration` row of `{}`, so the loader's
+non-empty guard skipped it and shipped defaults always won — and the
+harness passes a custom `layout` prop, which REPLACES the Layout that
+`useConfigurationLoader` lives in, so no component test in this codebase
+can load a saved configuration at all. Measured, not assumed: with a
+`<CRM taskTypes>` prop and with a pre-seeded store, the context still
+reported this release's full vocabulary. The green runs were honest; they
+described a browser nobody uses. The repair is therefore covered at the
+one layer that can state the broken state (`taskTypeLabel.test.ts`, where
+the vocabulary is an argument) and at the one environment that can run the
+whole chain (`e2e/testimonialTaskLabels.spec.ts`, which writes a
+pre-release vocabulary into the `configuration` row and loads the built
+app with the real Layout, loader and store).
+
 ## 8b-testimonial. HIGH PRIORITY — CLIENT OFFBOARDING TESTIMONIAL SEQUENCE (NOT YET DECIDED)
 
 **Not built. Not to be built inside an Applications slice.** Recorded
