@@ -4100,6 +4100,61 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8d. Applications + Clients information architecture — PRODUCTION ACCEPTED 2026-10-07
+
+**ONE PROGRAMME = ONE CLEARLY BOUNDED CONTAINER.** Both list pages rendered
+loose sections with floating headings: Applications grouped one section per
+cohort-or-offer, so Growing Yourself Up's cohorts read as peer programmes
+beside The Living Example, and Clients rendered a Card per group, so one
+programme was three boxes with Past drifting below the last. Each programme is
+now one bordered container with its cohorts and sections inside it, divided by
+the container's own rule. Grouping nests the existing sections without
+re-sorting, so the priority `useApplicationsGrouped` established still decides
+programme and cohort order.
+
+One deliberate count correction, approved: "waiting for you across N
+programmes" counted cohort SECTIONS, so three GYU cohorts with review work
+read as three programmes. It counts programmes now.
+
+**A cohort is not a section.** First acceptance pass failed on this: cohort and
+section headings were both `text-sm font-medium`. `misc/programmeHierarchy.tsx`
+is now the single ladder used by BOTH pages — programme 18px semibold, cohort
+16px semibold, section 14px medium — ordered by size as well as weight,
+because weight alone would not have caught it. Clients also stopped repeating
+"Growing Yourself Up — " in each cohort heading by using `humanizeCohortName`,
+which Applications had used all along.
+
+**Fifty-one applications that were always Fall 2026** (MAIN-only
+`20261007120000`, applied once). They carried no `intended_cohort_id` and no
+Opportunity cohort, so the page grouped them under "No cohort recorded". Leif's
+decision: all 51 are Fall 2026. Repaired the data rather than adding a
+`GYU + no cohort -> pretend Fall 2026` renderer rule, which would have hidden a
+permanent exception.
+
+Two findings worth keeping:
+
+- **Only `intended_cohort_id` was written.** It is a snapshot of intent AT
+  APPLICATION TIME; `deals.cohort_id` is a separate later fact, and
+  `01_tables.sql` says outright the two are never kept in sync and may
+  legitimately differ. Every target had no Deal cohort, so there was nothing
+  to reconcile and no authority to claim one.
+- **`classifyApplication` reads the cohort in exactly one clause**: a
+  `historical_import` application still `pending` is lifted into Needs Review
+  when its cohort is `applications_open`. So a cohort assignment can only
+  reclassify a record if that cohort is open. The migration asserts Fall 2026
+  is NOT open and refuses if it is — which is what makes "every bucket
+  preserved" provable rather than hoped for.
+
+Proved by `scripts/historical-import/proveFall2026Repair.mjs` (independent SQL
+read-back, idempotence, and refusal on three broken premises) and
+`e2e/fall2026CohortRepair.spec.ts` (migration through psql, then a fresh
+browser on the built app).
+
+**Production, read back by Leif:** migration applied exactly once, 155
+migrations, one canonical Fall 2026 cohort, 51 applications on it, **zero**
+cohortless GYU applications, January 2027 at 22 unchanged, The Living Example
+at 100 untouched, zero conflicting Deal cohorts.
+
 ## 8c. Applications UX cleanup + Waitlist entry redesign — PRODUCTION ACCEPTED 2026-10-05
 
 Scoped, built and accepted 2026-10-05, after §8b-apps-accepted.
