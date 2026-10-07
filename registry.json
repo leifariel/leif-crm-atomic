@@ -158,6 +158,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/tasks/taskTypeLabel.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/tasks/taskConstants.ts",
           "type": "registry:component"
         },
@@ -1190,7 +1194,7 @@
           "type": "registry:component"
         },
         {
-          "path": "src/components/atomic-crm/enrollments/TestimonialCard.tsx",
+          "path": "src/components/atomic-crm/enrollments/TestimonialRow.tsx",
           "type": "registry:component"
         },
         {

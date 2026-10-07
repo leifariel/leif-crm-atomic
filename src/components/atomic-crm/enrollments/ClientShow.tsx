@@ -11,7 +11,7 @@ import type { Identifier } from "ra-core";
 import { Link } from "react-router";
 
 import { ClientEditModal } from "./ClientEditModal";
-import { TestimonialCard } from "./TestimonialCard";
+import { TestimonialRow } from "./TestimonialRow";
 import { StartWeekCard } from "./StartWeekCard";
 import { Show } from "@/components/admin/show";
 import { Badge } from "@/components/ui/badge";
@@ -276,6 +276,7 @@ const EnrollmentOperationalHome = () => {
       {showOffboardingProminent && (
         <OffboardingChecklistCard
           enrollment={enrollment}
+          offer={offer}
           tasks={tasks}
           progress={offboardingProgress}
           collapsed={false}
@@ -287,15 +288,6 @@ const EnrollmentOperationalHome = () => {
           answer, and because a client sold today with no start week is
           exactly the case this card exists to stop from going unnoticed. */}
       <div className="m-4 flex flex-col gap-3">
-        {/* Whether the testimonial ever arrived. Shown from the moment
-            offboarding genuinely started (which is when the checklist
-            snapshot exists) and NOT withdrawn once the Enrollment
-            completes — a testimonial can arrive after everything else is
-            finished, and Leif still needs somewhere to record it. The card
-            renders nothing for a programme that does not ask. */}
-        {showOffboarding && (
-          <TestimonialCard enrollment={enrollment} offer={offer} />
-        )}
         <StartWeekCard enrollment={enrollment} offer={offer} />
       </div>
 
@@ -386,6 +378,7 @@ const EnrollmentOperationalHome = () => {
       {showOffboardingSecondary && (
         <OffboardingChecklistCard
           enrollment={enrollment}
+          offer={offer}
           tasks={tasks}
           progress={offboardingProgress}
           collapsed={true}
@@ -935,11 +928,13 @@ const StartOffboardingButton = ({
 // between requirements-complete and clicking Complete client).
 const OffboardingChecklistCard = ({
   enrollment,
+  offer,
   tasks,
   progress,
   collapsed,
 }: {
   enrollment: Enrollment;
+  offer: Offer | undefined;
   tasks: ReturnType<typeof useEnrollmentOperationalData>["tasks"];
   progress: OffboardingProgress;
   collapsed: boolean;
@@ -1005,36 +1000,67 @@ const OffboardingChecklistCard = ({
     }
   };
 
-  const checklist = (
+  // ONE container for all the offboarding work. The requirement rows and
+  // the testimonial row are siblings in a single divide-y column, so the
+  // separator between them is the container own already-established row
+  // language rather than a second card.
+  //
+  // The testimonial row renders nothing for a programme that does not ask,
+  // and a null child draws no divider, so a GYU-style Offer without it
+  // looks exactly as it did.
+  const requirementRows = [...requiredItems, ...optionalItems].map((item) => (
+    <OffboardingItemRow
+      key={item.id}
+      item={item}
+      tasks={tasks}
+      onToggle={() => toggleItem(item)}
+    />
+  ));
+
+  const testimonialRow = (
+    <TestimonialRow enrollment={enrollment} offer={offer} />
+  );
+  // Whether this programme asks at all. Needed here as well as inside the
+  // row, so the collapsed rendering below does not draw an empty bordered
+  // strip for an Offer that never asks.
+  const asksForTestimonial = !!offer?.collects_testimonial;
+
+  const checklist = (withTestimonial: boolean) => (
     <Card>
       <CardContent className="flex flex-col divide-y">
-        {[...requiredItems, ...optionalItems].map((item) => (
-          <OffboardingItemRow
-            key={item.id}
-            item={item}
-            tasks={tasks}
-            onToggle={() => toggleItem(item)}
-          />
-        ))}
+        {requirementRows}
+        {withTestimonial ? testimonialRow : null}
       </CardContent>
     </Card>
   );
 
   if (collapsed) {
     return (
-      <details className="group rounded-lg border">
-        <summary className="cursor-pointer list-none px-4 py-2.5 text-xs text-muted-foreground tracking-wide flex items-center justify-between">
-          {translate("resources.enrollments.offboarding_collapsed_summary", {
-            _: "Offboarding · Complete %{done}/%{total}",
-            done: requiredDoneCount,
-            total: requiredItems.length,
-          })}
-          <span className="text-muted-foreground group-open:rotate-180 transition-transform">
-            ▾
-          </span>
-        </summary>
-        <div className="px-4 pb-2.5 pt-1">{checklist}</div>
-      </details>
+      // Still ONE container. The requirements themselves fold away — once a
+      // client is completed they are history — but the testimonial row stays
+      // visible below the fold line, because a testimonial can arrive after
+      // everything else is finished. Adriano is the proof: his Enrollment is
+      // completed and Leif must still be able to record one. Putting the row
+      // inside the fold would have hidden exactly the case the sequence
+      // exists for.
+      <div className="rounded-lg border">
+        <details className="group">
+          <summary className="cursor-pointer list-none px-4 py-2.5 text-xs text-muted-foreground tracking-wide flex items-center justify-between">
+            {translate("resources.enrollments.offboarding_collapsed_summary", {
+              _: "Offboarding · Complete %{done}/%{total}",
+              done: requiredDoneCount,
+              total: requiredItems.length,
+            })}
+            <span className="text-muted-foreground group-open:rotate-180 transition-transform">
+              ▾
+            </span>
+          </summary>
+          <div className="px-4 pb-2.5 pt-1">{checklist(false)}</div>
+        </details>
+        {asksForTestimonial && (
+          <div className="border-t px-4 py-2.5">{testimonialRow}</div>
+        )}
+      </div>
     );
   }
 
@@ -1060,7 +1086,7 @@ const OffboardingChecklistCard = ({
           </Button>
         )}
       </div>
-      {checklist}
+      {checklist(true)}
     </div>
   );
 };
