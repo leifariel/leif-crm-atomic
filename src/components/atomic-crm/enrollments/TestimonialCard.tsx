@@ -78,15 +78,21 @@ export const TestimonialCard = ({
   };
 
   return (
+    // The same shape as StartWeekCard directly beneath it: one Card, one
+    // CardContent with no extra padding of its own (Card already carries
+    // py-6, so the py-3 this used to add made it taller than its
+    // neighbours, which is what read as an empty slab), a two-line stack on
+    // the left and the action on the right — stacking on a narrow screen
+    // rather than wrapping mid-row.
     <Card>
-      <CardContent className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium">
+      <CardContent className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-1">
+          <span className="text-sm font-medium">
             {translate("resources.enrollments.testimonial.title", {
               _: "Testimonial",
             })}
-          </p>
-          <p className="text-sm text-muted-foreground">
+          </span>
+          <span className="text-sm text-muted-foreground">
             {received
               ? translate("resources.enrollments.testimonial.received_on", {
                   _: "Received %{date}",
@@ -95,12 +101,13 @@ export const TestimonialCard = ({
               : translate("resources.enrollments.testimonial.not_received", {
                   _: "Not received",
                 })}
-          </p>
+          </span>
         </div>
         {!received && (
           <Button
             variant="outline"
             size="sm"
+            className="self-start sm:self-auto"
             disabled={saving}
             onClick={() => void markReceived()}
           >
