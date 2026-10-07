@@ -3614,6 +3614,31 @@ Then stop.
     PRODUCTION DATABASE VERIFIED YES
     LE HUMAN ACCEPTANCE          YES  — on Jules (48) and Adriano (50)
     GYU HUMAN ACCEPTANCE         PENDING its first real offboarding
+    TASK LABEL REPAIR            PRODUCTION ACCEPTED 2026-10-07 (02b12a1e)
+    OFFBOARDING CONTAINER UX     PENDING Leif seeing it in production
+
+**TESTIMONIAL TASK LABEL REPAIR — PRODUCTION ACCEPTED** (2026-10-07, tip
+`02b12a1e`). Jules's Enrollment page reads "Ask for testimonial" rather
+than `collect_testimonial`. The three stage labels and the Enrollment
+destination are settled and must not be reopened:
+
+    collect_testimonial     -> Ask for testimonial
+    testimonial_followup_1  -> Testimonial follow-up
+    testimonial_followup_2  -> Final testimonial follow-up
+
+Why it needed a repair at all is the durability note at the end of this
+section — a configuration saved before a release shadows what the release
+ships.
+
+**The visual polish is NOT accepted yet.** The testimonial was its own card
+floating beneath the offboarding checklist; it is now a row inside that one
+container, divided from the requirements by the container's own row rule.
+Awaiting Leif seeing the unified container in production. The domain rule it
+must keep is that visual grouping changes nothing: the row is not an
+`enrollment_offboarding_item`, carries no checkbox, never enters the x/y
+count (LE stays 0/1 on `notes_archived`, GYU 0/2 on Slack + Calendar) and
+can never hold a completion. On a completed Enrollment the requirements fold
+away but the row stays visible outside the fold — Adriano is why.
 
 **Accepted on the two real clients the boundary had excluded.** Jules
 (Enrollment 48) is still Offboarding with Session notes archived unchanged,
