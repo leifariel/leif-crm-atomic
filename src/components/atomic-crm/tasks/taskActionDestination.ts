@@ -78,9 +78,21 @@ const OPPORTUNITY_CONTEXT_TYPES: ReadonlySet<string> = new Set([
 // Client Offboarding slice: offboarding_item joins onboarding_item here
 // for the same reason — resolves DETERMINISTICALLY via Task.enrollment_id
 // too, no separate resolution logic needed.
+// Client Offboarding testimonial sequence: the three stages belong here for
+// the same reason again — each carries Task.enrollment_id, set by
+// reconcile_testimonial_tasks() at creation, so they resolve
+// deterministically with no new logic. The Enrollment's own page is also
+// where the answer lives: TestimonialCard's "Mark testimonial received" is
+// the control that closes all three at once. They were reaching
+// "task-detail" instead, where Description/Due date/Type/Status cannot
+// record that a testimonial arrived — found by the Needs Attention
+// inventory, which requires every type to have a real destination.
 const ENROLLMENT_CONTEXT_TYPES: ReadonlySet<string> = new Set([
   "onboarding_item",
   "offboarding_item",
+  "collect_testimonial",
+  "testimonial_followup_1",
+  "testimonial_followup_2",
 ]);
 
 // sales_call_needs_matching (Unmatched Sales Call Resolution slice): used

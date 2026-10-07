@@ -106,6 +106,16 @@ export const defaultTaskTypes = [
   // remove Slack/Calendar access), same "generic type, specific action
   // lives in the Task's own text" reasoning.
   { value: "offboarding_item", label: "Offboarding" },
+  // Client Offboarding testimonial sequence: the three stages Leif actually
+  // performs. They are NOT in SELF_DESCRIBING_TASK_TYPES (Task.tsx), so
+  // they render by label — and without an entry here typeLabel() falls back
+  // to the raw stored value, which is how "collect_testimonial" reached the
+  // screen. The stored type strings are untouched; only what Leif reads
+  // changes. The stage numbers become words, because "1/2" tells him
+  // nothing he cannot see from the two rows themselves.
+  { value: "collect_testimonial", label: "Ask for testimonial" },
+  { value: "testimonial_followup_1", label: "Testimonial follow-up" },
+  { value: "testimonial_followup_2", label: "Final testimonial follow-up" },
   // GYU real-infrastructure slice, human-acceptance repair pass: surfaces
   // an Opportunity left at Call Booked with no active appointment after a
   // cancellation, so it never silently strands — see

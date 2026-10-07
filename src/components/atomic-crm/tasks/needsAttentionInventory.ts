@@ -216,6 +216,70 @@ export const NEEDS_ATTENTION_KINDS: readonly NeedsAttentionKind[] = [
     actionLabel: "Open",
     origin: "system",
   },
+  // The three testimonial stages. They are projections of the offboarding
+  // sequence, raised by reconcile_testimonial_tasks() — never written by
+  // hand, which is why all three are "system". Until now they were not in
+  // this inventory at all: the engine registered them in the database CHECK
+  // and nowhere in the frontend, so Leif read "collect_testimonial" on the
+  // Dashboard and clicking it opened the generic Task editor, which cannot
+  // record that a testimonial arrived.
+  //
+  // Their due dates are real commitments, not artefacts: Day 0 is the
+  // offboarding date, Day 7 and Day 14 are derived from it, so they stay
+  // out of TASK_TYPES_WITHOUT_MEANINGFUL_DUE_DATE exactly as they are
+  // today. Urgency 9 because nothing is damaged when a testimonial ask
+  // waits — it must never outrank an offboarding step, which can hold a
+  // client's completion.
+  {
+    type: "collect_testimonial",
+    label: "Ask for testimonial",
+    question: "This client has finished — ask them for a testimonial.",
+    createdWhen:
+      "An eligible client enters offboarding. Eligibility is per Offer (offers.testimonial_activated_at) plus the two explicit per-Enrollment opt-ins, so historical clients are never swept in.",
+    destination: "enrollment-context → /enrollments/:id/show",
+    resolution:
+      "Ask them, then tick this off — marking it done is what lets the Day 7 follow-up be raised at all.",
+    closesAutomaticallyWhen:
+      "enrollments.testimonial_received_at stops being NULL, by any route. The task is CANCELLED rather than completed: Leif did not do it, it stopped being necessary.",
+    manuallyCompletable: true,
+    urgency: 9,
+    dueDateMeans: "The day the client finished",
+    actionLabel: "Open",
+    origin: "system",
+  },
+  {
+    type: "testimonial_followup_1",
+    label: "Testimonial follow-up",
+    question: "They have not sent a testimonial yet — ask once more.",
+    createdWhen:
+      "Seven days after the client finished, and only if the first ask was marked done and no testimonial has arrived.",
+    destination: "enrollment-context → /enrollments/:id/show",
+    resolution: "Ask again, then tick this off.",
+    closesAutomaticallyWhen:
+      "enrollments.testimonial_received_at stops being NULL — cancelled, for the same reason as the first ask.",
+    manuallyCompletable: true,
+    urgency: 9,
+    dueDateMeans: "Seven days after they finished",
+    actionLabel: "Open",
+    origin: "system",
+  },
+  {
+    type: "testimonial_followup_2",
+    label: "Final testimonial follow-up",
+    question: "Last ask — after this the CRM stops asking.",
+    createdWhen:
+      "Fourteen days after the client finished, and only if the earlier asks were marked done and no testimonial has arrived.",
+    destination: "enrollment-context → /enrollments/:id/show",
+    resolution:
+      "Ask a final time, then tick this off. Nothing further is raised — a client who never replies is not an open question forever.",
+    closesAutomaticallyWhen:
+      "enrollments.testimonial_received_at stops being NULL — cancelled, for the same reason as the earlier asks.",
+    manuallyCompletable: true,
+    urgency: 9,
+    dueDateMeans: "Fourteen days after they finished",
+    actionLabel: "Open",
+    origin: "system",
+  },
   {
     type: "review_application",
     label: "Application to review",
