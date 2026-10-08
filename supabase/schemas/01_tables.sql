@@ -503,7 +503,7 @@ create table public.applications (
     -- by hand, are both recorded here. 20261008140000 says why each one is a
     -- status rather than a flag.
     recommended_offer_id bigint,
-    constraint applications_status_check check (status in ('pending', 'approved', 'needs_higher_care', 'not_fit', 'do_not_engage', 'offered_other_programme', 'bespoke_accepted', 'bespoke_rejected', 'denied', 'waitlist')),
+    constraint applications_status_check check (status in ('pending', 'approved', 'needs_higher_care', 'not_fit', 'do_not_engage', 'offered_other_programme', 'bespoke_accepted', 'bespoke_denied', 'denied', 'waitlist')),
     constraint applications_recommended_offer_agrees_check check (
         (status = 'offered_other_programme') = (recommended_offer_id is not null)
         and (recommended_offer_id is null or recommended_offer_id is distinct from offer_id)
@@ -2428,7 +2428,7 @@ create table if not exists public.kit_tag_mappings (
     primary key (offer_id, event),
     constraint kit_tag_mappings_event_check
         check (event in ('applicant', 'approved', 'needs_higher_care', 'not_fit',
-                         'offered_other_programme', 'bespoke_accepted', 'bespoke_rejected')),
+                         'offered_other_programme', 'bespoke_accepted', 'bespoke_denied')),
     constraint kit_tag_mappings_name_check check (btrim(kit_tag_name) <> ''),
     constraint kit_tag_mappings_tag_id_check check (kit_tag_id > 0)
 );
@@ -2480,7 +2480,7 @@ alter table public.kit_tag_mappings
 alter table public.kit_tag_mappings
     add constraint kit_tag_mappings_bespoke_is_manual_check
     check (
-        event not in ('bespoke_accepted', 'bespoke_rejected')
+        event not in ('bespoke_accepted', 'bespoke_denied')
         or followup_mode = 'manual_email'
     );
 alter table public.kit_tag_mappings

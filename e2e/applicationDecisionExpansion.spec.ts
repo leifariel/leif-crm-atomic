@@ -52,37 +52,37 @@ const NEW_MAPPINGS = [
     offer_id: LE,
     event: "offered_other_programme",
     kit_tag_id: 970001,
-    kit_tag_name: "MiniDD_OfferedGYU",
+    kit_tag_name: "LE_Offered_GYU",
   },
   {
     offer_id: LE,
     event: "bespoke_accepted",
     kit_tag_id: 970002,
-    kit_tag_name: "MiniDD_BespokeAcceptance",
+    kit_tag_name: "LE_Bespoke_Accepted",
   },
   {
     offer_id: LE,
-    event: "bespoke_rejected",
+    event: "bespoke_denied",
     kit_tag_id: 970003,
-    kit_tag_name: "MiniDD_BespokeRejection",
+    kit_tag_name: "LE_Bespoke_Denied",
   },
   {
     offer_id: GYU,
     event: "offered_other_programme",
     kit_tag_id: 970004,
-    kit_tag_name: "GYU-OfferedLE",
+    kit_tag_name: "GYU_Offered_LE",
   },
   {
     offer_id: GYU,
     event: "bespoke_accepted",
     kit_tag_id: 970005,
-    kit_tag_name: "GYU-BespokeAcceptance",
+    kit_tag_name: "GYU_Bespoke_Accepted",
   },
   {
     offer_id: GYU,
-    event: "bespoke_rejected",
+    event: "bespoke_denied",
     kit_tag_id: 970006,
-    kit_tag_name: "GYU-BespokeRejection",
+    kit_tag_name: "GYU_Bespoke_Denied",
   },
 ];
 
@@ -501,7 +501,7 @@ test.describe("offering the other programme", () => {
       const operations = await readKitOperations(id.application);
       const decision = operations.filter((row) => row.kind === "decision");
       expect(decision).toHaveLength(1);
-      expect(decision[0]!.kit_tag_name).toBe("MiniDD_OfferedGYU");
+      expect(decision[0]!.kit_tag_name).toBe("LE_Offered_GYU");
       expect(operations.map((row) => row.kit_tag_name)).not.toContain(
         "MiniDD_Approved",
       );
@@ -740,7 +740,7 @@ test.describe("offering the other programme", () => {
       const operations = await readKitOperations(id.application);
       const decision = operations.filter((row) => row.kind === "decision");
       expect(decision).toHaveLength(1);
-      expect(decision[0]!.kit_tag_name).toBe("GYU-OfferedLE");
+      expect(decision[0]!.kit_tag_name).toBe("GYU_Offered_LE");
       expect(operations.map((row) => row.kit_tag_name)).not.toContain(
         "GYU-Approved",
       );
@@ -787,9 +787,9 @@ test.describe("a bespoke decision", () => {
       label: "le-accept",
       offerId: LE,
       lastName: "LeAccept",
-      item: "Bespoke acceptance",
+      item: "Bespoke Accepted",
       status: "bespoke_accepted",
-      tag: "MiniDD_BespokeAcceptance",
+      tag: "LE_Bespoke_Accepted",
       forbidden: ["MiniDD_Approved", "MiniDD_Denied"],
       stage: "approved",
       outcome: null as string | null,
@@ -799,9 +799,9 @@ test.describe("a bespoke decision", () => {
       label: "le-reject",
       offerId: LE,
       lastName: "LeReject",
-      item: "Bespoke rejection",
-      status: "bespoke_rejected",
-      tag: "MiniDD_BespokeRejection",
+      item: "Bespoke Denied",
+      status: "bespoke_denied",
+      tag: "LE_Bespoke_Denied",
       forbidden: ["MiniDD_Approved", "MiniDD_Denied"],
       stage: "application_received",
       outcome: "not_fit" as string | null,
@@ -811,9 +811,9 @@ test.describe("a bespoke decision", () => {
       label: "gyu-accept",
       offerId: GYU,
       lastName: "GyuAccept",
-      item: "Bespoke acceptance",
+      item: "Bespoke Accepted",
       status: "bespoke_accepted",
-      tag: "GYU-BespokeAcceptance",
+      tag: "GYU_Bespoke_Accepted",
       forbidden: ["GYU-Approved", "GYU-Denied"],
       stage: "approved",
       outcome: null as string | null,
@@ -823,9 +823,9 @@ test.describe("a bespoke decision", () => {
       label: "gyu-reject",
       offerId: GYU,
       lastName: "GyuReject",
-      item: "Bespoke rejection",
-      status: "bespoke_rejected",
-      tag: "GYU-BespokeRejection",
+      item: "Bespoke Denied",
+      status: "bespoke_denied",
+      tag: "GYU_Bespoke_Denied",
       forbidden: ["GYU-Approved", "GYU-Denied"],
       stage: "application_received",
       outcome: "not_fit" as string | null,

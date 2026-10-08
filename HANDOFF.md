@@ -4156,7 +4156,7 @@ showing a raised exception).
 
 **BESPOKE IS A COMMUNICATION MODE, NOT A NEW ELIGIBILITY MEANING.**
 `bespoke_accepted` writes the same shape `approved` does (stage `approved`,
-outcome cleared, the operational approved path untouched); `bespoke_rejected`
+outcome cleared, the operational approved path untouched); `bespoke_denied`
 writes `outcome = 'not_fit'` and leaves the stage where it is. Two values
 rather than one, because "bespoke" on its own would be an unresolved state
 sitting in a queue that only knows decided from undecided.
@@ -4168,7 +4168,7 @@ Everything new leaves Needs Review because it sets a status that is not
 `applications_awaiting_review` have ever asked. Neither mentions the new
 names, and a contract test asserts they do not. The processed set is therefore
 Approved, Needs Higher Care, Not a Fit, Do Not Engage, Offered the other
-programme, Bespoke acceptance, Bespoke rejection.
+programme, Bespoke Accepted, Bespoke Denied.
 
 ### A group destination needs a round — the defect, and the rule
 
@@ -4266,49 +4266,123 @@ no reconciliation behaviour to extend, so the new decisions inherit the same
 one-way door. **Correcting a decision is its own slice** and is not started
 here.
 
-### WAITING ON LEIF — the six Kit tags
+### Kit tags — all six exist; only the mapping is left
 
-Nothing automated can create these: the CRM applies tags, it never invents
-them, and `kit_tag_mappings` needs a real `kit_tag_id`. The exact names, each
-following its own programme's existing convention (`MiniDD_` + PascalCase;
-`GYU-` + PascalCase).
+Nothing automated creates these: the CRM applies tags, it never invents them,
+and `kit_tag_mappings` needs a real `kit_tag_id`. **No tag name is in the
+migration or in any runtime constant** — they are owner data, which is why
+settling the names twice touched one spec fixture and this file and nothing
+else.
 
-**The destination half names the PROGRAMME, not a prefix.** GYU's is
-`GYU-OfferedLE` rather than `GYU-OfferedMiniDD`, because `MiniDD` is the
-sales-call pathway and the historical Kit prefix, not the programme being
-recommended. The existing legacy `MiniDD_*` tags are **not** renamed.
+| Programme | Event | Tag | Remote Kit state |
+|---|---|---|---|
+| The Living Example | Offered the other programme | `LE_Offered_GYU` | tag **and** automation |
+| | Bespoke Accepted | `LE_Bespoke_Accepted` | **tag only — no automation, deliberately** |
+| | Bespoke Denied | `LE_Bespoke_Denied` | **tag only — no automation, deliberately** |
+| Growing Yourself Up | Offered the other programme | `GYU_Offered_LE` | tag **and** automation |
+| | Bespoke Accepted | `GYU_Bespoke_Accepted` | **tag only — no automation, deliberately** |
+| | Bespoke Denied | `GYU_Bespoke_Denied` | **tag only — no automation, deliberately** |
 
-| Programme | Event | Tag |
-|---|---|---|
-| The Living Example | Offered the other programme | `MiniDD_OfferedGYU` |
-| | Bespoke acceptance | `MiniDD_BespokeAcceptance` |
-| | Bespoke rejection | `MiniDD_BespokeRejection` |
-| Growing Yourself Up | Offered the other programme | `GYU-OfferedLE` |
-| | Bespoke acceptance | `GYU-BespokeAcceptance` |
-| | Bespoke rejection | `GYU-BespokeRejection` |
+One convention throughout: `SOURCE_Decision[_Destination]`. The redirect pair
+names where somebody is being sent; the bespoke four name the decision. No
+legacy `MiniDD_*` tag is renamed — `MiniDD_Applicant`, `MiniDD_Approved`,
+`MiniDD_NeedsHigherCare` and `MiniDD_Denied` are untouched and still the
+tags the four original decisions apply.
 
-Attach the cross-programme email automation to the two `Offered` tags.
-**Attach nothing to the four bespoke tags** — that is their whole purpose.
-Then map them on each programme's own page (Programmes → the offer → Kit
-automation), which now lists the three new events.
+**The four bespoke tags must stay automation-free, and the database enforces
+the half of that it can see.** `kit_tag_mappings_bespoke_is_manual_check`
+refuses a bespoke mapping whose `followup_mode` is anything but
+`manual_email`, and `enforce_bespoke_kit_separation()` refuses a bespoke
+mapping that shares a tag with the same programme's `approved`, `not_fit` or
+`offered_other_programme` event — in both directions, so configuration order
+cannot decide whether the rule holds. Neither can be bypassed by
+`service_role`. What the CRM cannot see is Kit's own automation topology, so
+"attach nothing to these four" remains an instruction rather than a check.
 
-`followup_mode` / `automation_name` still have no editing UI — pre-existing,
-recorded in §8b-kit. Bespoke mappings set themselves to `manual_email`; the
-two `Offered` mappings will read "none" until a migration records the
-automation name Leif gives them.
+**Until a tag is mapped, that decision enqueues no Kit work at all.**
+`enqueue_kit_application_sync()` returns null on an unmapped event — the
+existing "no mapping is a refusal, never a guess" posture. The decision still
+records correctly and still leaves Needs Review; only the tag is absent.
 
-### The two cross-programme emails — PARKED, not frozen
+### MANUAL STEP STILL OUTSTANDING — map the six, after deploy
 
-Drafted from the only applicant-facing copy the repository holds (the two
-public application pages). **The existing Approved / Not Fit / Needs Higher
-Care copy lives in Kit, not here, so it could not be read** — these match the
-voice of the forms, not of the letters they will sit beside.
+The tags exist in Kit; the CRM does not yet know their ids. Map them on each
+programme's own page: **Programmes → the offer → Kit automation**, which now
+lists the three new events. Six mappings, two programmes:
 
-**Deliberately not final.** The next-step link has to be truthful about the
-destination workflow, and the LE → GYU letter as drafted points somebody at a
-round the CRM has ALREADY put them in. Whether it should send them to an
-application form at all, or simply tell them which round they are being
-offered, is Leif's question and not this slice's.
+- The Living Example: `LE_Offered_GYU`, `LE_Bespoke_Accepted`, `LE_Bespoke_Denied`
+- Growing Yourself Up: `GYU_Offered_LE`, `GYU_Bespoke_Accepted`, `GYU_Bespoke_Denied`
+
+The picker reads Leif's real Kit catalogue, so each one is chosen rather than
+typed, and the id stored is Kit's own. A bespoke mapping sets its own
+`followup_mode = 'manual_email'`; attempting to give a bespoke event a tag
+already used by a sending decision answers
+`tag-already-used-by-another-decision` and writes nothing.
+
+### What the runtime actually requires — audited, not assumed
+
+**Only the tag mapping.** `enqueue_kit_application_sync()` reads
+`kit_tag_mappings.kit_tag_id` and `kit_tag_name` and copies them onto the
+operation; the worker applies the tag by id. Nothing else is needed for a
+decision to reach Kit.
+
+- `followup_mode` is **optional**, and changes exactly one sentence
+  (`followupNote()`): "That email still needs to be sent by hand." for
+  `manual_email`, "Handed off to Kit automation." for `kit_automation` once
+  delivered, and nothing at all for `none`. A mapping nobody has characterised
+  stays silent, which is correct.
+- `automation_name` is **never rendered anywhere**. It is declared on the type
+  and named in one `Pick<>`, and no surface prints it. **So the two Kit
+  automation names are not needed, and asking for them would have been asking
+  for metadata to put in a field nothing reads.**
+
+The two redirect mappings will therefore read `followup_mode = 'none'` and say
+nothing after the tag lands. That is silent, not wrong. If Leif wants the
+"Handed off to Kit automation." line on redirect decisions, it is a one-line
+migration setting `followup_mode = 'kit_automation'` on those two rows — and
+still no automation name, since the column's only job today is to exist.
+`followup_mode` has no editing UI; that gap is pre-existing and recorded in
+§8b-kit.
+
+### The next step in those two emails — the CRM holds no link, by audit
+
+Settled by Leif: a redirected person is **not** sent to another application.
+They have applied and been reviewed. Each redirect automation takes them
+straight to the destination programme's ordinary approved next step — the GYU
+approved-lead call, or the LE Private Deep Dive.
+
+**None of that is CRM code, and the audit is the reason.** There is no booking
+or scheduling URL anywhere in this repository — no Acuity link, no
+`scheduling_url`, nothing. What the CRM holds about a sales call is
+`offers.acuity_appointment_type_id` and `cohorts.acuity_appointment_type_id`,
+which are **inbound matchers**: they identify which appointment type's bookings
+belong to which programme or round (`sales-calls/offerCohortAcuityMapping.ts`).
+An ordinary Approved applicant's booking link lives in Kit's own approval
+email, and so does a redirected one's. Nothing was duplicated into the CRM for
+documentation's sake.
+
+**One dependency, if the LE → GYU email should NAME the round.** The CRM sends
+Kit one programme-level tag per decision, so Kit cannot know which round was
+assigned. The mechanism to tell it already exists — `cohorts.kit_tag_id` /
+`kit_tag_name`, applied as the `'cohort'` kind — but **no production cohort
+carries a Kit tag today**, and wiring the DESTINATION round's tag would also
+have to settle the `unique (application_id, kind)` collision with an
+applicant's own round tag. Not built, because whether that email names a round
+or simply invites the call is Leif's decision about his own copy, not an
+inference to make here.
+
+### The two cross-programme emails — Kit's, and Kit's alone
+
+The drafts below were written from the only applicant-facing copy this
+repository holds (the two public application pages), because **the existing
+Approved / Not Fit / Needs Higher Care copy lives in Kit, not here, and could
+not be read.** They are kept as a record of what was proposed; the live copy is
+whatever Leif wrote into the two automations, and it is not mirrored here.
+
+Both drafts PREDATE the settled next step and still send the reader to an
+application form. **That is wrong now** — a redirected person has already
+applied and been reviewed, and goes straight to the destination programme's
+ordinary approved call. Read them for voice only.
 
 **The Living Example → Growing Yourself Up**
 

@@ -404,13 +404,10 @@ describe("what the confirmation is allowed to claim", () => {
     expect(kitEventRisk("offered_other_programme")).toBe("sends-email");
     // Bespoke is answered by hand. The sentence claims only what the CRM
     // does — it asked for no email — and never what Kit has attached.
-    for (const event of ["bespoke_accepted", "bespoke_rejected"]) {
+    for (const event of ["bespoke_accepted", "bespoke_denied"]) {
       expect(kitEventRisk(event)).toBe("answered-by-hand");
     }
-    const sentence = kitRiskSentence(
-      "answered-by-hand",
-      "MiniDD_BespokeAcceptance",
-    );
+    const sentence = kitRiskSentence("answered-by-hand", "LE_Bespoke_Accepted");
     expect(sentence).toBe(
       "A bespoke decision sends no automatic reply — this response is yours to write.",
     );
@@ -424,7 +421,7 @@ describe("what the confirmation is allowed to claim", () => {
     ] as never;
     expect(kitTagRisk(990002, shared)).toBe("sends-email");
     const bespokeOnly = [
-      { kit_tag_id: 990003, event: "bespoke_rejected" },
+      { kit_tag_id: 990003, event: "bespoke_denied" },
     ] as never;
     expect(kitTagRisk(990003, bespokeOnly)).toBe("answered-by-hand");
   });

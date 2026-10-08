@@ -18,7 +18,7 @@ export type KitTagEvent =
   | "not_fit"
   | "offered_other_programme"
   | "bespoke_accepted"
-  | "bespoke_rejected";
+  | "bespoke_denied";
 
 export type AddKitTagResult = {
   status:

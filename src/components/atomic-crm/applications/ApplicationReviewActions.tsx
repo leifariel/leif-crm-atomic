@@ -280,12 +280,12 @@ export const ApplicationReviewActions = ({
           <DropdownMenuContent align="start">
             <DropdownMenuItem onClick={() => runOutcome("bespoke_accepted")}>
               {translate("resources.applications.action.bespoke_accepted", {
-                _: "Bespoke acceptance",
+                _: "Bespoke Accepted",
               })}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => runOutcome("bespoke_rejected")}>
-              {translate("resources.applications.action.bespoke_rejected", {
-                _: "Bespoke rejection",
+            <DropdownMenuItem onClick={() => runOutcome("bespoke_denied")}>
+              {translate("resources.applications.action.bespoke_denied", {
+                _: "Bespoke Denied",
               })}
             </DropdownMenuItem>
           </DropdownMenuContent>

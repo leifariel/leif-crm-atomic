@@ -342,10 +342,10 @@ describe("the review area offers the two new decisions", () => {
 
     await screen.getByRole("button", { name: "Bespoke response" }).click();
     await expect
-      .element(screen.getByRole("menuitem", { name: "Bespoke acceptance" }))
+      .element(screen.getByRole("menuitem", { name: "Bespoke Accepted" }))
       .toBeVisible();
     await expect
-      .element(screen.getByRole("menuitem", { name: "Bespoke rejection" }))
+      .element(screen.getByRole("menuitem", { name: "Bespoke Denied" }))
       .toBeVisible();
   });
 
@@ -355,12 +355,12 @@ describe("the review area offers the two new decisions", () => {
     const screen = await render(element);
 
     await screen.getByRole("button", { name: "Bespoke response" }).click();
-    await screen.getByRole("menuitem", { name: "Bespoke acceptance" }).click();
+    await screen.getByRole("menuitem", { name: "Bespoke Accepted" }).click();
 
     // The status badge renders in the page header AND in the decision area,
     // which is the existing layout and not this test's business.
     await expect
-      .element(screen.getByText("Bespoke acceptance", { exact: false }).first())
+      .element(screen.getByText("Bespoke Accepted", { exact: false }).first())
       .toBeVisible();
 
     const { data: saved } = await dataProvider.getOne<Application>(

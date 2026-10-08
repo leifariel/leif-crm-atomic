@@ -365,8 +365,8 @@ export const frenchCrmMessages = {
         do_not_engage: "Ne pas contacter",
         offer_other_programme: "Proposer %{programme}",
         bespoke_response: "Réponse personnalisée",
-        bespoke_accepted: "Acceptation personnalisée",
-        bespoke_rejected: "Refus personnalisé",
+        bespoke_accepted: "Accepté (réponse personnalisée)",
+        bespoke_denied: "Refusé (réponse personnalisée)",
       },
       review: {
         summary_title: "Résumé de la candidature",

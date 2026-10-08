@@ -527,29 +527,29 @@ describe("a bespoke decision is processed, decided, and answered by hand", () =>
     expect(events).toHaveLength(0);
   });
 
-  it("bespoke rejection is a rejection, and does not move the stage backward", async () => {
+  it("bespoke denial is a denial, and does not move the stage backward", async () => {
     const { dataProvider, application } = buildWorld({ appliedTo: GYU });
 
     const result = await reviewApplication({
       dataProvider,
       application,
-      outcome: "bespoke_rejected",
+      outcome: "bespoke_denied",
     });
     expect(result.applied).toBe(true);
 
     const { app, deal } = await readBack(dataProvider);
-    expect(app.status).toBe("bespoke_rejected");
+    expect(app.status).toBe("bespoke_denied");
     expect(app.reviewed_at).not.toBeNull();
     expect(deal.outcome).toBe("not_fit");
     // A decision about a person is not a demotion of their pipeline position.
     expect(deal.stage).toBe("application_received");
   });
 
-  it("counts a bespoke rejection as a rejection, and the other two new decisions as still in play", () => {
+  it("counts a bespoke denial as a denial, and the other two new decisions as still in play", () => {
     // The cohort capacity hooks' defensive fallback asks one question: has
     // this person stopped moving toward a purchase on THIS Opportunity?
     expect(
-      NON_APPROVED_TERMINAL_APPLICATION_STATUSES.has("bespoke_rejected"),
+      NON_APPROVED_TERMINAL_APPLICATION_STATUSES.has("bespoke_denied"),
     ).toBe(true);
     expect(
       NON_APPROVED_TERMINAL_APPLICATION_STATUSES.has("bespoke_accepted"),

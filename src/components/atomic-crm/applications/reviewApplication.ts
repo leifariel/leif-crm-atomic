@@ -29,7 +29,7 @@ export type ApplicationReviewOutcome =
   // "bespoke" on its own would be an unresolved state sitting in a queue that
   // only knows about decided and undecided.
   | "bespoke_accepted"
-  | "bespoke_rejected";
+  | "bespoke_denied";
 
 export type ReviewApplicationRefusal =
   | "already-reviewed"
@@ -363,7 +363,7 @@ const buildDealUpdate = (
       return { outcome: "needs_higher_care" };
     case "not_fit":
       return { outcome: "not_fit" };
-    case "bespoke_rejected":
+    case "bespoke_denied":
       // A rejection reads as the same exit everywhere that counts exits.
       return { outcome: "not_fit" };
     case "do_not_engage":

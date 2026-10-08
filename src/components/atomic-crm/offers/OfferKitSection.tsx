@@ -35,8 +35,8 @@ const EVENTS: Array<{ event: KitTagEvent; label: string }> = [
   { event: "offered_other_programme", label: "Offered the other programme" },
   // Their own tags, deliberately separate from Approved / Not Fit: a bespoke
   // decision must never apply a tag an email automation may be hanging off.
-  { event: "bespoke_accepted", label: "Bespoke acceptance" },
-  { event: "bespoke_rejected", label: "Bespoke rejection" },
+  { event: "bespoke_accepted", label: "Bespoke Accepted" },
+  { event: "bespoke_denied", label: "Bespoke Denied" },
 ];
 
 export const OfferKitSection = () => {

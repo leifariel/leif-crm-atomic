@@ -67,7 +67,7 @@ export type KitRequiredTag = {
     | "not_fit"
     | "offered_other_programme"
     | "bespoke_accepted"
-    | "bespoke_rejected";
+    | "bespoke_denied";
   kitTagId: number;
   kitTagName: string;
   done: boolean;
@@ -116,7 +116,7 @@ const KIT_DECISIONS = [
   "not_fit",
   "offered_other_programme",
   "bespoke_accepted",
-  "bespoke_rejected",
+  "bespoke_denied",
 ] as const;
 
 const TERMINAL_SOURCES = ["public_form", "manual"];

@@ -3891,7 +3891,7 @@ begin
   if old.status = 'pending'
      and new.status in (
        'approved', 'needs_higher_care', 'not_fit',
-       'offered_other_programme', 'bespoke_accepted', 'bespoke_rejected'
+       'offered_other_programme', 'bespoke_accepted', 'bespoke_denied'
      )
      and exists (
        select 1 from kit_sync_operations
@@ -4144,7 +4144,7 @@ begin
   end if;
   if p_event not in (
     'applicant', 'approved', 'needs_higher_care', 'not_fit',
-    'offered_other_programme', 'bespoke_accepted', 'bespoke_rejected'
+    'offered_other_programme', 'bespoke_accepted', 'bespoke_denied'
   ) then
     return jsonb_build_object('status', 'event-invalid');
   end if;
@@ -4169,10 +4169,10 @@ begin
        and m.kit_tag_id = p_kit_tag_id
        and m.event <> p_event
        and (
-         (p_event in ('bespoke_accepted', 'bespoke_rejected')
+         (p_event in ('bespoke_accepted', 'bespoke_denied')
             and m.event in ('approved', 'not_fit', 'offered_other_programme'))
          or (p_event in ('approved', 'not_fit', 'offered_other_programme')
-            and m.event in ('bespoke_accepted', 'bespoke_rejected'))
+            and m.event in ('bespoke_accepted', 'bespoke_denied'))
        )
   ) then
     return jsonb_build_object(
@@ -4564,7 +4564,7 @@ begin
   -- historical-import vocabulary and are not decisions anybody makes here.
   IF p_outcome NOT IN (
     'approved', 'needs_higher_care', 'not_fit', 'do_not_engage',
-    'offered_other_programme', 'bespoke_accepted', 'bespoke_rejected'
+    'offered_other_programme', 'bespoke_accepted', 'bespoke_denied'
   ) THEN
     RETURN jsonb_build_object('status', 'outcome-invalid', 'outcome', p_outcome);
   END IF;
@@ -4737,8 +4737,8 @@ begin
     UPDATE deals SET outcome = 'needs_higher_care' WHERE id = v_deal.id;
   ELSIF p_outcome = 'not_fit' THEN
     UPDATE deals SET outcome = 'not_fit' WHERE id = v_deal.id;
-  ELSIF p_outcome = 'bespoke_rejected' THEN
-    -- Rejected is rejected, and reads as the same exit everywhere that counts
+  ELSIF p_outcome = 'bespoke_denied' THEN
+    -- Denied is denied, and reads as the same exit everywhere that counts
     -- exits. Only the reply is different.
     UPDATE deals SET outcome = 'not_fit' WHERE id = v_deal.id;
   ELSE
@@ -5020,7 +5020,7 @@ language plpgsql
 set search_path to 'public'
 as $$
 declare
-  v_bespoke constant text[] := array['bespoke_accepted', 'bespoke_rejected'];
+  v_bespoke constant text[] := array['bespoke_accepted', 'bespoke_denied'];
   v_sending constant text[] := array['approved', 'not_fit', 'offered_other_programme'];
   v_clash text;
 begin

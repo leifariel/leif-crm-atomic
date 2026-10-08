@@ -11,7 +11,7 @@ import type { KitTagMapping } from "../types";
 //   needs_higher_care         the tag exists, but its automation is his to write
 //   offered_other_programme   a cross-programme message goes out through Kit
 //   bespoke_accepted /        answered personally, so nothing is attached and
-//   bespoke_rejected          nothing may be
+//   bespoke_denied          nothing may be
 //
 // So this never claims an email was sent, and never invents provider evidence.
 // It reports the risk the configuration implies, and nothing more.
@@ -39,7 +39,7 @@ const SENDS_EMAIL: string[] = [
   "offered_other_programme",
 ];
 
-const ANSWERED_BY_HAND: string[] = ["bespoke_accepted", "bespoke_rejected"];
+const ANSWERED_BY_HAND: string[] = ["bespoke_accepted", "bespoke_denied"];
 
 // A required tag already knows which event it is for, so the two surfaces that
 // offer "Add required tags" can ask about it without re-reading the mappings.

@@ -49,7 +49,7 @@ describe("a bespoke decision cannot send the standard email", () => {
     for (const event of [
       "offered_other_programme",
       "bespoke_accepted",
-      "bespoke_rejected",
+      "bespoke_denied",
     ]) {
       expect(MIGRATION).toContain(`'${event}'`);
       expect(TABLES).toContain(`'${event}'`);

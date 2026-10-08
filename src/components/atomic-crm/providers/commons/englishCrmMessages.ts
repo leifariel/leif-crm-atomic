@@ -366,8 +366,8 @@ export const englishCrmMessages = {
         do_not_engage: "Do Not Engage",
         offer_other_programme: "Offer %{programme}",
         bespoke_response: "Bespoke response",
-        bespoke_accepted: "Bespoke acceptance",
-        bespoke_rejected: "Bespoke rejection",
+        bespoke_accepted: "Bespoke Accepted",
+        bespoke_denied: "Bespoke Denied",
       },
       review: {
         summary_title: "Application Summary",

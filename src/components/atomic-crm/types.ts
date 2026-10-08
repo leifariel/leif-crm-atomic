@@ -274,7 +274,7 @@ export type ApplicationStatus =
   // rejected exactly as above; "bespoke" is the communication mode, which is
   // why there are two values rather than one unresolved "bespoke" state.
   | "bespoke_accepted"
-  | "bespoke_rejected"
+  | "bespoke_denied"
   | "denied"
   | "waitlist";
 

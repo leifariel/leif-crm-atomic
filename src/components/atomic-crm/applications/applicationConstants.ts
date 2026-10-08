@@ -15,8 +15,8 @@ export const applicationStatuses: {
   { value: "not_fit", label: "Not Fit" },
   { value: "do_not_engage", label: "Do Not Engage" },
   { value: "offered_other_programme", label: "Offered another programme" },
-  { value: "bespoke_accepted", label: "Bespoke acceptance" },
-  { value: "bespoke_rejected", label: "Bespoke rejection" },
+  { value: "bespoke_accepted", label: "Bespoke Accepted" },
+  { value: "bespoke_denied", label: "Bespoke Denied" },
   { value: "denied", label: "Denied (historical)" },
   { value: "waitlist", label: "Waitlisted (historical)" },
 ];
@@ -33,8 +33,8 @@ export const applicationStatusLabels: Record<ApplicationStatus, string> = {
   not_fit: "Not Fit",
   do_not_engage: "Do Not Engage",
   offered_other_programme: "Offered another programme",
-  bespoke_accepted: "Bespoke acceptance",
-  bespoke_rejected: "Bespoke rejection",
+  bespoke_accepted: "Bespoke Accepted",
+  bespoke_denied: "Bespoke Denied",
   denied: "Denied (historical)",
   waitlist: "Waitlisted (historical)",
 };
@@ -60,7 +60,7 @@ export const applicationStatusBadgeVariant: Record<
   do_not_engage: "destructive",
   offered_other_programme: "secondary",
   bespoke_accepted: "default",
-  bespoke_rejected: "secondary",
+  bespoke_denied: "secondary",
   denied: "secondary",
   waitlist: "outline",
 };
@@ -73,7 +73,7 @@ export const applicationStatusBadgeVariant: Record<
 // reviewApplication.ts). 'denied' joins this set (it IS a rejection);
 // 'waitlist' deliberately does NOT (no decision was made).
 //
-// 'bespoke_rejected' joins it, because a bespoke rejection is a rejection —
+// 'bespoke_denied' joins it, because a bespoke denial is a denial —
 // only the reply differs.
 //
 // 'offered_other_programme' deliberately does NOT. The set's question is
@@ -88,5 +88,5 @@ export const NON_APPROVED_TERMINAL_APPLICATION_STATUSES: ReadonlySet<Application
     "not_fit",
     "do_not_engage",
     "denied",
-    "bespoke_rejected",
+    "bespoke_denied",
   ]);
