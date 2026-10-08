@@ -574,6 +574,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/public-application/coreApplicationQuestions.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/public-application/PublicApplicationLayout.tsx",
           "type": "registry:component"
         },
