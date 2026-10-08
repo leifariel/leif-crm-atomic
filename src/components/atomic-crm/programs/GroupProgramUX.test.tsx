@@ -138,6 +138,46 @@ const buildTestCrm = () => {
   );
 };
 
+/**
+ * The "⋯" menu belonging to a NAMED card.
+ *
+ * These tests used to reach the Fall round's menu as menus[1], which was true
+ * only as long as nothing else on the page had one. The group programme then
+ * gained its own — its Kit automation had no route anywhere otherwise — and
+ * every index shifted by one. Nothing about what these tests assert changed;
+ * only what came before them on the page did, which is exactly the kind of
+ * coupling a position makes and a name does not.
+ *
+ * Walking UP from the card's own title stops at the first ancestor holding a
+ * menu, which is that card.
+ */
+const menuFor = (label: string): HTMLElement => {
+  const title = [...document.querySelectorAll("a, p, span, h2, h3")].find(
+    (element) => element.textContent?.trim() === label,
+  );
+  if (!title) throw new Error(`no card titled "${label}"`);
+  let node: HTMLElement | null = title as HTMLElement;
+  while (node && !node.querySelector('[aria-label="Program actions"]')) {
+    node = node.parentElement;
+  }
+  if (!node) throw new Error(`no actions menu for "${label}"`);
+  return node.querySelector('[aria-label="Program actions"]') as HTMLElement;
+};
+
+/**
+ * Where that menu sits among all of them, so the click can be a REAL one.
+ *
+ * A raw element.click() does not open a Radix dropdown — it opens on pointer
+ * events, and its trigger also stops propagation because the whole card is a
+ * link. So the NAME picks the menu and the index only carries it to a click
+ * the component actually responds to. The index is derived here, never
+ * written down.
+ */
+const menuIndexFor = (label: string): number =>
+  [...document.querySelectorAll('[aria-label="Program actions"]')].indexOf(
+    menuFor(label),
+  );
+
 describe("the Programs hub", () => {
   it("shows a group round's shared dates, seats and enrolled count", async () => {
     const screen = await render(buildTestCrm());
@@ -192,9 +232,12 @@ describe("the Programs hub", () => {
     await expect
       .element(screen.getByText("Growing Yourself Up — Fall 2026"))
       .toBeVisible();
-    // One per card: the 1:1 program and both rounds.
+    // One per thing that can be edited, archived or deleted: the 1:1
+    // programme, the group programme, and both of its rounds. The group
+    // programme joined this list when its own Offer form — and so its Kit
+    // automation — turned out to have no route anywhere on this page.
     const menus = screen.getByRole("button", { name: "Program actions" });
-    expect(await menus.all()).toHaveLength(3);
+    expect(await menus.all()).toHaveLength(4);
   });
 
   it("offers Edit, Archive and Delete", async () => {
@@ -229,11 +272,10 @@ describe("the Programs hub", () => {
       .element(screen.getByText("Growing Yourself Up — Fall 2026"))
       .toBeVisible();
 
-    const menus = await screen
+    await screen
       .getByRole("button", { name: "Program actions" })
-      .all();
-    // The Fall round's own menu — the group section follows the 1:1 one.
-    await menus[1]!.click();
+      .nth(menuIndexFor("Growing Yourself Up — Fall 2026"))
+      .click();
     await screen.getByRole("menuitem", { name: "Delete program" }).click();
 
     await expect
@@ -252,10 +294,10 @@ describe("the Programs hub", () => {
       .element(screen.getByText("Growing Yourself Up — January 2027"))
       .toBeVisible();
 
-    const menus = await screen
+    await screen
       .getByRole("button", { name: "Program actions" })
-      .all();
-    await menus[2]!.click();
+      .nth(menuIndexFor("Growing Yourself Up — January 2027"))
+      .click();
     await screen.getByRole("menuitem", { name: "Delete program" }).click();
 
     await expect
@@ -297,10 +339,10 @@ describe("the way out the refusal offers", () => {
       .element(screen.getByText("Growing Yourself Up — Fall 2026"))
       .toBeVisible();
 
-    const menus = await screen
+    await screen
       .getByRole("button", { name: "Program actions" })
-      .all();
-    await menus[1]!.click();
+      .nth(menuIndexFor("Growing Yourself Up — Fall 2026"))
+      .click();
     await screen.getByRole("menuitem", { name: "Delete program" }).click();
 
     await expect

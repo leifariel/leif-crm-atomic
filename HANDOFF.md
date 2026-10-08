@@ -4352,11 +4352,60 @@ cannot decide whether the rule holds. Neither can be bypassed by
 existing "no mapping is a refusal, never a guess" posture. The decision still
 records correctly and still leaves Needs Review; only the tag is absent.
 
+### The Kit box existed and had no door — found at configuration time
+
+Leif could not map the six tags, and the instruction I gave was wrong about
+where to go.
+
+**The box is on the Offer's own EDIT form** (`OfferInputs` →
+`OfferKitSection`), not on the programme page and not on the Offer SHOW page.
+On the Programs hub a **1:1** programme renders an `IndividualProgramCard`
+whose "⋯" menu carries **Edit program** → `/offers/:id`, so The Living Example
+was always configurable. A **group** programme rendered as a bare text link to
+its own page. Its ROUNDS had menus, and those route to `/cohorts/:id` — a
+different form with a different, round-level Kit field. `GroupProgramPage` has
+no edit affordance either.
+
+So **Growing Yourself Up's programme-level Kit mapping had no route anywhere
+in the Programs UI.** The only way in was the avatar menu's Offers list, which
+its own code describes as "administrative/reference UI: low-prominence by
+design". That is a product defect, not a documentation slip — my navigation
+was wrong, and the destination was unreachable for the programme that needed
+it.
+
+**The repair is the sibling's own affordance, not a new one.** The group
+programme's heading row now carries the same `ProgramCardMenu` the 1:1 card
+has, pointing at `/offers/:id`. One component, one menu, one answer to the
+same question about the same kind of record — no Kit settings redesign.
+
+Verified in the real built app against real Postgres: Programs → Growing
+Yourself Up → ⋯ → Edit program → `#/offers/2`, name filled in, the **Kit
+automation** box showing Applicant, Approved, Needs Higher Care and Not Fit
+already mapped and **Offered the other programme**, **Bespoke Accepted** and
+**Bespoke Denied** reading "Not set" with a **Choose** button, under the
+honest aside "Kit automation not fully configured".
+
+**Two things the tests taught, both kept.**
+
+- A structural assertion I wrote first — "the programme's heading row has an
+  actions menu" — PASSED with the repair reverted, because the heading's
+  parent also contains the round cards and a round has a menu of its own. It
+  was the exact confusion it was written to guard against. Removed rather than
+  left: a test that cannot fail for its own reason is worse than none, and the
+  behavioural test beside it does fail without the repair.
+- `GroupProgramUX.test.tsx` reached the Fall round's menu as `menus[1]`, and
+  every index shifted when the programme gained one. Those three tests now
+  find a menu by the card's NAME and derive the index from it, so what comes
+  before them on the page cannot move them again. The click still goes through
+  the framework, because a raw `element.click()` does not open a Radix
+  dropdown.
+
 ### MANUAL STEP STILL OUTSTANDING — map the six, after deploy
 
-The tags exist in Kit; the CRM does not yet know their ids. Map them on each
-programme's own page: **Programmes → the offer → Kit automation**, which now
-lists the three new events. Six mappings, two programmes:
+The tags exist in Kit; the CRM does not yet know their ids. **Programs → the
+programme's "⋯" menu → Edit program → the Kit automation box.** That is the
+route for BOTH programmes now; before the repair above it existed only for
+The Living Example. Six mappings, two programmes:
 
 - The Living Example: `LE_Offered_GYU`, `LE_Bespoke_Accepted`, `LE_Bespoke_Denied`
 - Growing Yourself Up: `GYU_Offered_LE`, `GYU_Bespoke_Accepted`, `GYU_Bespoke_Denied`

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { CohortCapacityCard } from "../dashboard/CohortCapacityCard";
 import type { Cohort, Offer } from "../types";
 import { IndividualProgramCard } from "./IndividualProgramCard";
+import { ProgramCardMenu } from "./ProgramCardMenu";
 import { NewProgramDialog } from "./NewProgramDialog";
 import { NEW_BUSINESS_OFFERS_FILTER } from "../offers/newBusinessOffers";
 
@@ -109,12 +110,34 @@ export const ProgramsPage = () => {
           <div className="flex flex-col gap-4">
             {groupOffers.map((offer) => (
               <div key={offer.id} className="flex flex-col gap-2">
-                <Link
-                  to={`/programs/group/${offer.id}`}
-                  className="text-base font-medium text-muted-foreground hover:underline w-fit"
-                >
-                  {offer.name}
-                </Link>
+                {/* The programme itself, and its own actions.
+                    A group programme used to be a bare heading here while
+                    its 1:1 siblings carried a "⋯" menu with Edit program on
+                    it — so The Living Example's Kit automation (and
+                    everything else on its Offer form) was configurable and
+                    Growing Yourself Up's was not reachable from this page at
+                    all. Its ROUNDS have menus, and those route to the round's
+                    form, which is a different thing with a different Kit
+                    field. The same menu, because it is the same question
+                    being asked of the same kind of record. */}
+                <div className="flex items-center gap-1">
+                  <Link
+                    to={`/programs/group/${offer.id}`}
+                    className="text-base font-medium text-muted-foreground hover:underline w-fit"
+                  >
+                    {offer.name}
+                  </Link>
+                  <ProgramCardMenu
+                    resource="offers"
+                    id={offer.id}
+                    name={offer.name}
+                    editPath={`/offers/${offer.id}`}
+                    // A programme leaves active use by being deactivated,
+                    // exactly as a 1:1 one does.
+                    archive={{ is_active: false }}
+                    archived={offer.is_active === false}
+                  />
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
                   {(cohortsByOffer.get(String(offer.id)) ?? []).map(
                     (cohort) => (
