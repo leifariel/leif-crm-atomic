@@ -10,7 +10,8 @@ authority. Where this prose disagrees with them, they win — say so rather than
 quietly picking one.**
 
 **Where things stand right now (2026-10-08).** `origin/main` is at
-`89f92678`, production holds **156 migrations**, and nothing is unpushed.
+`38a2fd3c`, production holds **156 migrations**, and one slice sits locally
+unpushed (§8f, which brings the repository to **157**).
 **GYU APPLICATION QUESTION PARITY is production-accepted** (§8e), after
 Applications + Clients information architecture (§8d) and the testimonial /
 offboarding work (§8b-testimonial-built). Two things stay deliberately parked
@@ -18,14 +19,14 @@ and must not be touched, committed, pushed or deployed: the payment commit
 `c9dcc918` on `capacity-waitlist`, and the Application Form Builder, which
 lives uncommitted in the main checkout's working tree (§8b-builder).
 
-**The queue is Leif's, in this order:** (1) application decision expansion —
-LE offers GYU and GYU offers LE, with their own Kit tags and cross-programme
-emails, plus a Bespoke Acceptance / Bespoke Rejection that sends no automated
-email; (2) sales-call workflow polish — passed-but-unlogged calls stay at the
+**Application decision expansion is BUILT and NOT YET DEPLOYED** (§8f): it
+needs six Kit tags Leif creates by hand before the two cross-programme emails
+can go anywhere, and the two email drafts are hers to edit. **The queue after
+it:** (1) sales-call workflow polish — passed-but-unlogged calls stay at the
 top reading "Call passed", a call-impressions / reminders field saved
 atomically with the outcome as call-specific history rather than a loose note,
 and editing a completed outcome including No-show → Attended with its
-downstream consequences reconciled safely; (3) Gmail (§9).
+downstream consequences reconciled safely; (2) Gmail (§9).
 
 ---
 
@@ -4104,6 +4105,225 @@ parent record for every reference. For a deal that was a no-op; for any
 parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
+
+## 8f. Application decision expansion — BUILT, NOT YET DEPLOYED (2026-10-08)
+
+Two decisions an Application review could not record. Migration
+`20261008140000`, deterministic, 157 total.
+
+**OFFERING THE OTHER PROGRAMME IS NOT A REJECTION.** Leif is willing to work
+with this person; she thinks the other programme suits them better. The two
+halves that have to coexist:
+
+- **The Application keeps saying what they applied for** — `offer_id`,
+  `intended_cohort_id`, the questions, the answers, `submitted_at`, `source`.
+  None of them is in any UPDATE the decision performs, and a contract test
+  says so.
+- **The sales path moves, on the SAME Opportunity.** `deals.offer_id` becomes
+  the recommended programme, stage `approved`, outcome cleared — that
+  programme's approved path. Nothing creates a second Opportunity.
+
+**The invariant was already there.** `enforce_application_opportunity_agreement()`
+refuses an Application whose offer disagrees with its Opportunity's **unless a
+`deal_offer_events` row records the Opportunity moving AWAY from it**; its own
+hint says a recorded programme change is what "makes the original application
+legal history". So this reuses that escape clause rather than building a second
+redirect architecture. Without the event row, "Correct application" on a
+redirected record would have failed with a raw database exception — proved in a
+clean-room probe before the UI existed.
+
+`deal_offer_events` is **closed to `authenticated`** (forging offer history is
+how a disagreement could be made to look legal), so the row is written by a
+SECURITY DEFINER trigger on `deals` as a consequence of a decision that is
+already recorded — the same posture as `enqueue_kit_application_decision()`, and
+revoked from every role the same way. The two programme-change authorities stay
+**disjoint by construction**: `transfer_enrolled_opportunity_offer()` requires
+an Enrollment and this refuses to run beside one.
+
+**Direction is never asked for.** The destination is the one OTHER `is_active`
+programme — so `1:1 Coaching (Legacy)` is never a candidate — and both layers
+**refuse rather than guess** if that is ever not exactly one
+(`recommendation-ambiguous`, and the button simply is not offered). A
+destination becomes part of somebody's history the moment it is recorded.
+
+Three refusals, all checked **before the first write**, so a refusal still
+means nothing happened: `recommendation-ambiguous`, `already-enrolled` (moving
+an enrolled client carries a checklist and is the client page's job), and
+`scholarship-held` (`handle_deal_saved()` refuses an offer change while a
+scholarship place is held — named here so the page can say why instead of
+showing a raised exception).
+
+**BESPOKE IS A COMMUNICATION MODE, NOT A NEW ELIGIBILITY MEANING.**
+`bespoke_accepted` writes the same shape `approved` does (stage `approved`,
+outcome cleared, the operational approved path untouched); `bespoke_rejected`
+writes `outcome = 'not_fit'` and leaves the stage where it is. Two values
+rather than one, because "bespoke" on its own would be an unresolved state
+sitting in a queue that only knows decided from undecided.
+
+### The queue was not taught a new vocabulary
+
+Everything new leaves Needs Review because it sets a status that is not
+`pending` and stamps `reviewed_at` — which is all `classifyApplication()` and
+`applications_awaiting_review` have ever asked. Neither mentions the new
+names, and a contract test asserts they do not. The processed set is therefore
+Approved, Needs Higher Care, Not a Fit, Do Not Engage, Offered the other
+programme, Bespoke acceptance, Bespoke rejection.
+
+### A bespoke decision cannot send the standard email — twice over
+
+1. **Its own Kit event.** `kit_tag_mappings` is keyed `(offer_id, event)` and
+   the event name IS the status, so `enqueue_kit_application_decision()` passes
+   `new.status` straight through: there is no mapping step where a bespoke
+   decision could be translated into `approved`. The approved / not_fit tags an
+   automation may hang off are simply not the tags it applies.
+2. **It may not share a tag either.** Forcing `followup_mode = 'manual_email'`
+   says what the CRM will TELL Leif; it does not stop the TAG being the one an
+   approval automation hangs off. Mapping `bespoke_accepted` to
+   `MiniDD_Approved` would have sent the standard letter to somebody she meant
+   to answer personally while `followup_mode` sat there reading "manual_email".
+   **Found by probing the first implementation, not by reasoning about it.**
+   Kit's topology is unreadable from here, so `enforce_bespoke_kit_separation()`
+   refuses what the CRM CAN see: a bespoke decision sharing a tag with the same
+   programme's `approved`, `not_fit` or `offered_other_programme` event — in
+   **both** directions, so the order the two mappings are configured in cannot
+   decide whether the rule holds. `set_program_kit_tag()` returns the readable
+   `tag-already-used-by-another-decision`; the trigger is the last word even
+   for `service_role`.
+
+`do_not_engage` still has no Kit event at all, and still reaches no tag.
+
+### Decisions are NOT editable, and this slice did not make them so
+
+Audited and reported rather than built. `review_application()` refuses a
+non-pending Application (`already-reviewed`), and `ApplicationEditDialog`
+deliberately excludes `status` and `reviewed_at` — its own comment says a
+status changed there "would be a decision with no moment attached". There is
+no reconciliation behaviour to extend, so the new decisions inherit the same
+one-way door. **Correcting a decision is its own slice** and is not started
+here.
+
+### WAITING ON LEIF — the six Kit tags
+
+Nothing automated can create these: the CRM applies tags, it never invents
+them, and `kit_tag_mappings` needs a real `kit_tag_id`. The exact names, each
+following its own programme's existing convention (`MiniDD_` + PascalCase;
+`GYU-` + PascalCase):
+
+| Programme | Event | Tag |
+|---|---|---|
+| The Living Example | Offered the other programme | `MiniDD_OfferedGYU` |
+| | Bespoke acceptance | `MiniDD_BespokeAcceptance` |
+| | Bespoke rejection | `MiniDD_BespokeRejection` |
+| Growing Yourself Up | Offered the other programme | `GYU-OfferedMiniDD` |
+| | Bespoke acceptance | `GYU-BespokeAcceptance` |
+| | Bespoke rejection | `GYU-BespokeRejection` |
+
+Attach the cross-programme email automation to the two `Offered` tags.
+**Attach nothing to the four bespoke tags** — that is their whole purpose.
+Then map them on each programme's own page (Programmes → the offer → Kit
+automation), which now lists the three new events.
+
+`followup_mode` / `automation_name` still have no editing UI — pre-existing,
+recorded in §8b-kit. Bespoke mappings set themselves to `manual_email`; the
+two `Offered` mappings will read "none" until a migration records the
+automation name Leif gives them.
+
+### The two cross-programme emails — DRAFTS, Leif's to edit
+
+Drafted from the only applicant-facing copy the repository holds (the two
+public application pages). **The existing Approved / Not Fit / Needs Higher
+Care copy lives in Kit, not here, so it could not be read** — these match the
+voice of the forms, not of the letters they will sit beside. Substance is
+Leif's to correct before pasting into Kit.
+
+**The Living Example → Growing Yourself Up**
+
+> Subject: Your Living Example application — a thought
+>
+> Hi {{ subscriber.first_name }},
+>
+> Thank you for applying for The Living Example, and for answering as openly
+> as you did. I read everything you sent.
+>
+> After sitting with it, one-to-one isn't where I'd start you. What you
+> described tends to shift fastest alongside other people doing the same work —
+> being seen while you change, rather than only talking about changing. That's
+> what Growing Yourself Up is built for, and it's where I think working with me
+> would do the most for you right now.
+>
+> This isn't a smaller version of what you applied for. It's a different way
+> in, and for what you're carrying I believe it's the better one.
+>
+> Here's where you can read about it and apply for the current round:
+> [link to the current cohort's application]
+>
+> If you'd rather talk it through first, just reply and tell me — I'm glad to.
+>
+> Leif
+
+**Growing Yourself Up → The Living Example**
+
+> Subject: Your Growing Yourself Up application — a thought
+>
+> Hi {{ subscriber.first_name }},
+>
+> Thank you for applying for Growing Yourself Up, and for answering as openly
+> as you did. I read everything you sent.
+>
+> What stands out is how particular this is to you — its shape, and the pace it
+> will want to move at. A group round is built to hold a shared arc, and I
+> don't think that's where this gets the attention it deserves.
+>
+> So rather than place you in the cohort, I'd like to offer you my one-to-one
+> work instead: The Living Example. That's where I can give this the room it
+> needs, and I believe I can meet you there.
+>
+> Here's where you can read about it and apply:
+> https://crm.leifariel.com/#/apply/living-example
+>
+> If you'd like to talk it through first, just reply and we'll find a time.
+>
+> Leif
+
+**One operational consequence:** the GYU application link is **per cohort**
+(`/#/apply/growing-yourself-up/<cohortId>`), so the LE → GYU email has to be
+re-pointed each round. LE's link is stable. Copy Application Link on the cohort
+gives the current one.
+
+### Proof
+
+- `applicationDecisionExpansion.test.ts` — 11 tests on the domain action,
+  including every refusal leaving the record untouched.
+- `applicationDecisionUx.test.tsx` — 7 tests: the button names the
+  destination, says nothing when the destination is ambiguous, confirms before
+  recommending, offers bespoke as one menu with two endings, and prints
+  "Applied for" beside "Decision" only where the two differ.
+- `contracts/applications/aBespokeDecisionSendsNothing.test.ts` — 15 pinned
+  assertions against the repository's own text.
+- `e2e/applicationDecisionExpansion.spec.ts` — **10 tests, real built app,
+  real Postgres, independent SQL read-back, fresh browser**: both directions,
+  all four bespoke combinations, and Approved / NHC / Not Fit / DNE unchanged.
+  **No real Kit call is possible** — `KIT_API_KEY` does not exist in the clean
+  room and `kit_sync` returns before claiming work without it, so every
+  operation stays exactly as the database enqueued it, which is what makes the
+  intent readable.
+
+**One finding worth keeping.** The suite went green on chromium and those two
+recommendation tests failed on **Mobile Chrome**, which runs after every
+chromium file, with the "Offer …" button simply absent. Nothing was wrong with
+the page: `offers` is reference data resetDb deliberately does not clear, so
+another spec's programme was still active and the product correctly stopped
+offering a recommendation it could no longer resolve unambiguously. The spec
+now OWNS that premise — foreign active programmes are set aside for its
+duration and restored afterwards — and asserts it with the offending
+programmes named, so a future failure says what it found. A viewport cannot
+change a decision; a shared catalogue can.
+
+Sensitivity proved by breaking it three ways: letting the recommendation
+rewrite `applications.offer_id` (2 tests fail), collapsing bespoke into the
+ordinary risk class (2 tests fail), and disabling the normalising trigger so
+the constraint has to speak for itself (`REFUSED by constraint:
+kit_tag_mappings_bespoke_is_manual_check`).
 
 ## 8e. Growing Yourself Up asks The Living Example's questions — PRODUCTION ACCEPTED 2026-10-08
 
