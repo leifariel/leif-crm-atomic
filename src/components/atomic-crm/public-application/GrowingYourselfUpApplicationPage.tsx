@@ -5,11 +5,9 @@ import type { PublicOfferContext } from "./publicOfferContext";
 import { PublicApplicationLayout } from "./PublicApplicationLayout";
 import { ApplicationUnavailableNotice } from "./ApplicationUnavailableNotice";
 import { usePublicOfferContext } from "./usePublicOfferContext";
-import {
-  PublicApplicationForm,
-  type ApplicationQuestion,
-} from "./PublicApplicationForm";
+import { PublicApplicationForm } from "./PublicApplicationForm";
 import { NotFoundNotice } from "./NotFoundNotice";
+import { coreApplicationQuestions } from "./coreApplicationQuestions";
 
 // Real Growing Yourself Up Application copy (Real LE + GYU Application
 // Forms slice, Phase 4; corrected in human-acceptance round 1). Wording is
@@ -21,42 +19,26 @@ import { NotFoundNotice } from "./NotFoundNotice";
 // Example key (Phase 6: "no collisions between offer question sets") and
 // stay stable across round 1's wording corrections — no unnecessary
 // answer-key churn.
-const QUESTIONS: ApplicationQuestion[] = [
-  {
-    key: "gyu_biggest_challenge",
-    label:
-      "What's the biggest challenge you're facing in your personal growth and healing?",
-    required: true,
-  },
-  {
-    key: "gyu_why_now",
-    label: (
-      <>
-        Why are you ready for support and change <em>now</em>?
-      </>
-    ),
-    required: true,
-  },
-  {
-    key: "gyu_hoped_outcome",
-    label:
-      "What are you hoping this program with Leif helps you create in your life and relationships?",
-    required: true,
-  },
-  {
-    // Final human-acceptance tweak: the same treatment as LE's
-    // le_commitment_scale — no `inputType: "short"`, so this renders as
-    // the standard Textarea rather than a single-line field. Leif doesn't
-    // want either commitment-scale question to read as numeric-only;
-    // applicants may answer "8 — I'm ready, but finances are the
-    // concern." and need room for that context. Question wording and key
-    // are unchanged.
-    key: "gyu_commitment_scale",
-    label:
-      "On a scale from 1–10, how ready are you to make a time, financial, and personal commitment to the change you want?",
-    required: true,
-  },
-];
+// The core questions, now shared with The Living Example
+// (coreApplicationQuestions.ts).
+//
+// This form used to ask four bare questions of its own with no descriptions
+// under them, and it produced short, low-information applications while LE's
+// five described questions produced much richer ones. Leif's decision: ask
+// LE's questions, exactly.
+//
+// GYU IS STILL GYU. The "gyu" prefix keeps the keys offer-namespaced, and
+// everything around the questions — the cohort route, intended_cohort_id,
+// the destination, the decision workflow, Kit, the cohort-specific Copy
+// Application Link — is untouched. What is shared is the question set, not
+// the programme.
+//
+// The four retired keys (gyu_biggest_challenge, gyu_why_now,
+// gyu_hoped_outcome) keep their historical answers and their own snapshotted
+// wording in application_responses; nothing rewrites them. gyu_commitment_scale
+// is reused, because it is the same question reworded — which is how round 1's
+// wording corrections were handled too.
+const QUESTIONS = coreApplicationQuestions("gyu");
 
 // /apply/growing-yourself-up/:cohortId — route-driven Cohort context
 // (§2B): a new Cohort never needs a new hardcoded page, only a new row.

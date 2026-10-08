@@ -38,9 +38,22 @@ export default defineConfig({
   },
 
   /* Configure projects for major browsers */
+  //
+  // A submitted Application is PERMANENT by design: materialize_native_
+  // application_responses() writes application_responses in the same
+  // transaction, and that table refuses DELETE even by cascade. So a spec that
+  // submits a real public application leaves rows resetDb cannot clear, and
+  // every spec after it fails with "application_responses is an immutable
+  // submission record".
+  //
+  // Those specs therefore live in their own project which runs LAST (projects
+  // run in declaration order, and workers: 1 keeps that honest), and the two
+  // ordinary projects ignore them. They stay part of `npx playwright test`, so
+  // this is isolation rather than an exemption.
   projects: [
     {
       name: "chromium",
+      testIgnore: /.*\.submission\.spec\.ts/,
       use: {
         ...devices["Desktop Chrome"],
         ...(process.env.CI && { channel: "chromium-headless-shell" }),
@@ -50,8 +63,19 @@ export default defineConfig({
     /* Test against mobile viewports. */
     {
       name: "Mobile Chrome",
+      testIgnore: /.*\.submission\.spec\.ts/,
       use: {
         ...devices["Pixel 5"],
+        ...(process.env.CI && { channel: "chromium-headless-shell" }),
+      },
+    },
+
+    // Last, and deliberately so — see the note above.
+    {
+      name: "submission",
+      testMatch: /.*\.submission\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
         ...(process.env.CI && { channel: "chromium-headless-shell" }),
       },
     },

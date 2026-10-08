@@ -2,11 +2,9 @@ import type { PublicApplicationDataSource } from "./publicApplicationDataSource"
 import { PublicApplicationLayout } from "./PublicApplicationLayout";
 import { ApplicationUnavailableNotice } from "./ApplicationUnavailableNotice";
 import { usePublicOfferContext } from "./usePublicOfferContext";
-import {
-  PublicApplicationForm,
-  type ApplicationQuestion,
-} from "./PublicApplicationForm";
+import { PublicApplicationForm } from "./PublicApplicationForm";
 import { NotFoundNotice } from "./NotFoundNotice";
+import { coreApplicationQuestions } from "./coreApplicationQuestions";
 
 // Real Living Example / "The Living Example Application" copy (Real LE +
 // GYU Application Forms slice, Phase 3; corrected in human-acceptance
@@ -17,49 +15,18 @@ import { NotFoundNotice } from "./NotFoundNotice";
 // raw_answers live in unrelated rows regardless (Phase 6: "no collisions
 // between offer question sets"). Keys stay stable across round 1's
 // wording corrections — no unnecessary answer-key churn.
-const QUESTIONS: ApplicationQuestion[] = [
-  {
-    key: "le_main_pattern",
-    label:
-      "What's the main pattern, emotion, or relationship dynamic you're struggling with right now?",
-    helperText: "(Be specific—what keeps happening?)",
-    required: true,
-  },
-  {
-    key: "le_prior_attempts",
-    label: "What have you already tried to change or shift this?",
-    helperText: "(Working with a therapist, meditation, personal work, etc.)",
-    required: true,
-  },
-  {
-    key: "le_hoped_change",
-    label: "How are you hoping to change through working together?",
-    helperText: "(Be as real as possible)",
-    required: true,
-  },
-  {
-    key: "le_hoped_support",
-    label: "How are you hoping I will support you?",
-    helperText: "(What does “support” mean to you?)",
-    required: true,
-  },
-  {
-    // Human-acceptance round 4: Leif does NOT want this constrained to a
-    // numeric-only/single-line-feeling input — applicants may answer
-    // "10 — but I'm scared of the money!" and need room for that context.
-    // No `inputType: "short"` here (unlike GYU's equivalent scale
-    // question) so this renders as the normal Textarea, same as every
-    // other LE question — no numeric validation exists anywhere in this
-    // form to begin with (the "short" variant was always a plain text
-    // Input, never type="number"), so this is purely a UI-affordance
-    // change, not a validation change.
-    key: "le_commitment_scale",
-    label:
-      "On a scale of 1–10, how committed are you to changing this pattern/way-of-being?",
-    helperText: "(Time commitment, financial commitment, personal commitment)",
-    required: true,
-  },
-];
+// The core questions, which LE has always asked and which are now shared
+// with Growing Yourself Up (coreApplicationQuestions.ts). The "le" prefix
+// reproduces this form's existing keys exactly — le_main_pattern and the
+// rest — so no stored answer key changes.
+//
+// Previous rounds of Leif's own corrections are preserved in that module,
+// because the strings there were extracted from this file rather than
+// retyped: round 1's "mediation" -> "meditation" and reworded Question 4,
+// and round 4's decision that the commitment-scale question renders as a
+// normal Textarea so an applicant can answer "10 — but I'm scared of the
+// money!" and have room for it.
+const QUESTIONS = coreApplicationQuestions("le");
 
 // /apply/living-example — the native public application form for the
 // individual 1:1 Offer (§2A). The Offer is discovered the same way the

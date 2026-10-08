@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { coreApplicationQuestions } from "../public-application/coreApplicationQuestions";
 import { render } from "vitest-browser-react";
 import { page } from "vitest/browser";
 import { memoryStore, type AuthProvider } from "ra-core";
@@ -196,21 +197,26 @@ const fillLivingExampleQuestions = async (
   await screen.getByLabelText(/^On a scale of 1–10/).fill("8");
 };
 
-// Every real GYU question is required too (Phase 4).
+// Growing Yourself Up now asks The Living Example's questions (Leif's
+// decision: his GYU form asked four bare questions and produced short, low
+// information applications). Driven from the shared set rather than typed
+// labels, so a change to the questions cannot leave this test behind — only
+// the KEYS differ between the two programmes, and that is asserted below.
 const fillGrowingYourselfUpQuestions = async (
   screen: Awaited<ReturnType<typeof renderPublicRoute>>,
   filler: string,
 ) => {
-  await screen
-    .getByLabelText(/^What's the biggest challenge/)
-    .fill(`${filler} — biggest challenge.`);
-  await screen
-    .getByLabelText(/^Why are you ready/)
-    .fill(`${filler} — why now.`);
-  await screen
-    .getByLabelText(/^What are you hoping this program/)
-    .fill(`${filler} — hoped outcome.`);
-  await screen.getByLabelText(/^On a scale from 1–10/).fill("8");
+  for (const [index, question] of coreApplicationQuestions("gyu").entries()) {
+    await screen
+      .getByLabelText(
+        new RegExp(
+          `^${String(question.label)
+            .slice(0, 30)
+            .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+        ),
+      )
+      .fill(`${filler} — answer ${index + 1}.`);
+  }
 };
 
 describe("Public /apply routes — unauthenticated access + shared demo state", () => {
@@ -340,17 +346,21 @@ describe("Public /apply routes — unauthenticated access + shared demo state", 
       },
     );
     expect(applications).toHaveLength(1);
-    // All four real GYU keys landed in raw_answers — and none of the LE
-    // keys, proving the two question sets never cross-contaminate
-    // (Phase 6: "no collisions between offer question sets").
+    // Every GYU key landed in raw_answers — and NOT the Living Example keys,
+    // even though the two forms now ask the identical questions. The shared
+    // thing is the question set, not the programme: a GYU answer must never
+    // report itself as an LE one ("no collisions between offer question
+    // sets").
+    const gyuKeys = coreApplicationQuestions("gyu").map((q) => q.key);
     expect(Object.keys(applications[0].raw_answers).sort()).toEqual(
-      [
-        "gyu_biggest_challenge",
-        "gyu_why_now",
-        "gyu_hoped_outcome",
-        "gyu_commitment_scale",
-      ].sort(),
+      [...gyuKeys].sort(),
     );
+    for (const key of Object.keys(applications[0].raw_answers)) {
+      expect(key.startsWith("gyu_"), key).toBe(true);
+    }
+    for (const leKey of coreApplicationQuestions("le").map((q) => q.key)) {
+      expect(applications[0].raw_answers).not.toHaveProperty(leKey);
+    }
 
     const adminScreen = await renderAdminRoute(dataProvider, "/applications");
     await expect

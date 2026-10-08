@@ -8,6 +8,7 @@ import type { Cohort, Offer } from "../types";
 import { createDataProviderPublicApplicationDataSource } from "./publicApplicationDataSource";
 import { LivingExampleApplicationPage } from "./LivingExampleApplicationPage";
 import { GrowingYourselfUpApplicationPage } from "./GrowingYourselfUpApplicationPage";
+import { coreApplicationQuestions } from "./coreApplicationQuestions";
 
 // Real LE + GYU Application Forms slice, Phase 8 — proves the real
 // questionnaire content (not the FakeRest/dev domain logic, already
@@ -173,7 +174,7 @@ describe("LivingExampleApplicationPage — Apply to Chat with Leif content", () 
 });
 
 describe("GrowingYourselfUpApplicationPage — real Application content", () => {
-  it("shows the real title/intro and exactly the four real questions, each required, with no Phone field, copy corrected per round 1", async () => {
+  it("shows the real title/intro and The Living Example question set, each required, with no Phone field", async () => {
     const dataSource = buildDataSource();
     const screen = await render(
       <MemoryRouter
@@ -218,25 +219,26 @@ describe("GrowingYourselfUpApplicationPage — real Application content", () => 
       .element(screen.getByLabelText(/Phone/))
       .not.toBeInTheDocument();
 
-    // Copy corrected per round 1: "you're facing" (not "your facing"),
-    // "this program with Leif" (not "with program with Leif"), en dash
-    // "1–10" (not hyphen "1-10").
-    const gyuQuestions = [
-      "What's the biggest challenge you're facing in your personal growth and healing?",
-      "Why are you ready for support and change now?",
-      "What are you hoping this program with Leif helps you create in your life and relationships?",
-      "On a scale from 1–10, how ready are you to make a time, financial, and personal commitment to the change you want?",
-    ];
-    for (const question of gyuQuestions) {
+    // Leif's decision: this form asks The Living Example's questions, with
+    // their descriptions. Its own four bare questions produced short,
+    // low-information applications. The wording lives in
+    // coreApplicationQuestions.ts and is asserted against the shared set
+    // itself, so a change to LE cannot leave this page behind.
+    for (const question of coreApplicationQuestions("gyu")) {
       await expect
-        .element(screen.getByText(question, { exact: false }))
+        .element(screen.getByText(question.label as string, { exact: false }))
+        .toBeInTheDocument();
+      // The little description under it, which is the whole reason LE's
+      // answers are richer.
+      await expect
+        .element(screen.getByText(question.helperText!, { exact: false }))
         .toBeInTheDocument();
     }
 
-    // Final human-acceptance tweak: same free-text treatment as LE's
-    // commitment question — a real <textarea>, not a single-line <input>,
-    // and it actually accepts contextual text with punctuation/Unicode.
-    const gyuCommitmentField = screen.getByLabelText(/^On a scale from 1–10/);
+    // Same free-text treatment as on LE — a real <textarea>, not a
+    // single-line <input> — and it accepts contextual text with
+    // punctuation/Unicode.
+    const gyuCommitmentField = screen.getByLabelText(/^On a scale of 1–10/);
     expect((gyuCommitmentField.element() as HTMLElement).tagName).toBe(
       "TEXTAREA",
     );
@@ -247,36 +249,61 @@ describe("GrowingYourselfUpApplicationPage — real Application content", () => 
       .element(gyuCommitmentField)
       .toHaveValue("8 — I’m ready, but finances are the concern.");
 
-    // "now" renders as its own italic (<em>) element within Question 2 —
-    // proven semantically (a real <em> element with that exact text),
-    // not via raw HTML injection.
-    const nowEl = screen.getByText("now", { exact: true });
-    await expect.element(nowEl).toBeInTheDocument();
-    expect((nowEl.element() as HTMLElement).tagName).toBe("EM");
+    // The retired questions are gone from the live form. Their historical
+    // answers are untouched — application_responses snapshots the wording
+    // that was actually asked, which is what makes replacing the live set
+    // safe at all.
+    for (const retired of [
+      "What's the biggest challenge you're facing in your personal growth and healing?",
+      "Why are you ready for support and change",
+      "What are you hoping this program with Leif helps you create in your life and relationships?",
+      "On a scale from 1–10, how ready are you to make a time, financial, and personal commitment",
+    ]) {
+      await expect
+        .element(screen.getByText(retired, { exact: false }))
+        .not.toBeInTheDocument();
+    }
+  });
 
-    // The old (round-1-superseded) wording is gone.
-    await expect
-      .element(
-        screen.getByText(
-          "What's the biggest challenge your facing in your personal growth and healing?",
-        ),
-      )
-      .not.toBeInTheDocument();
-    await expect
-      .element(
-        screen.getByText(
-          "What are you hoping with program with Leif helps you create in your life and relationships?",
-        ),
-      )
-      .not.toBeInTheDocument();
+  it("asks exactly the same substantive questions as The Living Example", async () => {
+    // The parity that must survive the next change to either form: same
+    // wording, same descriptions, same order, same requiredness, and keys
+    // that differ ONLY by their programme prefix.
+    const le = coreApplicationQuestions("le");
+    const gyu = coreApplicationQuestions("gyu");
 
-    // None of the Living Example questions leak into this page.
-    await expect
-      .element(
-        screen.getByText(
-          "What have you already tried to change or shift this?",
-        ),
-      )
-      .not.toBeInTheDocument();
+    expect(gyu).toHaveLength(le.length);
+    expect(le.length).toBeGreaterThan(0);
+
+    for (const [index, leQuestion] of le.entries()) {
+      const gyuQuestion = gyu[index];
+      expect(gyuQuestion.label, `question ${index + 1} wording`).toBe(
+        leQuestion.label,
+      );
+      expect(gyuQuestion.helperText, `question ${index + 1} description`).toBe(
+        leQuestion.helperText,
+      );
+      expect(gyuQuestion.required, `question ${index + 1} requiredness`).toBe(
+        leQuestion.required,
+      );
+      // Same input affordance: neither form constrains these to a
+      // single-line field.
+      expect(gyuQuestion.inputType, `question ${index + 1} input type`).toBe(
+        leQuestion.inputType,
+      );
+      // Offer-namespaced keys: identical but for the prefix, so a GYU
+      // answer never reports itself as a Living Example one.
+      expect(leQuestion.key.startsWith("le_")).toBe(true);
+      expect(gyuQuestion.key.startsWith("gyu_")).toBe(true);
+      expect(gyuQuestion.key.replace(/^gyu_/, "")).toBe(
+        leQuestion.key.replace(/^le_/, ""),
+      );
+    }
+
+    // And every description is really there: a question set that silently
+    // lost its helper text would be the original complaint all over again.
+    for (const question of [...le, ...gyu]) {
+      expect(question.helperText, question.key).toBeTruthy();
+    }
   });
 });
