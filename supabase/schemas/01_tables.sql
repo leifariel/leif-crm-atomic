@@ -499,7 +499,15 @@ create table public.applications (
     summary text,
     created_at timestamp with time zone not null default now(),
     updated_at timestamp with time zone not null default now(),
-    constraint applications_status_check check (status in ('pending', 'approved', 'needs_higher_care', 'not_fit', 'do_not_engage', 'denied', 'waitlist')),
+    -- A recommendation to the other programme, and a decision Leif answers
+    -- by hand, are both recorded here. 20261008140000 says why each one is a
+    -- status rather than a flag.
+    recommended_offer_id bigint,
+    constraint applications_status_check check (status in ('pending', 'approved', 'needs_higher_care', 'not_fit', 'do_not_engage', 'offered_other_programme', 'bespoke_accepted', 'bespoke_rejected', 'denied', 'waitlist')),
+    constraint applications_recommended_offer_agrees_check check (
+        (status = 'offered_other_programme') = (recommended_offer_id is not null)
+        and (recommended_offer_id is null or recommended_offer_id is distinct from offer_id)
+    ),
     constraint applications_source_check check (source in ('public_form', 'historical_import', 'manual'))
 );
 
@@ -1443,6 +1451,10 @@ alter table public.applications
     add constraint applications_offer_id_fkey foreign key (offer_id) references public.offers(id);
 alter table public.applications
     add constraint applications_intended_cohort_id_fkey foreign key (intended_cohort_id) references public.cohorts(id);
+alter table public.applications
+    drop constraint if exists applications_recommended_offer_id_fkey;
+alter table public.applications
+    add constraint applications_recommended_offer_id_fkey foreign key (recommended_offer_id) references public.offers(id) on update cascade;
 
 alter table public.enrollments
     add constraint enrollments_opportunity_id_fkey foreign key (opportunity_id) references public.deals(id) on update cascade on delete cascade;
@@ -1620,6 +1632,7 @@ create index deal_notes_deal_id_idx on public.deal_notes using btree (deal_id);
 create index deals_company_id_idx on public.deals using btree (company_id);
 create index deals_contact_id_idx on public.deals using btree (contact_id);
 create index deals_offer_id_idx on public.deals using btree (offer_id);
+create index applications_recommended_offer_id_idx on public.applications using btree (recommended_offer_id);
 create index deals_cohort_id_idx on public.deals using btree (cohort_id);
 -- Payment domain foundation slice: at most one Deal may ever claim a given
 -- Offer Page token — the public route's only lookup key, so a collision
@@ -2414,7 +2427,8 @@ create table if not exists public.kit_tag_mappings (
     created_at timestamp with time zone not null default now(),
     primary key (offer_id, event),
     constraint kit_tag_mappings_event_check
-        check (event in ('applicant', 'approved', 'needs_higher_care', 'not_fit')),
+        check (event in ('applicant', 'approved', 'needs_higher_care', 'not_fit',
+                         'offered_other_programme', 'bespoke_accepted', 'bespoke_rejected')),
     constraint kit_tag_mappings_name_check check (btrim(kit_tag_name) <> ''),
     constraint kit_tag_mappings_tag_id_check check (kit_tag_id > 0)
 );
@@ -2458,6 +2472,17 @@ alter table public.kit_tag_mappings
         and (automation_name is null or followup_mode = 'kit_automation')
     );
 
+-- A bespoke reply is Leif's to write, by definition, so a bespoke mapping may
+-- never claim a Kit automation. enforce_bespoke_kit_separation() sets it and
+-- this refuses anything else (20261008140000).
+alter table public.kit_tag_mappings
+    drop constraint if exists kit_tag_mappings_bespoke_is_manual_check;
+alter table public.kit_tag_mappings
+    add constraint kit_tag_mappings_bespoke_is_manual_check
+    check (
+        event not in ('bespoke_accepted', 'bespoke_rejected')
+        or followup_mode = 'manual_email'
+    );
 alter table public.kit_tag_mappings
     drop constraint if exists kit_tag_mappings_offer_id_fkey;
 alter table public.kit_tag_mappings

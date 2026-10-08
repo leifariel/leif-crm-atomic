@@ -831,6 +831,12 @@ revoke all on function public.enqueue_kit_application_receipt() from authenticat
 revoke all on function public.enqueue_kit_application_decision() from public;
 revoke all on function public.enqueue_kit_application_decision() from anon;
 revoke all on function public.enqueue_kit_application_decision() from authenticated;
+revoke all on function public.record_recommended_programme_change() from public;
+revoke all on function public.record_recommended_programme_change() from anon;
+revoke all on function public.record_recommended_programme_change() from authenticated;
+revoke all on function public.enforce_bespoke_kit_separation() from public;
+revoke all on function public.enforce_bespoke_kit_separation() from anon;
+revoke all on function public.enforce_bespoke_kit_separation() from authenticated;
 
 -- Retry and the claim belong to the Edge Function, which is the only thing
 -- holding the Kit credential. The browser asks it; it does not ask the

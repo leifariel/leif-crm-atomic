@@ -7,7 +7,12 @@ import {
   requiredKitTags,
   STALE_AFTER_MS,
 } from "./kitStatus";
-import { kitEventRisk, kitRiskWarning } from "./kitAutomationRisk";
+import {
+  kitEventRisk,
+  kitRiskSentence,
+  kitRiskWarning,
+  kitTagRisk,
+} from "./kitAutomationRisk";
 import type {
   Application,
   ApplicationStatus,
@@ -391,6 +396,37 @@ describe("what the confirmation is allowed to claim", () => {
     expect(kitEventRisk("needs_higher_care")).toBe("no-automation-yet");
     expect(kitEventRisk("approved")).toBe("sends-email");
     expect(kitEventRisk("not_fit")).toBe("sends-email");
+  });
+
+  it("warns before a cross-programme message, and promises no email for a bespoke one", () => {
+    // Leif's decision: offering the other programme DOES send its own message
+    // through Kit for now, so it is confirmed like any other sending tag.
+    expect(kitEventRisk("offered_other_programme")).toBe("sends-email");
+    // Bespoke is answered by hand. The sentence claims only what the CRM
+    // does — it asked for no email — and never what Kit has attached.
+    for (const event of ["bespoke_accepted", "bespoke_rejected"]) {
+      expect(kitEventRisk(event)).toBe("answered-by-hand");
+    }
+    const sentence = kitRiskSentence(
+      "answered-by-hand",
+      "MiniDD_BespokeAcceptance",
+    );
+    expect(sentence).toBe(
+      "A bespoke decision sends no automatic reply — this response is yours to write.",
+    );
+    expect(sentence).not.toMatch(/email sent|was sent|has been sent/);
+  });
+
+  it("reports a tag Leif has wired to both as the louder of the two", () => {
+    const shared = [
+      { kit_tag_id: 990002, event: "bespoke_accepted" },
+      { kit_tag_id: 990002, event: "approved" },
+    ] as never;
+    expect(kitTagRisk(990002, shared)).toBe("sends-email");
+    const bespokeOnly = [
+      { kit_tag_id: 990003, event: "bespoke_rejected" },
+    ] as never;
+    expect(kitTagRisk(990003, bespokeOnly)).toBe("answered-by-hand");
   });
 });
 

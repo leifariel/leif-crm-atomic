@@ -2114,6 +2114,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/applications/ApplicationRecommendationLines.tsx",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/applications/ApplicationProgrammeCard.tsx",
           "type": "registry:component"
         },

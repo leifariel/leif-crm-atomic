@@ -277,6 +277,20 @@ create trigger on_application_kit_receipt
   after insert on public.applications
   for each row execute function public.enqueue_kit_application_receipt();
 
+drop trigger if exists on_kit_tag_mapping_bespoke_followup on public.kit_tag_mappings;
+create trigger on_kit_tag_mapping_bespoke_followup
+  before insert or update on public.kit_tag_mappings
+  for each row execute function public.enforce_bespoke_kit_separation();
+
+-- deal_offer_events is closed to a browser on purpose, so the row that makes a
+-- redirected Application legal history is written by the database as a
+-- consequence of the decision — never by whoever moved the Opportunity.
+drop trigger if exists on_deal_recommended_programme_change on public.deals;
+create trigger on_deal_recommended_programme_change
+  after update of offer_id on public.deals
+  for each row
+  when (old.offer_id is distinct from new.offer_id)
+  execute function public.record_recommended_programme_change();
 drop trigger if exists on_application_kit_decision on public.applications;
 create trigger on_application_kit_decision
   after update of status on public.applications

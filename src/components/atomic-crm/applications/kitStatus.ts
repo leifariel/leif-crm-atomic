@@ -59,7 +59,15 @@ export type KitStatusKind =
 // One tag the application's CURRENT state calls for, and whether Kit has
 // confirmed it. This is what the Dashboard's rows are made of.
 export type KitRequiredTag = {
-  event: "applicant" | "cohort" | "approved" | "needs_higher_care" | "not_fit";
+  event:
+    | "applicant"
+    | "cohort"
+    | "approved"
+    | "needs_higher_care"
+    | "not_fit"
+    | "offered_other_programme"
+    | "bespoke_accepted"
+    | "bespoke_rejected";
   kitTagId: number;
   kitTagName: string;
   done: boolean;
@@ -97,7 +105,19 @@ export const STALE_AFTER_MS = 30 * 60 * 1000;
 // Which decisions Kit has a tag for. 'do_not_engage' is absent because the
 // database has no mapping for it and never will; 'denied' and 'waitlist' are
 // historical-import-only values no live review can set.
-const KIT_DECISIONS = ["approved", "needs_higher_care", "not_fit"] as const;
+//
+// The recommendation and the two bespoke outcomes each have their OWN event,
+// which is what keeps a bespoke decision away from the approved / not_fit tags
+// an email automation may hang off. A tag records what was decided; whether
+// anything is sent is the mapping's business, not the tag's existence.
+const KIT_DECISIONS = [
+  "approved",
+  "needs_higher_care",
+  "not_fit",
+  "offered_other_programme",
+  "bespoke_accepted",
+  "bespoke_rejected",
+] as const;
 
 const TERMINAL_SOURCES = ["public_form", "manual"];
 

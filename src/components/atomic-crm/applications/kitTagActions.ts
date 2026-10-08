@@ -15,7 +15,10 @@ export type KitTagEvent =
   | "applicant"
   | "approved"
   | "needs_higher_care"
-  | "not_fit";
+  | "not_fit"
+  | "offered_other_programme"
+  | "bespoke_accepted"
+  | "bespoke_rejected";
 
 export type AddKitTagResult = {
   status:

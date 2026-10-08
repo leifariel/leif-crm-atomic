@@ -3889,7 +3889,10 @@ set search_path to 'public'
 as $$
 begin
   if old.status = 'pending'
-     and new.status in ('approved', 'needs_higher_care', 'not_fit')
+     and new.status in (
+       'approved', 'needs_higher_care', 'not_fit',
+       'offered_other_programme', 'bespoke_accepted', 'bespoke_rejected'
+     )
      and exists (
        select 1 from kit_sync_operations
         where application_id = new.id and kind = 'applicant'
@@ -4139,7 +4142,10 @@ begin
   if not exists (select 1 from offers where id = p_offer_id) then
     return jsonb_build_object('status', 'offer-invalid');
   end if;
-  if p_event not in ('applicant', 'approved', 'needs_higher_care', 'not_fit') then
+  if p_event not in (
+    'applicant', 'approved', 'needs_higher_care', 'not_fit',
+    'offered_other_programme', 'bespoke_accepted', 'bespoke_rejected'
+  ) then
     return jsonb_build_object('status', 'event-invalid');
   end if;
 
@@ -4152,6 +4158,26 @@ begin
 
   if p_kit_tag_id <= 0 or btrim(coalesce(p_kit_tag_name, '')) = '' then
     return jsonb_build_object('status', 'tag-invalid');
+  end if;
+
+  -- A named answer rather than a raised exception, so the picker can say what
+  -- happened. enforce_bespoke_kit_separation() refuses it either way — this is
+  -- the readable version of the same rule, not a softer one.
+  if exists (
+    select 1 from kit_tag_mappings m
+     where m.offer_id = p_offer_id
+       and m.kit_tag_id = p_kit_tag_id
+       and m.event <> p_event
+       and (
+         (p_event in ('bespoke_accepted', 'bespoke_rejected')
+            and m.event in ('approved', 'not_fit', 'offered_other_programme'))
+         or (p_event in ('approved', 'not_fit', 'offered_other_programme')
+            and m.event in ('bespoke_accepted', 'bespoke_rejected'))
+       )
+  ) then
+    return jsonb_build_object(
+      'status', 'tag-already-used-by-another-decision',
+      'offer_id', p_offer_id, 'event', p_event);
   end if;
 
   insert into kit_tag_mappings (offer_id, event, kit_tag_id, kit_tag_name)
@@ -4515,19 +4541,28 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION "public"."review_application"("p_application_id" bigint, "p_outcome" "text") RETURNS "jsonb"
-    LANGUAGE "plpgsql"
-    SET "search_path" TO 'public'
-    AS $$
-DECLARE
-  v_app applications%ROWTYPE;
-  v_deal deals%ROWTYPE;
+create or replace function public.review_application(
+  p_application_id bigint,
+  p_outcome text
+) returns jsonb
+language plpgsql
+set search_path to 'public'
+as $$
+declare
+  v_app applications%rowtype;
+  v_deal deals%rowtype;
   v_task_id bigint;
   v_reviewed_at timestamptz;
-BEGIN
-  -- The four outcomes a live review can record. 'denied' and 'waitlist' are
+  v_recommended_offer_id bigint;
+  v_recommended offers%rowtype;
+  v_candidates int;
+begin
+  -- The decisions a live review can record. 'denied' and 'waitlist' are
   -- historical-import vocabulary and are not decisions anybody makes here.
-  IF p_outcome NOT IN ('approved', 'needs_higher_care', 'not_fit', 'do_not_engage') THEN
+  IF p_outcome NOT IN (
+    'approved', 'needs_higher_care', 'not_fit', 'do_not_engage',
+    'offered_other_programme', 'bespoke_accepted', 'bespoke_rejected'
+  ) THEN
     RETURN jsonb_build_object('status', 'outcome-invalid', 'outcome', p_outcome);
   END IF;
 
@@ -4551,9 +4586,7 @@ BEGIN
   END IF;
 
   -- Every outcome writes to the Application AND its Opportunity, so there is
-  -- nothing to record a decision against without one. The page does not offer
-  -- the controls in that case; this is what makes it true rather than
-  -- presentational.
+  -- nothing to record a decision against without one.
   IF v_app.opportunity_id IS NULL THEN
     RETURN jsonb_build_object('status', 'no-opportunity', 'application_id', v_app.id);
   END IF;
@@ -4563,10 +4596,6 @@ BEGIN
     RETURN jsonb_build_object('status', 'opportunity-invalid', 'opportunity_id', v_app.opportunity_id);
   END IF;
 
-  -- enforce_application_opportunity_agreement already refuses a mismatched
-  -- pair on write. Checked here too so the caller gets a named answer instead
-  -- of an exception, and so a pair that drifted historically cannot be decided
-  -- against the wrong person.
   IF v_deal.contact_id IS DISTINCT FROM v_app.contact_id THEN
     RETURN jsonb_build_object(
       'status', 'opportunity-mismatch',
@@ -4576,34 +4605,89 @@ BEGIN
     );
   END IF;
 
+  -- ---- what recommending the other programme needs before it writes -------
+  IF p_outcome = 'offered_other_programme' THEN
+    -- Direction is not asked, because there is only one other programme to
+    -- move to. If that ever stops being true this refuses rather than
+    -- guessing which one Leif meant.
+    SELECT count(*), min(id) INTO v_candidates, v_recommended_offer_id
+      FROM offers WHERE is_active AND id IS DISTINCT FROM v_deal.offer_id;
+    IF v_candidates <> 1 THEN
+      RETURN jsonb_build_object(
+        'status', 'recommendation-ambiguous',
+        'candidates', v_candidates
+      );
+    END IF;
+    SELECT * INTO v_recommended FROM offers WHERE id = v_recommended_offer_id;
+
+    -- An enrolled client's programme is not an application decision. That
+    -- move is transfer_enrolled_opportunity_offer()'s, because it has to
+    -- carry an onboarding checklist and its Tasks with it.
+    IF EXISTS (SELECT 1 FROM enrollments WHERE opportunity_id = v_deal.id) THEN
+      RETURN jsonb_build_object('status', 'already-enrolled', 'opportunity_id', v_deal.id);
+    END IF;
+
+    -- handle_deal_saved() refuses an offer change while a scholarship slot is
+    -- held. Named here so the page can say why instead of showing a raised
+    -- exception.
+    IF v_deal.pricing_mode = 'scholarship' THEN
+      RETURN jsonb_build_object('status', 'scholarship-held', 'opportunity_id', v_deal.id);
+    END IF;
+  END IF;
+
   v_reviewed_at := now();
 
   -- 1. The decision itself. This UPDATE is what fires
   --    on_application_kit_decision, inside this transaction, once.
   UPDATE applications
      SET status = p_outcome,
-         reviewed_at = v_reviewed_at
+         reviewed_at = v_reviewed_at,
+         recommended_offer_id = v_recommended_offer_id
    WHERE id = v_app.id;
 
-  -- 2. The Opportunity, aligned with it. Same shapes buildDealUpdate() used:
-  --    approved moves the pipeline forward and explicitly clears any outcome a
-  --    previous round left; the three exits record an outcome and leave the
-  --    stage where it stands; Do Not Engage is 'lost' plus the owner decision,
-  --    the same pair dneOutcome.ts writes everywhere else.
+  -- 2. The Opportunity, aligned with it.
   IF p_outcome = 'approved' THEN
+    -- "Qualified enough for a sales call" — the pipeline moves forward; final
+    -- personal fit is still undecided. outcome is explicitly re-cleared in
+    -- case a prior review round set one.
     UPDATE deals SET stage = 'approved', outcome = NULL WHERE id = v_deal.id;
+  ELSIF p_outcome = 'bespoke_accepted' THEN
+    -- Accepted is accepted. The only thing bespoke changes is who writes the
+    -- reply, so the operational approved path stays exactly as available.
+    UPDATE deals SET stage = 'approved', outcome = NULL WHERE id = v_deal.id;
+  ELSIF p_outcome = 'offered_other_programme' THEN
+    -- The sales path moves to the recommended programme and behaves like that
+    -- programme's approved path. The SAME Opportunity: nothing here creates a
+    -- second one.
+    --
+    -- A round belongs to the programme that has rounds. Moving into an
+    -- individual programme leaves any cohort behind, exactly as
+    -- transfer_enrolled_opportunity_offer() does, and moving into a group
+    -- programme does not pick one — that is a later conversation, and
+    -- handle_deal_saved() is content with a group Opportunity that has no
+    -- cohort yet.
+    UPDATE deals
+       SET offer_id = v_recommended_offer_id,
+           cohort_id = CASE WHEN v_recommended.type = 'group' THEN cohort_id ELSE NULL END,
+           stage = 'approved',
+           outcome = NULL
+     WHERE id = v_deal.id;
   ELSIF p_outcome = 'needs_higher_care' THEN
     UPDATE deals SET outcome = 'needs_higher_care' WHERE id = v_deal.id;
   ELSIF p_outcome = 'not_fit' THEN
     UPDATE deals SET outcome = 'not_fit' WHERE id = v_deal.id;
+  ELSIF p_outcome = 'bespoke_rejected' THEN
+    -- Rejected is rejected, and reads as the same exit everywhere that counts
+    -- exits. Only the reply is different.
+    UPDATE deals SET outcome = 'not_fit' WHERE id = v_deal.id;
   ELSE
     UPDATE deals SET outcome = 'lost', owner_decision = 'do_not_engage' WHERE id = v_deal.id;
-    -- 3. The durable Contact-level gate. Never erases the Contact, never
-    --    touches unrelated history.
+    -- The durable Contact-level gate. Never erases the Contact, never touches
+    -- unrelated history.
     UPDATE contacts SET sales_eligibility = 'do_not_engage' WHERE id = v_app.contact_id;
   END IF;
 
-  -- 4. The Review Application task closes because the review happened — never
+  -- 3. The Review Application task closes because the review happened — never
   --    the reverse. Same heuristic as reviewApplicationTask.ts: the oldest
   --    still-open review_application task for this Contact.
   SELECT t.id INTO v_task_id
@@ -4627,6 +4711,7 @@ BEGIN
     'application_status', p_outcome,
     'opportunity_id', v_deal.id,
     'reviewed_at', v_reviewed_at,
+    'recommended_offer_id', v_recommended_offer_id,
     'completed_task_id', v_task_id
   );
 END;
@@ -4860,5 +4945,98 @@ begin
                     'testimonial_followup_2');
   end if;
   return new;
+end;
+$$;
+
+
+-- ---------------------------------------------------------------------------
+-- A decision can recommend the other programme (20261008140000)
+-- ---------------------------------------------------------------------------
+create or replace function public.enforce_bespoke_kit_separation()
+returns trigger
+language plpgsql
+set search_path to 'public'
+as $$
+declare
+  v_bespoke constant text[] := array['bespoke_accepted', 'bespoke_rejected'];
+  v_sending constant text[] := array['approved', 'not_fit', 'offered_other_programme'];
+  v_clash text;
+begin
+  if new.event = any (v_bespoke) then
+    new.followup_mode := 'manual_email';
+    new.automation_name := null;
+
+    select m.event into v_clash
+      from kit_tag_mappings m
+     where m.offer_id = new.offer_id
+       and m.event = any (v_sending)
+       and m.kit_tag_id = new.kit_tag_id
+     limit 1;
+    if v_clash is not null then
+      raise exception
+        'Tag % is already this programme''s % tag, so a bespoke decision cannot use it',
+        new.kit_tag_name, v_clash
+        using hint = 'A bespoke decision must apply a tag of its own, because an automation attached to the shared one would send the standard reply to somebody you meant to answer yourself.';
+    end if;
+  end if;
+
+  -- And the same refusal from the other direction, so the order the two
+  -- mappings are configured in cannot decide whether the rule holds.
+  if new.event = any (v_sending) then
+    select m.event into v_clash
+      from kit_tag_mappings m
+     where m.offer_id = new.offer_id
+       and m.event = any (v_bespoke)
+       and m.kit_tag_id = new.kit_tag_id
+     limit 1;
+    if v_clash is not null then
+      raise exception
+        'Tag % is already this programme''s % tag, so it cannot also be the % tag',
+        new.kit_tag_name, v_clash, new.event
+        using hint = 'A bespoke decision must apply a tag of its own, because an automation attached to the shared one would send the standard reply to somebody you meant to answer yourself.';
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+create or replace function public.record_recommended_programme_change()
+returns trigger
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+begin
+  if not exists (
+    select 1 from applications a
+     where a.opportunity_id = new.id
+       and a.status = 'offered_other_programme'
+       and a.recommended_offer_id = new.offer_id
+  ) then
+    return null;
+  end if;
+
+  if exists (select 1 from enrollments where opportunity_id = new.id) then
+    return null;
+  end if;
+
+  -- A replay cannot double the history.
+  if exists (
+    select 1 from deal_offer_events e
+     where e.opportunity_id = new.id
+       and e.from_offer_id = old.offer_id
+       and e.to_offer_id = new.offer_id
+  ) then
+    return null;
+  end if;
+
+  insert into deal_offer_events
+    (opportunity_id, enrollment_id, from_offer_id, to_offer_id, source, note)
+  values
+    (new.id, null, old.offer_id, new.offer_id, 'app',
+     'The sales path moved because their application was answered with a recommendation to the other programme. The application itself still records the programme they applied for.');
+
+  return null;
 end;
 $$;

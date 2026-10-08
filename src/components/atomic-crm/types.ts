@@ -266,6 +266,15 @@ export type ApplicationStatus =
   | "needs_higher_care"
   | "not_fit"
   | "do_not_engage"
+  // Willing to work with them, in the other programme. NOT a rejection, and
+  // not a statement about which programme they applied for — that stays on
+  // offer_id. recommended_offer_id below says which one was recommended.
+  | "offered_other_programme"
+  // Processed, decided, and answered personally. The outcome is accepted or
+  // rejected exactly as above; "bespoke" is the communication mode, which is
+  // why there are two values rather than one unresolved "bespoke" state.
+  | "bespoke_accepted"
+  | "bespoke_rejected"
   | "denied"
   | "waitlist";
 
@@ -296,6 +305,12 @@ export type Application = {
   // these columns yet.
   offer_id?: Identifier | null;
   intended_cohort_id?: Identifier | null;
+  // Which programme was recommended INSTEAD, when the decision was to offer
+  // the other one. Set only alongside status 'offered_other_programme' (the
+  // database constrains the two to agree), and never a substitute for
+  // offer_id: what they applied for and what was recommended are two
+  // different facts and the page says both.
+  recommended_offer_id?: Identifier | null;
   status: ApplicationStatus;
   submitted_at: string;
   // When a human actually reviewed it. NULL on every recovered historical

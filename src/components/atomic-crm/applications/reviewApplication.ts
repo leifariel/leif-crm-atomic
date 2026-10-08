@@ -1,6 +1,6 @@
 import type { DataProvider, Identifier } from "ra-core";
 
-import type { Application, Deal } from "../types";
+import type { Application, Deal, Enrollment, Offer } from "../types";
 import {
   applyDoNotEngageToContact,
   buildDoNotEngageDealUpdate,
@@ -19,7 +19,16 @@ export type ApplicationReviewOutcome =
   | "approved"
   | "needs_higher_care"
   | "not_fit"
-  | "do_not_engage";
+  | "do_not_engage"
+  // Leif is willing to work with them, in the other programme. The direction
+  // is never asked for: there is one other programme, and review_application()
+  // refuses rather than guessing if that stops being true.
+  | "offered_other_programme"
+  // Accepted / rejected, answered by hand. Two values rather than one, because
+  // "bespoke" on its own would be an unresolved state sitting in a queue that
+  // only knows about decided and undecided.
+  | "bespoke_accepted"
+  | "bespoke_rejected";
 
 export type ReviewApplicationResult =
   | { applied: true }
@@ -31,7 +40,12 @@ export type ReviewApplicationResult =
         | "opportunity-mismatch"
         | "outcome-invalid"
         | "application-invalid"
-        | "opportunity-invalid";
+        | "opportunity-invalid"
+        // Only the recommendation can hit these three, and all three are
+        // checked before anything is written.
+        | "recommendation-ambiguous"
+        | "already-enrolled"
+        | "scholarship-held";
     };
 
 type ReviewCapableProvider = DataProvider & {
@@ -131,19 +145,72 @@ export const reviewApplicationMirror = async ({
     return { applied: false, reason: "opportunity-mismatch" };
   }
 
+  // Everything the recommendation can refuse, resolved BEFORE the first
+  // write, so a refusal still means nothing happened.
+  let recommended: Offer | null = null;
+  if (outcome === "offered_other_programme") {
+    const resolved = await resolveRecommendedProgramme(
+      dataProvider,
+      currentDeal.offer_id,
+    );
+    if (resolved.status !== "ok") {
+      return { applied: false, reason: resolved.status };
+    }
+    recommended = resolved.offer;
+
+    const { total: enrollments } = await dataProvider.getList<Enrollment>(
+      "enrollments",
+      {
+        filter: { opportunity_id: currentDeal.id },
+        pagination: { page: 1, perPage: 1 },
+        sort: { field: "id", order: "ASC" },
+      },
+    );
+    if ((enrollments ?? 0) > 0) {
+      return { applied: false, reason: "already-enrolled" };
+    }
+    if (currentDeal.pricing_mode === "scholarship") {
+      return { applied: false, reason: "scholarship-held" };
+    }
+  }
+
   const reviewedAt = new Date().toISOString();
 
   await dataProvider.update("applications", {
     id: currentApplication.id,
-    data: { status: outcome, reviewed_at: reviewedAt },
+    data: {
+      status: outcome,
+      reviewed_at: reviewedAt,
+      // What they applied for is never touched. This is the second fact.
+      recommended_offer_id: recommended ? recommended.id : null,
+    },
     previousData: currentApplication,
   });
 
   await dataProvider.update("deals", {
     id: currentDeal.id,
-    data: buildDealUpdate(outcome),
+    data: buildDealUpdate(outcome, recommended, currentDeal),
     previousData: currentDeal,
   });
+
+  if (recommended) {
+    // The database writes this from a trigger, because deal_offer_events is
+    // deliberately closed to a browser. The mirror writes it directly for the
+    // same reason it writes anything: so the shape a FakeRest surface sees is
+    // the shape production produces.
+    await dataProvider.create("deal_offer_events", {
+      data: {
+        opportunity_id: currentDeal.id,
+        enrollment_id: null,
+        from_offer_id: currentDeal.offer_id,
+        to_offer_id: recommended.id,
+        source: "app",
+        occurred_at: reviewedAt,
+        recorded_at: reviewedAt,
+        note: "The sales path moved because their application was answered with a recommendation to the other programme. The application itself still records the programme they applied for.",
+      } as never,
+    });
+  }
 
   if (outcome === "do_not_engage") {
     await applyDoNotEngageToContact(dataProvider, currentDeal.contact_id);
@@ -160,16 +227,65 @@ export const reviewApplicationMirror = async ({
   return { applied: true };
 };
 
-const buildDealUpdate = (outcome: ApplicationReviewOutcome): Partial<Deal> => {
+/**
+ * Which programme a recommendation points at.
+ *
+ * Never asked for, and never guessed: the one OTHER active programme. If the
+ * catalog ever holds more than one, this refuses — the destination becomes
+ * part of somebody's history the moment it is recorded, and a coin toss is
+ * not a decision Leif made.
+ */
+const resolveRecommendedProgramme = async (
+  dataProvider: DataProvider,
+  fromOfferId: Identifier | null | undefined,
+): Promise<
+  { status: "ok"; offer: Offer } | { status: "recommendation-ambiguous" }
+> => {
+  const { data: offers } = await dataProvider.getList<Offer>("offers", {
+    filter: { is_active: true },
+    pagination: { page: 1, perPage: 100 },
+    sort: { field: "id", order: "ASC" },
+  });
+  const candidates = (offers ?? []).filter(
+    (offer) =>
+      offer.is_active !== false && String(offer.id) !== String(fromOfferId),
+  );
+  if (candidates.length !== 1) return { status: "recommendation-ambiguous" };
+  return { status: "ok", offer: candidates[0] };
+};
+
+const buildDealUpdate = (
+  outcome: ApplicationReviewOutcome,
+  recommended: Offer | null,
+  currentDeal: Pick<Deal, "cohort_id">,
+): Partial<Deal> => {
   switch (outcome) {
     case "approved":
       // "Qualified enough for a sales call" — the pipeline moves forward;
       // final personal fit is still undecided (§1/§4). outcome stays null,
       // explicitly re-asserted here in case a prior review round set one.
       return { stage: "approved", outcome: null };
+    case "bespoke_accepted":
+      // Accepted is accepted. Bespoke changes who writes the reply, not what
+      // the sales path may now do.
+      return { stage: "approved", outcome: null };
+    case "offered_other_programme":
+      // The SAME Opportunity moves to the recommended programme and behaves
+      // like that programme's approved path. A round belongs to the programme
+      // that has rounds, so moving into an individual programme leaves any
+      // cohort behind — and moving into a group one does not pick a round.
+      return {
+        offer_id: recommended!.id,
+        cohort_id: recommended!.type === "group" ? currentDeal.cohort_id : null,
+        stage: "approved",
+        outcome: null,
+      };
     case "needs_higher_care":
       return { outcome: "needs_higher_care" };
     case "not_fit":
+      return { outcome: "not_fit" };
+    case "bespoke_rejected":
+      // A rejection reads as the same exit everywhere that counts exits.
       return { outcome: "not_fit" };
     case "do_not_engage":
       // See deals/dneOutcome.ts for why this is 'lost' + owner_decision

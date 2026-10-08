@@ -364,6 +364,10 @@ export const englishCrmMessages = {
         needs_higher_care: "Needs Higher Care",
         not_fit: "Not Fit",
         do_not_engage: "Do Not Engage",
+        offer_other_programme: "Offer %{programme}",
+        bespoke_response: "Bespoke response",
+        bespoke_accepted: "Bespoke acceptance",
+        bespoke_rejected: "Bespoke rejection",
       },
       review: {
         summary_title: "Application Summary",
@@ -377,6 +381,13 @@ export const englishCrmMessages = {
         dne_confirm_title: "Mark %{name} as Do Not Engage?",
         dne_confirm_body:
           "This removes them from future direct sales eligibility.",
+        applied_for: "Applied for",
+        decision: "Decision",
+        offered_programme: "Offer %{programme}",
+        offered_programme_other: "Offer the other programme",
+        recommend_confirm_title: "Offer %{name} %{programme} instead?",
+        recommend_confirm_body:
+          "Their application still records the programme they applied for. Their sales opportunity moves to %{programme}, and Kit may send the message configured for that recommendation.",
       },
       updated: "Application updated",
       empty: "No applications yet.",

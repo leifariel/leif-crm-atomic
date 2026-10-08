@@ -17,6 +17,7 @@ import {
   applicationStatusBadgeVariant,
   applicationStatusLabels,
 } from "./applicationConstants";
+import { ApplicationRecommendationLines } from "./ApplicationRecommendationLines";
 import { ApplicationReviewActions } from "./ApplicationReviewActions";
 import { BringIntoCrmCard } from "./BringIntoCrmCard";
 import { applicationAdoption } from "./applicationAdoption";
@@ -181,10 +182,19 @@ const ApplicationShowContent = () => {
                 against. Rather than guess at what approving a manual
                 application should start, the page says plainly that it
                 cannot be decided here yet. */}
+            {/* What they applied for, beside what was decided — rendered
+                only when the two are different programmes, which is the one
+                case the heading above cannot say on its own. */}
+            <ApplicationRecommendationLines
+              application={record}
+              offer={offer}
+              cohort={cohort}
+            />
             {deal ? (
               <ApplicationReviewActions
                 application={record}
                 applicantName={applicantName}
+                fromOfferId={deal.offer_id}
               />
             ) : (
               <>

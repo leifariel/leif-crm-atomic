@@ -1,11 +1,32 @@
 import { useState } from "react";
-import { AlertTriangle, Ban, Check, CircleX } from "lucide-react";
-import { useDataProvider, useNotify, useRefresh, useTranslate } from "ra-core";
+import {
+  AlertTriangle,
+  ArrowRightLeft,
+  Ban,
+  Check,
+  ChevronDown,
+  CircleX,
+  PenLine,
+} from "lucide-react";
+import {
+  useDataProvider,
+  useGetList,
+  useNotify,
+  useRefresh,
+  useTranslate,
+  type Identifier,
+} from "ra-core";
 import { Confirm } from "@/components/admin/confirm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-import type { Application } from "../types";
+import type { Application, Offer } from "../types";
 import {
   applicationStatusBadgeVariant,
   applicationStatusLabels,
@@ -29,19 +50,64 @@ const REFUSAL_NOTICE: Record<string, string> = {
     "This application points at an opportunity that no longer exists.",
   "outcome-invalid": "That is not a decision this application can record.",
   "application-invalid": "That application could not be found.",
+  // The three only a recommendation can reach. All three are checked before
+  // anything is written, so each one means the decision was not recorded.
+  "recommendation-ambiguous":
+    "There is more than one other programme now, so which one to recommend is no longer obvious. Nothing was recorded.",
+  "already-enrolled":
+    "This person is already enrolled, so their programme moves through the client page rather than an application decision.",
+  "scholarship-held":
+    "This opportunity holds a scholarship place, so its programme cannot change until that place is released.",
+};
+
+/**
+ * Which programme a recommendation would point at.
+ *
+ * The one OTHER active programme, and Leif is never asked to pick it. If the
+ * catalog ever holds more than one the button is not offered at all, which is
+ * the same answer review_application() gives — a destination becomes part of
+ * somebody's history the moment it is recorded, so a guess is not acceptable
+ * at either layer.
+ */
+const useRecommendedProgramme = (
+  fromOfferId: Identifier | null | undefined,
+) => {
+  const { data: offers } = useGetList<Offer>(
+    "offers",
+    {
+      filter: {},
+      pagination: { page: 1, perPage: 100 },
+      sort: { field: "id", order: "ASC" },
+    },
+    { retry: false },
+  );
+  const candidates = (offers ?? []).filter(
+    (offer) =>
+      offer.is_active !== false && String(offer.id) !== String(fromOfferId),
+  );
+  return candidates.length === 1 ? candidates[0] : null;
 };
 
 // The operational control area of the Application review page (Native
 // Applications slice, §2/§3). Every write goes through the reviewApplication
 // domain action — this component only orchestrates the click, the pending
-// state, and (for Do Not Engage) the confirmation step; it never writes to
-// a resource directly (§19).
+// state, and the confirmation steps; it never writes to a resource directly
+// (§19).
 export const ApplicationReviewActions = ({
   application,
   applicantName,
+  fromOfferId,
 }: {
   application: Application;
   applicantName: string;
+  /**
+   * The programme the SALES path is currently on — deals.offer_id, not the
+   * Application's own offer_id, because that is what a recommendation moves
+   * and what review_application() measures "the other programme" against.
+   * Passed in because the page already holds the Opportunity and this
+   * component deliberately does not fetch one.
+   */
+  fromOfferId?: Identifier | null;
   // Accepted and ignored. review_application() resolves the Opportunity from
   // the Application under a lock, because a copy held by the page is exactly
   // as stale as the status it was meant to be checked against. The prop stays
@@ -55,6 +121,11 @@ export const ApplicationReviewActions = ({
   const [pendingOutcome, setPendingOutcome] =
     useState<ApplicationReviewOutcome | null>(null);
   const [confirmingDoNotEngage, setConfirmingDoNotEngage] = useState(false);
+  const [confirmingRecommendation, setConfirmingRecommendation] =
+    useState(false);
+  const recommended = useRecommendedProgramme(
+    fromOfferId ?? application.offer_id,
+  );
 
   const runOutcome = async (outcome: ApplicationReviewOutcome) => {
     setPendingOutcome(outcome);
@@ -122,6 +193,25 @@ export const ApplicationReviewActions = ({
           <Check className="w-4 h-4" />
           {translate("resources.applications.action.approve")}
         </Button>
+        {/* Offered only when there is exactly one other programme to offer,
+            which is also the only case the authority will accept. Naming the
+            destination on the button is the point: "Offer the other
+            programme" would make Leif hover to find out what she is about
+            to recommend. */}
+        {recommended && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={isBusy}
+            onClick={() => setConfirmingRecommendation(true)}
+          >
+            <ArrowRightLeft className="w-4 h-4" />
+            {translate("resources.applications.action.offer_other_programme", {
+              _: "Offer %{programme}",
+              programme: recommended.name,
+            })}
+          </Button>
+        )}
         <Button
           size="sm"
           variant="outline"
@@ -140,6 +230,33 @@ export const ApplicationReviewActions = ({
           <CircleX className="w-4 h-4" />
           {translate("resources.applications.action.not_fit")}
         </Button>
+        {/* A menu rather than two more buttons, because "bespoke" is one
+            thought with two endings — and the menu never records the thought
+            on its own: there is no "bespoke" status to be left sitting in,
+            only an acceptance or a rejection. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="outline" disabled={isBusy}>
+              <PenLine className="w-4 h-4" />
+              {translate("resources.applications.action.bespoke_response", {
+                _: "Bespoke response",
+              })}
+              <ChevronDown className="w-4 h-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onClick={() => runOutcome("bespoke_accepted")}>
+              {translate("resources.applications.action.bespoke_accepted", {
+                _: "Bespoke acceptance",
+              })}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => runOutcome("bespoke_rejected")}>
+              {translate("resources.applications.action.bespoke_rejected", {
+                _: "Bespoke rejection",
+              })}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <Button
           size="sm"
           variant="destructive"
@@ -166,6 +283,36 @@ export const ApplicationReviewActions = ({
           runOutcome("do_not_engage");
         }}
         onClose={() => setConfirmingDoNotEngage(false)}
+      />
+      {/* Confirmed, because two consequential things follow: the sales path
+          moves to the other programme, and Kit may send that programme's
+          cross-programme message. "May" is the honest word — the CRM reads
+          which event a tag is configured for and never Kit's automation
+          topology (kitAutomationRisk.ts). */}
+      <Confirm
+        isOpen={confirmingRecommendation && recommended != null}
+        title={translate(
+          "resources.applications.review.recommend_confirm_title",
+          {
+            _: "Offer %{name} %{programme} instead?",
+            name: applicantName,
+            programme: recommended?.name ?? "",
+          },
+        )}
+        content={translate(
+          "resources.applications.review.recommend_confirm_body",
+          {
+            _: "Their application still records the programme they applied for. Their sales opportunity moves to %{programme}, and Kit may send the message configured for that recommendation.",
+            programme: recommended?.name ?? "",
+          },
+        )}
+        confirmColor="primary"
+        loading={isBusy}
+        onConfirm={() => {
+          setConfirmingRecommendation(false);
+          runOutcome("offered_other_programme");
+        }}
+        onClose={() => setConfirmingRecommendation(false)}
       />
     </>
   );

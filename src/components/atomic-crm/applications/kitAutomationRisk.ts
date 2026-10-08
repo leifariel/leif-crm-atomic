@@ -6,9 +6,12 @@ import type { KitTagMapping } from "../types";
 // What it CAN read is which event a tag is configured for, and Leif has told
 // us what each event's automation does today:
 //
-//   applicant           no email automation attached
-//   approved / not_fit  an existing automation can send an email
-//   needs_higher_care   the tag exists, but he has not written its automation
+//   applicant                 no email automation attached
+//   approved / not_fit        an existing automation can send an email
+//   needs_higher_care         the tag exists, but its automation is his to write
+//   offered_other_programme   a cross-programme message goes out through Kit
+//   bespoke_accepted /        answered personally, so nothing is attached and
+//   bespoke_rejected          nothing may be
 //
 // So this never claims an email was sent, and never invents provider evidence.
 // It reports the risk the configuration implies, and nothing more.
@@ -20,15 +23,29 @@ export type KitTagRisk =
   // Configured, but Leif has not attached an automation yet. The tag will
   // land; the email is still his to send.
   | "no-automation-yet"
+  // A decision Leif answers herself. The tag records what was decided; the
+  // reply is hers to write, and the whole point of giving these their own
+  // event is that no approval or rejection automation can be reached from
+  // here.
+  | "answered-by-hand"
   // An applicant or cohort tag: nothing is connected to it today.
   | "quiet";
 
-const SENDS_EMAIL: string[] = ["approved", "not_fit"];
+const SENDS_EMAIL: string[] = [
+  "approved",
+  "not_fit",
+  // Offering the other programme sends its own cross-programme message, by
+  // Leif's decision — "DOES send an automated response through Kit FOR NOW".
+  "offered_other_programme",
+];
+
+const ANSWERED_BY_HAND: string[] = ["bespoke_accepted", "bespoke_rejected"];
 
 // A required tag already knows which event it is for, so the two surfaces that
 // offer "Add required tags" can ask about it without re-reading the mappings.
 export const kitEventRisk = (event: string): KitTagRisk => {
   if (SENDS_EMAIL.includes(event)) return "sends-email";
+  if (ANSWERED_BY_HAND.includes(event)) return "answered-by-hand";
   if (event === "needs_higher_care") return "no-automation-yet";
   return "quiet";
 };
@@ -43,6 +60,10 @@ export const kitTagRisk = (
   if (events.some((event) => kitEventRisk(event) === "sends-email"))
     return "sends-email";
   if (events.includes("needs_higher_care")) return "no-automation-yet";
+  // Said last, so a tag Leif has also wired to an approval automation is
+  // reported as the louder of the two rather than the quieter.
+  if (events.some((event) => ANSWERED_BY_HAND.includes(event)))
+    return "answered-by-hand";
   return "quiet";
 };
 
@@ -67,6 +88,11 @@ export const kitRiskSentence = (risk: KitTagRisk, tagName: string): string => {
       return kitRiskWarning([tagName]) ?? "";
     case "no-automation-yet":
       return `${tagName} does not currently have an email automation attached, so that email still needs to be sent by hand.`;
+    case "answered-by-hand":
+      // A claim about what the CRM does, which it can make, and not a claim
+      // about Kit's automation topology, which it cannot read: this decision
+      // asks for no email, and the reply is Leif's to write.
+      return "A bespoke decision sends no automatic reply — this response is yours to write.";
     default:
       return "";
   }

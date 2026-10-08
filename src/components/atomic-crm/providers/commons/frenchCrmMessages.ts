@@ -363,6 +363,10 @@ export const frenchCrmMessages = {
         needs_higher_care: "Besoin de plus d'attention",
         not_fit: "Ne convient pas",
         do_not_engage: "Ne pas contacter",
+        offer_other_programme: "Proposer %{programme}",
+        bespoke_response: "Réponse personnalisée",
+        bespoke_accepted: "Acceptation personnalisée",
+        bespoke_rejected: "Refus personnalisé",
       },
       review: {
         summary_title: "Résumé de la candidature",
@@ -376,6 +380,13 @@ export const frenchCrmMessages = {
         dne_confirm_title: "Marquer %{name} comme « Ne pas contacter » ?",
         dne_confirm_body:
           "Cela retire cette personne des futures opportunités de vente directe.",
+        applied_for: "Candidature déposée pour",
+        decision: "Décision",
+        offered_programme: "Proposer %{programme}",
+        offered_programme_other: "Proposer l'autre programme",
+        recommend_confirm_title: "Proposer plutôt %{programme} à %{name} ?",
+        recommend_confirm_body:
+          "Sa candidature continue d'indiquer le programme pour lequel elle a postulé. Son opportunité de vente passe à %{programme}, et Kit peut envoyer le message configuré pour cette recommandation.",
       },
       updated: "Candidature mise à jour",
       empty: "Aucune candidature pour le moment.",
