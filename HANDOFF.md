@@ -9,18 +9,23 @@ transfer checkpoint. **The repository, the database and production are the
 authority. Where this prose disagrees with them, they win — say so rather than
 quietly picking one.**
 
-**Where things stand right now (2026-09-27).** `origin/main` is at
-`1c1ef676`, production holds 142 migrations, and **Jenna Smith's repair is
-human-accepted** (§8b-next). The lightbox UX pass is deployed, with **one
-branch human-accepted and two still open** (§8b-ux). One commit sits locally and
-is **not pushed**: the `legacy_untracked` fix that deployment verification
-found (§8b-ux-fix). The Application Form Builder is restored to the working
-tree, still uncommitted.
+**Where things stand right now (2026-10-08).** `origin/main` is at
+`89f92678`, production holds **156 migrations**, and nothing is unpushed.
+**GYU APPLICATION QUESTION PARITY is production-accepted** (§8e), after
+Applications + Clients information architecture (§8d) and the testimonial /
+offboarding work (§8b-testimonial-built). Two things stay deliberately parked
+and must not be touched, committed, pushed or deployed: the payment commit
+`c9dcc918` on `capacity-waitlist`, and the Application Form Builder, which
+lives uncommitted in the main checkout's working tree (§8b-builder).
 
-**The next action is Leif's: push the legacy_untracked fix — and until it is
-deployed, do not click Repair on any client.** Then the queue is the client
-start-week / capacity UX, Kit, and only then the builder. The Kit requirement
-that Applications cannot be called finished without is §8b-kit.
+**The queue is Leif's, in this order:** (1) application decision expansion —
+LE offers GYU and GYU offers LE, with their own Kit tags and cross-programme
+emails, plus a Bespoke Acceptance / Bespoke Rejection that sends no automated
+email; (2) sales-call workflow polish — passed-but-unlogged calls stay at the
+top reading "Call passed", a call-impressions / reminders field saved
+atomically with the outcome as call-specific history rather than a loose note,
+and editing a completed outcome including No-show → Attended with its
+downstream consequences reconciled safely; (3) Gmail (§9).
 
 ---
 
@@ -4099,6 +4104,114 @@ parent record for every reference. For a deal that was a no-op; for any
 parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
+
+## 8e. Growing Yourself Up asks The Living Example's questions — PRODUCTION ACCEPTED 2026-10-08
+
+Growing Yourself Up asked four bare questions while The Living Example asked
+five, each with a description underneath, and the GYU applications came back
+short. Leif's decision: LE's set is canonical, word for word. GYU now asks the
+same five questions, in the same order, with the same descriptions, the same
+multi-line inputs and the same requiredness.
+
+`public-application/coreApplicationQuestions.ts` is the single source, extracted
+from LE's own string literals rather than paraphrased, and parameterised by
+prefix — so the two forms share wording while keeping their own key identity
+(`le_main_pattern`, `gyu_main_pattern`). **Programme identity is untouched**:
+the offer, the per-cohort application URL, `intended_cohort_id`, the
+destination, the decision workflow, Kit and Copy Application Link all behave
+exactly as before. Only the substantive questions moved.
+
+`20261007170000` (deterministic) demotes the old GYU version and inserts
+`gyu_application_core` with the five shared questions. It also realigns LE's
+own current rows from curly to straight apostrophes so the two forms are
+byte-identical; the *historical* rows were left exactly as they were.
+
+### A key can outlive the question it asked
+
+The defect that nearly shipped, and the most useful thing this slice found.
+`gyu_commitment_scale` was used by BOTH generations with DIFFERENT wording:
+
+    OLD  "On a scale from 1-10, how ready are you to make a time, financial,
+          and personal commitment to the change you want?"
+    NEW  "On a scale of 1-10, how committed are you to changing this
+          pattern/way-of-being?"
+
+`answerLabels.ts` is keyed only by `question_key`, so no single entry can be
+true for both. The tempting fix — derive every `gyu_*` entry from
+`coreApplicationQuestions` and call the class closed — would have relabelled
+old applicants with a question they never saw. Leif refused it, correctly: **a
+key-only map cannot truthfully label two generations, so it cannot be an
+authority at all.**
+
+**The authority order, now explicit in code:**
+
+1. `application_responses.question_text` — the words snapshotted at submission,
+   immutable afterwards.
+2. the key-label map, ONLY where no recorded wording ever existed.
+
+**The discriminator is `applications.form_key`, and it is exact rather than
+heuristic.** It is written in exactly one place —
+`materialize_native_application_responses()` — in the SAME transaction as the
+`application_responses` rows. Non-null therefore means this submission's own
+wording is recorded and *will* arrive; null means none was ever registered (a
+recovered Notion record, or a native submission whose Offer had no form
+version) and the map is the only thing that can name those questions.
+
+So a versioned submission **waits** for its own words and never borrows a
+guess; a raw-only one never waits. This is deliberately NOT the blanket
+`isPending` gate that used to sit there — that gate hid an imported applicant's
+answers behind a query that had nothing to say about them. The branch is the
+point.
+
+`answerLabels.ts` is now documented as a legacy compatibility path, keeps
+`gyu_commitment_scale`'s **OLD** wording on purpose (the only applications that
+can still reach it are the old ones), and **deliberately omits** the four new
+shared keys: they can only exist on a versioned submission, which never reaches
+the map, so entries would be dead *and* would falsely imply they can appear on
+a legacy record.
+
+### Two things the proofs had to work around
+
+- **The slow window had to stop being a race.**
+  `applicationAnswerAuthority.test.tsx` uses a provider that NEVER answers for
+  `application_responses`, so the unresolved window is deterministic rather than
+  timing-dependent. Sensitivity was proved by restoring the old behaviour: the
+  new-GYU test fails with `expected 'Gyu Main Pattern New answer 1 ...' not to
+  contain 'Gyu Main Pattern'`, and the second test fails too — revealing that
+  the raw layer *wins* that render, so the authoritative wording never appeared
+  at all while the window was open.
+- **A real submission permanently poisons `resetDb`.**
+  `application_responses` refuses UPDATE and DELETE
+  (`reject_application_response_mutation`, `before update or delete`), and
+  INSERT is allowed. A submitted Application with materialized answers is
+  therefore undeletable, which broke every later spec. The write path moved to
+  `e2e/applicationQuestionParity.submission.spec.ts` in its own terminal
+  `submission` Playwright project, on base `@playwright/test` with no `resetDb`
+  at all. The immutability invariant was NOT weakened to make the fixture
+  tidy.
+
+Read-only parity is proved on the real built forms in
+`e2e/applicationQuestionParity.spec.ts`, and the recorded-question contract in
+`contracts/applications/theQuestionAskedIsTheQuestionRecorded.test.ts`.
+
+### Production, read back by Leif
+
+156 migrations; `20261007170000` applied exactly once; LE current questions 5,
+GYU current questions 5; wording parity PASS; key prefixes correct; routing
+checks pass. **Historical truth intact**: the 910 `application_responses` that
+predate the deploy are all still present, any growth above that is fully
+accounted for by newer submissions, and the immutability trigger remains
+enabled — so a rewrite is not merely absent, it is impossible.
+
+Human acceptance: both forms ask the same five questions with the same
+descriptions, order, requiredness and inputs, with GYU's programme and cohort
+framing intact; and one real old four-question application still shows only the
+questions it was actually asked, in their original wording, each answer once,
+with none of the shared set injected and no transient raw-key labels.
+
+Commits: `b4d5c5dd` (question set + migration), `278c60d9` (registry),
+`89f92678` (answer-label authority repair — no migration, zero `supabase/`
+changes).
 
 ## 8d. Applications + Clients information architecture — PRODUCTION ACCEPTED 2026-10-07
 
