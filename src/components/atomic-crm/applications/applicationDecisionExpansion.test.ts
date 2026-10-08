@@ -52,14 +52,20 @@ const offer = (
   updated_at: "2026-01-01T00:00:00.000Z",
 });
 
-const COHORT: Cohort = {
-  id: 10,
-  offer_id: GYU,
-  name: "Fall 2026",
-  status: "applications_open",
-  created_at: "2026-01-01T00:00:00.000Z",
-  updated_at: "2026-01-01T00:00:00.000Z",
-};
+const cohort = (id: number, name: string, over: Partial<Cohort> = {}): Cohort =>
+  ({
+    id,
+    offer_id: GYU,
+    name,
+    status: "applications_open",
+    applications_open_at: "2026-01-01",
+    applications_close_at: "2027-12-31",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    ...over,
+  }) as Cohort;
+
+const COHORT = cohort(10, "Fall 2026");
 
 const buildWorld = ({
   appliedTo,
@@ -73,12 +79,14 @@ const buildWorld = ({
     // resolver asks about is_active rather than counting the catalog.
     offer(LEGACY, "1:1 Coaching (Legacy)", "individual", false),
   ],
+  cohorts = [COHORT],
 }: {
   appliedTo: number;
   cohortId?: number | null;
   pricingMode?: "standard" | "scholarship";
   enrolled?: boolean;
   offers?: Offer[];
+  cohorts?: Cohort[];
 }) => {
   const contact = buildContact({ id: 1 });
   const deal: Deal = {
@@ -132,7 +140,7 @@ const buildWorld = ({
       contacts: [contact],
       offers,
       offer_payment_options: [],
-      cohorts: [COHORT],
+      cohorts,
       deals: [deal],
       applications: [application],
       enrollments,
@@ -200,6 +208,10 @@ describe("offering the other programme moves the sale, never the application", (
     expect(deal.stage).toBe("approved");
     expect(deal.outcome).toBeNull();
     expect(deals).toHaveLength(1);
+    // And a ROUND, because Growing Yourself Up has them and exactly one is
+    // taking people. The first version of this left it null, which wins into
+    // a client with no round and no start date.
+    expect(deal.cohort_id).toBe(COHORT.id);
 
     // And the programme change is recorded where the Application/Opportunity
     // agreement guard looks for it.
@@ -304,6 +316,190 @@ describe("offering the other programme moves the sale, never the application", (
     const { app, deal } = await readBack(dataProvider);
     expect(app.status).toBe("pending");
     expect(deal.offer_id).toBe(LE);
+  });
+});
+
+describe("a recommendation into a group programme needs a round", () => {
+  // NOTHING IN THIS CRM INFERS A ROUND. The public form takes it from the URL,
+  // adoption takes it from the Application's own intended_cohort_id, a
+  // waitlist batch and a Deal edit take it from Leif. So this assigns only
+  // where there is nothing to choose between, refuses where there is nothing
+  // to assign, and asks otherwise.
+
+  it("assigns the only round still taking applications", async () => {
+    const { dataProvider, application } = buildWorld({
+      appliedTo: LE,
+      cohorts: [
+        cohort(10, "Fall 2026"),
+        // Not candidates, and each for its own reason.
+        cohort(11, "A draft round", { status: "draft" }),
+        cohort(12, "Applications closed", { status: "applications_closed" }),
+        cohort(13, "Finished", { status: "completed" }),
+      ],
+    });
+
+    const result = await reviewApplication({
+      dataProvider,
+      application,
+      outcome: "offered_other_programme",
+    });
+    expect(result.applied).toBe(true);
+
+    const { deal } = await readBack(dataProvider);
+    expect(deal.cohort_id).toBe(10);
+  });
+
+  it("does not count a round whose applications have closed by the calendar", async () => {
+    // The status column still says open. The dates say otherwise, and the
+    // public form has always believed the dates — that predicate is now
+    // shared rather than copied (cohorts/cohortEligibility.ts).
+    const { dataProvider, application } = buildWorld({
+      appliedTo: LE,
+      cohorts: [
+        cohort(10, "Closed last year", {
+          applications_open_at: "2020-01-01",
+          applications_close_at: "2020-12-31",
+        }),
+      ],
+    });
+
+    const result = await reviewApplication({
+      dataProvider,
+      application,
+      outcome: "offered_other_programme",
+    });
+    expect(result).toMatchObject({
+      applied: false,
+      reason: "no-eligible-cohort",
+      recommendedOfferName: "Growing Yourself Up",
+    });
+
+    const { app, deal, events } = await readBack(dataProvider);
+    expect(app.status).toBe("pending");
+    expect(deal.offer_id).toBe(LE);
+    expect(events).toHaveLength(0);
+  });
+
+  it("refuses rather than writing a cohortless group sale when no round is open", async () => {
+    const { dataProvider, application } = buildWorld({
+      appliedTo: LE,
+      cohorts: [cohort(11, "A draft round", { status: "draft" })],
+    });
+
+    const result = await reviewApplication({
+      dataProvider,
+      application,
+      outcome: "offered_other_programme",
+    });
+    expect(result).toMatchObject({
+      applied: false,
+      reason: "no-eligible-cohort",
+    });
+
+    const { app, deal } = await readBack(dataProvider);
+    expect(app.status).toBe("pending");
+    expect(app.reviewed_at).toBeNull();
+    expect(deal.offer_id).toBe(LE);
+    expect(deal.cohort_id).toBeNull();
+  });
+
+  it("asks which round when two are open, and writes nothing until it is told", async () => {
+    const { dataProvider, application } = buildWorld({
+      appliedTo: LE,
+      cohorts: [
+        cohort(10, "Spring 2027", { applications_close_at: "2027-06-30" }),
+        cohort(14, "Summer 2027", { applications_close_at: "2027-09-30" }),
+      ],
+    });
+
+    const result = await reviewApplication({
+      dataProvider,
+      application,
+      outcome: "offered_other_programme",
+    });
+    expect(result).toMatchObject({
+      applied: false,
+      reason: "cohort-choice-required",
+      recommendedOfferName: "Growing Yourself Up",
+    });
+    // Soonest deadline first, so the dialog does not reorder itself.
+    expect(result.applied === false ? result.candidates : null).toEqual([
+      { id: 10, name: "Spring 2027" },
+      { id: 14, name: "Summer 2027" },
+    ]);
+
+    const { app, deal, events } = await readBack(dataProvider);
+    expect(app.status).toBe("pending");
+    expect(deal.offer_id).toBe(LE);
+    expect(events).toHaveLength(0);
+  });
+
+  it("takes the round Leif chose", async () => {
+    const { dataProvider, application } = buildWorld({
+      appliedTo: LE,
+      cohorts: [
+        cohort(10, "Spring 2027", { applications_close_at: "2027-06-30" }),
+        cohort(14, "Summer 2027", { applications_close_at: "2027-09-30" }),
+      ],
+    });
+
+    const result = await reviewApplication({
+      dataProvider,
+      application,
+      outcome: "offered_other_programme",
+      cohortId: 14,
+    });
+    expect(result.applied).toBe(true);
+
+    const { deal } = await readBack(dataProvider);
+    expect(deal.offer_id).toBe(GYU);
+    expect(deal.cohort_id).toBe(14);
+  });
+
+  it("refuses a round that is not taking applications, even when named", async () => {
+    // A stale tab, holding a round that closed while it was open.
+    const { dataProvider, application } = buildWorld({
+      appliedTo: LE,
+      cohorts: [
+        cohort(10, "Fall 2026"),
+        cohort(12, "Applications closed", { status: "applications_closed" }),
+      ],
+    });
+
+    const result = await reviewApplication({
+      dataProvider,
+      application,
+      outcome: "offered_other_programme",
+      cohortId: 12,
+    });
+    expect(result).toMatchObject({ applied: false, reason: "cohort-invalid" });
+
+    const { app, deal } = await readBack(dataProvider);
+    expect(app.status).toBe("pending");
+    expect(deal.offer_id).toBe(LE);
+  });
+
+  it("asks for no round at all when the destination has none", async () => {
+    // GYU -> The Living Example. The round is not chosen, it is LEFT —
+    // and only on the sale.
+    const { dataProvider, application } = buildWorld({
+      appliedTo: GYU,
+      cohortId: 10,
+    });
+
+    const result = await reviewApplication({
+      dataProvider,
+      application,
+      outcome: "offered_other_programme",
+    });
+    expect(result.applied).toBe(true);
+
+    const { app, deal } = await readBack(dataProvider);
+    expect(deal.offer_id).toBe(LE);
+    expect(deal.cohort_id).toBeNull();
+    // The historical fact survives on the Application, where it belongs.
+    expect(app.intended_cohort_id).toBe(10);
+    expect(app.offer_id).toBe(GYU);
   });
 });
 

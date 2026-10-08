@@ -281,19 +281,30 @@ const getDataProviderWithCustomMethods = () => {
     async reviewApplication(input: {
       applicationId: Identifier;
       outcome: string;
+      cohortId?: Identifier | null;
     }) {
       const { data, error } = await getSupabaseClient().rpc(
         "review_application",
         {
           p_application_id: input.applicationId,
           p_outcome: input.outcome,
+          // The destination ROUND, for a recommendation into a programme that
+          // has rounds and more than one of them open. Sent as null otherwise,
+          // which is what the authority expects and what makes it assign the
+          // only eligible round itself.
+          p_cohort_id: input.cohortId ?? null,
         },
       );
       if (error) {
         console.error("review_application.error", error);
         throw new Error("Failed to record the decision");
       }
-      return data as { status: string; application_status?: string };
+      return data as {
+        status: string;
+        application_status?: string;
+        candidates?: Array<{ id: Identifier; name: string }> | null;
+        recommended_offer_name?: string | null;
+      };
     },
     // Bringing an imported Application into current operations. One
     // transaction for the same reason as above: the Opportunity a decision

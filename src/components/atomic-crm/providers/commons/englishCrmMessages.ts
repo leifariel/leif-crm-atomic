@@ -386,8 +386,16 @@ export const englishCrmMessages = {
         offered_programme: "Offer %{programme}",
         offered_programme_other: "Offer the other programme",
         recommend_confirm_title: "Offer %{name} %{programme} instead?",
-        recommend_confirm_body:
+        recommend_confirm: "Offer %{programme}",
+        recommend_preserved:
           "Their application still records the programme they applied for. Their sales opportunity moves to %{programme}, and Kit may send the message configured for that recommendation.",
+        recommend_only_round:
+          "They would join %{cohort}, the only round still taking applications.",
+        recommend_choose_round: "Which round?",
+        recommend_pick_round: "Offer this round",
+        recommend_blocked_title: "%{programme} has no round open",
+        recommend_blocked_body:
+          "Every round of %{programme} has closed its applications, and a sale with no round becomes a client with no round and no start date. Open a round first, then record this decision.",
       },
       updated: "Application updated",
       empty: "No applications yet.",

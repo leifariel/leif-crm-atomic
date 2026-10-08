@@ -837,6 +837,16 @@ revoke all on function public.record_recommended_programme_change() from authent
 revoke all on function public.enforce_bespoke_kit_separation() from public;
 revoke all on function public.enforce_bespoke_kit_separation() from anon;
 revoke all on function public.enforce_bespoke_kit_separation() from authenticated;
+revoke all on function public.offer_accepting_cohorts(bigint) from public;
+revoke all on function public.offer_accepting_cohorts(bigint) from anon;
+grant execute on function public.offer_accepting_cohorts(bigint) to authenticated;
+grant execute on function public.offer_accepting_cohorts(bigint) to service_role;
+-- The two-argument review_application is gone: a recommendation into a group
+-- programme needs a round, so the third parameter carries it (20261008140000).
+revoke all on function public.review_application(bigint, text, bigint) from public;
+revoke all on function public.review_application(bigint, text, bigint) from anon;
+grant execute on function public.review_application(bigint, text, bigint) to authenticated;
+grant execute on function public.review_application(bigint, text, bigint) to service_role;
 
 -- Retry and the claim belong to the Edge Function, which is the only thing
 -- holding the Kit credential. The browser asks it; it does not ask the

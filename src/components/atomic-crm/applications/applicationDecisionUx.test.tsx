@@ -111,6 +111,12 @@ const build = ({
   offers = [LE, GYU, LEGACY],
   applications = [application()],
   deals = [deal()],
+  cohorts = [FALL],
+}: {
+  offers?: Offer[];
+  applications?: Application[];
+  deals?: Deal[];
+  cohorts?: Cohort[];
 } = {}) => {
   const dataProvider = createDataProvider({
     db: createCrmDb({
@@ -118,7 +124,7 @@ const build = ({
         buildContact({ id: 5, first_name: "Robin", last_name: "Avery" }),
       ],
       offers,
-      cohorts: [FALL],
+      cohorts,
       deals,
       applications,
       kit_tag_mappings: [],
@@ -210,6 +216,123 @@ describe("the review area offers the two new decisions", () => {
     // "may send" — the CRM reads which event a tag is configured for, never
     // Kit's automation topology.
     expect(dialog).toContain("may send");
+    // And the ROUND they would join, named, because Growing Yourself Up has
+    // rounds and exactly one is taking people.
+    expect(dialog).toContain("Growing Yourself Up — Fall 2026");
+    expect(dialog).toContain("the only round still taking applications");
+  });
+
+  it("asks WHICH round when two are open, and offers no single confirm", async () => {
+    await page.viewport(1280, 1200);
+    const { element } = build({
+      cohorts: [
+        {
+          ...FALL,
+          id: 4,
+          name: "Spring 2027",
+          applications_close_at: "2027-06-30",
+        } as unknown as Cohort,
+        {
+          ...FALL,
+          id: 5,
+          name: "Summer 2027",
+          applications_close_at: "2027-09-30",
+        } as unknown as Cohort,
+      ],
+    });
+    const screen = await render(element);
+
+    await screen
+      .getByRole("button", { name: "Offer Growing Yourself Up" })
+      .click();
+    await expect.element(screen.getByRole("dialog")).toBeVisible();
+    const dialog = body();
+    expect(dialog).toContain("Which round?");
+    expect(dialog).toContain("Spring 2027");
+    expect(dialog).toContain("Summer 2027");
+    // One button per round, and no single "Offer Growing Yourself Up"
+    // confirm, because confirming without choosing would be a guess.
+    await expect
+      .element(screen.getByRole("button", { name: "Offer this round" }).first())
+      .toBeVisible();
+    expect(
+      await screen
+        .getByRole("dialog")
+        .getByRole("button", { name: "Offer Growing Yourself Up" })
+        .elements().length,
+    ).toBe(0);
+  });
+
+  it("records the round Leif picks", async () => {
+    await page.viewport(1280, 1200);
+    const { dataProvider, element } = build({
+      cohorts: [
+        {
+          ...FALL,
+          id: 4,
+          name: "Spring 2027",
+          applications_close_at: "2027-06-30",
+        } as unknown as Cohort,
+        {
+          ...FALL,
+          id: 5,
+          name: "Summer 2027",
+          applications_close_at: "2027-09-30",
+        } as unknown as Cohort,
+      ],
+    });
+    const screen = await render(element);
+
+    await screen
+      .getByRole("button", { name: "Offer Growing Yourself Up" })
+      .click();
+    await expect.element(screen.getByRole("dialog")).toBeVisible();
+    // The second row: Summer 2027.
+    await screen
+      .getByRole("button", { name: "Offer this round" })
+      .nth(1)
+      .click();
+    await expect
+      .element(screen.getByText("Decision recorded.", { exact: false }))
+      .toBeVisible();
+
+    const { data: movedDeal } = await dataProvider.getOne<Deal>("deals", {
+      id: 70,
+    });
+    expect(movedDeal.offer_id).toBe(2);
+    expect(movedDeal.cohort_id).toBe(5);
+  });
+
+  it("says no round is open rather than offering a sale with none", async () => {
+    await page.viewport(1280, 1200);
+    const { dataProvider, element } = build({
+      cohorts: [
+        { ...FALL, status: "applications_closed" } as unknown as Cohort,
+      ],
+    });
+    const screen = await render(element);
+
+    await screen
+      .getByRole("button", { name: "Offer Growing Yourself Up" })
+      .click();
+    await expect.element(screen.getByRole("dialog")).toBeVisible();
+    const dialog = body();
+    expect(dialog).toContain("has no round open");
+    expect(dialog).toContain("a client with no round and no start date");
+    // Nothing to click but Cancel.
+    expect(
+      await screen
+        .getByRole("dialog")
+        .getByRole("button", { name: /^Offer/ })
+        .elements().length,
+    ).toBe(0);
+
+    // And nothing was written.
+    const { data: untouched } = await dataProvider.getOne<Application>(
+      "applications",
+      { id: 70 },
+    );
+    expect(untouched.status).toBe("pending");
   });
 
   it("offers bespoke as one menu with two endings, and no third state", async () => {

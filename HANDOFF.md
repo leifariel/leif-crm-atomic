@@ -4121,7 +4121,8 @@ halves that have to coexist:
   says so.
 - **The sales path moves, on the SAME Opportunity.** `deals.offer_id` becomes
   the recommended programme, stage `approved`, outcome cleared — that
-  programme's approved path. Nothing creates a second Opportunity.
+  programme's approved path, **including its round**. Nothing creates a second
+  Opportunity.
 
 **The invariant was already there.** `enforce_application_opportunity_agreement()`
 refuses an Application whose offer disagrees with its Opportunity's **unless a
@@ -4169,6 +4170,69 @@ names, and a contract test asserts they do not. The processed set is therefore
 Approved, Needs Higher Care, Not a Fit, Do Not Engage, Offered the other
 programme, Bespoke acceptance, Bespoke rejection.
 
+### A group destination needs a round — the defect, and the rule
+
+**The first version left the Opportunity on Growing Yourself Up with
+`cohort_id` NULL.** The LE Opportunity it moved had no round to carry, the
+`CASE WHEN group THEN cohort_id` kept that null, and nothing refused it.
+Nothing downstream would have either: **Enrollments have no cohort of their
+own — the Deal's round IS the client's round** — so winning that sale produced
+a GYU client with no round, no start date (`handle_deal_won` reads
+`program_start_at` from the Deal's cohort, and
+`enrollments_start_date_has_a_source_check` is satisfied by a null pair), and
+no presence in any round's capacity, which counts by `cohort_id`. Quiet,
+legal, wrong.
+
+**There was no existing cohort-selection authority to reuse, and that is a
+finding rather than a gap: nothing in this CRM infers a round.** The public
+form takes it from the URL; adoption takes it from the Application's own
+`intended_cohort_id`; a waitlist batch and a Deal edit take it from Leif. Every
+path is given a round by somebody. So this does not start inferring one.
+
+**What IS reused is the predicate.** "Still taking people" already had a
+canonical definition in the public application path — `status =
+'applications_open'` AND the Denver-date window — while
+`classifyApplication` asked only about the status. The public form's is the
+honest one: a round whose applications closed yesterday is not open, whatever
+its status column has not yet been changed to say. It now lives in
+`cohorts/cohortEligibility.ts` (TypeScript) and
+`public.offer_accepting_cohorts()` (SQL), and `publicOfferContext.ts` imports
+it rather than keeping its own copy. `classifyApplication` is deliberately
+left alone: its clause decides whether an IMPORTED record is still review
+work, which is a question about Leif's attention rather than about selling a
+place, and narrowing it would quietly send old questionnaires back to history.
+
+**The rule, at both layers:**
+
+| Rounds of the destination taking applications | What happens |
+|---|---|
+| exactly one | assigned automatically — there is nothing to choose between |
+| none | **refused**, `no-eligible-cohort`, nothing written |
+| more than one | **asked**, `cohort-choice-required` with the candidates |
+| destination has no rounds at all | round cleared — The Living Example has none |
+
+`review_application` takes a third parameter, `p_cohort_id`, defaulting to
+null. The two-argument form is **dropped** rather than kept beside it: two
+overloads where one has a default makes a two-argument call ambiguous, and
+PostgREST would start failing on every decision. A round Leif names is still
+checked against the programme AND against still being open, so a stale tab
+cannot place somebody in a round that closed while it was sitting there
+(`cohort-invalid`).
+
+`RecommendProgrammeDialog` carries all four cases: it names the only round, or
+asks which with one bordered row per round in `ResolveOpportunityDialog`'s
+existing language, or says no round is open and offers nothing to click. There
+is no single confirm button in the choose-one case, because confirming without
+choosing would be a guess.
+
+### The inverse, proved
+
+GYU → The Living Example: the Application keeps `offer_id` = GYU **and
+`intended_cohort_id` = its original round**; the Opportunity becomes LE with
+`cohort_id` NULL, because LE has no rounds. Asserted side by side in the same
+test, in both the domain suite and against real Postgres — the kept round and
+the cleared one are the pair this decision turns on.
+
 ### A bespoke decision cannot send the standard email — twice over
 
 1. **Its own Kit event.** `kit_tag_mappings` is keyed `(offer_id, event)` and
@@ -4207,14 +4271,19 @@ here.
 Nothing automated can create these: the CRM applies tags, it never invents
 them, and `kit_tag_mappings` needs a real `kit_tag_id`. The exact names, each
 following its own programme's existing convention (`MiniDD_` + PascalCase;
-`GYU-` + PascalCase):
+`GYU-` + PascalCase).
+
+**The destination half names the PROGRAMME, not a prefix.** GYU's is
+`GYU-OfferedLE` rather than `GYU-OfferedMiniDD`, because `MiniDD` is the
+sales-call pathway and the historical Kit prefix, not the programme being
+recommended. The existing legacy `MiniDD_*` tags are **not** renamed.
 
 | Programme | Event | Tag |
 |---|---|---|
 | The Living Example | Offered the other programme | `MiniDD_OfferedGYU` |
 | | Bespoke acceptance | `MiniDD_BespokeAcceptance` |
 | | Bespoke rejection | `MiniDD_BespokeRejection` |
-| Growing Yourself Up | Offered the other programme | `GYU-OfferedMiniDD` |
+| Growing Yourself Up | Offered the other programme | `GYU-OfferedLE` |
 | | Bespoke acceptance | `GYU-BespokeAcceptance` |
 | | Bespoke rejection | `GYU-BespokeRejection` |
 
@@ -4228,13 +4297,18 @@ recorded in §8b-kit. Bespoke mappings set themselves to `manual_email`; the
 two `Offered` mappings will read "none" until a migration records the
 automation name Leif gives them.
 
-### The two cross-programme emails — DRAFTS, Leif's to edit
+### The two cross-programme emails — PARKED, not frozen
 
 Drafted from the only applicant-facing copy the repository holds (the two
 public application pages). **The existing Approved / Not Fit / Needs Higher
 Care copy lives in Kit, not here, so it could not be read** — these match the
-voice of the forms, not of the letters they will sit beside. Substance is
-Leif's to correct before pasting into Kit.
+voice of the forms, not of the letters they will sit beside.
+
+**Deliberately not final.** The next-step link has to be truthful about the
+destination workflow, and the LE → GYU letter as drafted points somebody at a
+round the CRM has ALREADY put them in. Whether it should send them to an
+application form at all, or simply tell them which round they are being
+offered, is Leif's question and not this slice's.
 
 **The Living Example → Growing Yourself Up**
 
@@ -4292,17 +4366,24 @@ gives the current one.
 
 ### Proof
 
-- `applicationDecisionExpansion.test.ts` — 11 tests on the domain action,
-  including every refusal leaving the record untouched.
-- `applicationDecisionUx.test.tsx` — 7 tests: the button names the
+- `applicationDecisionExpansion.test.ts` — 18 tests on the domain action,
+  including every refusal leaving the record untouched and all four
+  cohort cases.
+- `applicationDecisionUx.test.tsx` — 10 tests: the button names the
   destination, says nothing when the destination is ambiguous, confirms before
-  recommending, offers bespoke as one menu with two endings, and prints
+  recommending, names the only open round, asks WHICH when two are open and
+  offers no single confirm, says no round is open rather than offering a sale
+  with none, offers bespoke as one menu with two endings, and prints
   "Applied for" beside "Decision" only where the two differ.
-- `contracts/applications/aBespokeDecisionSendsNothing.test.ts` — 15 pinned
-  assertions against the repository's own text.
-- `e2e/applicationDecisionExpansion.spec.ts` — **10 tests, real built app,
+- `contracts/applications/aBespokeDecisionSendsNothing.test.ts` — 20 pinned
+  assertions against the repository's own text, including that the round comes
+  from the resolver and never from the Opportunity being moved.
+- `e2e/applicationDecisionExpansion.spec.ts` — **12 tests, real built app,
   real Postgres, independent SQL read-back, fresh browser**: both directions,
-  all four bespoke combinations, and Approved / NHC / Not Fit / DNE unchanged.
+  zero / one / chosen rounds, all four bespoke combinations, and Approved /
+  NHC / Not Fit / DNE unchanged. The round cases ask the database directly as
+  well as through the page, so a refusal is proved at the authority and not
+  only at the button.
   **No real Kit call is possible** — `KIT_API_KEY` does not exist in the clean
   room and `kit_sync` returns before claiming work without it, so every
   operation stays exactly as the database enqueued it, which is what makes the
@@ -4314,10 +4395,10 @@ chromium file, with the "Offer …" button simply absent. Nothing was wrong with
 the page: `offers` is reference data resetDb deliberately does not clear, so
 another spec's programme was still active and the product correctly stopped
 offering a recommendation it could no longer resolve unambiguously. The spec
-now OWNS that premise — foreign active programmes are set aside for its
-duration and restored afterwards — and asserts it with the offending
-programmes named, so a future failure says what it found. A viewport cannot
-change a decision; a shared catalogue can.
+now OWNS that premise — foreign active programmes AND foreign open rounds are
+set aside for its duration and restored afterwards — and asserts it with the
+offending programmes named, so a future failure says what it found. A viewport
+cannot change a decision; a shared catalogue can.
 
 Sensitivity proved by breaking it three ways: letting the recommendation
 rewrite `applications.offer_id` (2 tests fail), collapsing bespoke into the

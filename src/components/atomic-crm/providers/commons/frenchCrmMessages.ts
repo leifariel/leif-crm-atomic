@@ -385,8 +385,16 @@ export const frenchCrmMessages = {
         offered_programme: "Proposer %{programme}",
         offered_programme_other: "Proposer l'autre programme",
         recommend_confirm_title: "Proposer plutôt %{programme} à %{name} ?",
-        recommend_confirm_body:
+        recommend_confirm: "Proposer %{programme}",
+        recommend_preserved:
           "Sa candidature continue d'indiquer le programme pour lequel elle a postulé. Son opportunité de vente passe à %{programme}, et Kit peut envoyer le message configuré pour cette recommandation.",
+        recommend_only_round:
+          "Elle rejoindrait %{cohort}, la seule session encore ouverte aux candidatures.",
+        recommend_choose_round: "Quelle session ?",
+        recommend_pick_round: "Proposer cette session",
+        recommend_blocked_title: "Aucune session ouverte pour %{programme}",
+        recommend_blocked_body:
+          "Toutes les sessions de %{programme} ont clôturé leurs candidatures, et une vente sans session donne un client sans session ni date de début. Ouvrez d'abord une session, puis enregistrez cette décision.",
       },
       updated: "Candidature mise à jour",
       empty: "Aucune candidature pour le moment.",

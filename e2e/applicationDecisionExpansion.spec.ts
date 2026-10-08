@@ -70,7 +70,7 @@ const NEW_MAPPINGS = [
     offer_id: GYU,
     event: "offered_other_programme",
     kit_tag_id: 970004,
-    kit_tag_name: "GYU-OfferedMiniDD",
+    kit_tag_name: "GYU-OfferedLE",
   },
   {
     offer_id: GYU,
@@ -101,6 +101,7 @@ const NEW_MAPPINGS = [
 // is asserted rather than hoped for — with the offending programmes named, so
 // a future failure says what it found instead of leaving somebody to guess.
 let setAside: Array<{ id: number; name: string }> = [];
+let roundsSetAside: number[] = [];
 
 const isolateCatalogue = async () => {
   const client = db();
@@ -130,18 +131,76 @@ const isolateCatalogue = async () => {
     (active ?? []).map((offer) => offer.name).sort(),
     `the two live programmes, and nothing else: ${JSON.stringify(active)}`,
   ).toEqual(["Growing Yourself Up", "The Living Example"]);
+
+  // And the ROUNDS, for exactly the same reason and with exactly the same
+  // consequence: a foreign open round makes a recommendation ambiguous, or
+  // supplies one where a test meant there to be none. `cohorts` is reference
+  // data resetDb does not clear either.
+  const { data: openRounds } = await client
+    .from("cohorts")
+    .select("id")
+    .eq("status", "applications_open");
+  roundsSetAside = (openRounds ?? []).map((round) => round.id as number);
+  if (roundsSetAside.length > 0) {
+    await client
+      .from("cohorts")
+      .update({ status: "draft" })
+      .in("id", roundsSetAside);
+  }
+};
+
+/**
+ * The Growing Yourself Up rounds a test wants to exist, and nothing else.
+ *
+ * Separate from the applicant's own round: a GYU applicant HAS one, and an LE
+ * applicant offered GYU needs one to be offered INTO. Those are different
+ * facts and conflating them is how the first version of this spec ended up
+ * proving nothing about either.
+ */
+const seedRounds = async (
+  rounds: Array<{ id: number; name: string; close?: string }>,
+) => {
+  const client = db();
+  for (const round of rounds) {
+    await client.from("cohorts").delete().eq("id", round.id);
+    const { error } = await client.from("cohorts").insert({
+      id: round.id,
+      offer_id: GYU,
+      name: round.name,
+      status: "applications_open",
+      applications_open_at: "2026-01-01",
+      applications_close_at: round.close ?? "2027-12-31",
+      program_start_at: "2027-03-01",
+      program_end_at: "2027-04-26",
+    });
+    expect(error).toBeNull();
+  }
+};
+
+const clearRounds = async (ids: number[]) => {
+  const client = db();
+  for (const id of ids) await client.from("cohorts").delete().eq("id", id);
 };
 
 const restoreCatalogue = async () => {
-  if (setAside.length === 0) return;
-  await db()
-    .from("offers")
-    .update({ is_active: true })
-    .in(
-      "id",
-      setAside.map((offer) => offer.id),
-    );
-  setAside = [];
+  const client = db();
+  if (setAside.length > 0) {
+    await client
+      .from("offers")
+      .update({ is_active: true })
+      .in(
+        "id",
+        setAside.map((offer) => offer.id),
+      );
+    setAside = [];
+  }
+  if (roundsSetAside.length > 0) {
+    await client
+      .from("cohorts")
+      .update({ status: "applications_open" })
+      .in("id", roundsSetAside);
+    roundsSetAside = [];
+  }
 };
 
 const seedMappings = async () => {
@@ -366,6 +425,10 @@ test.describe("offering the other programme", () => {
     createSales,
   }) => {
     const email = freshEmail("le-gyu");
+    // One round taking applications, so there is nothing to choose between.
+    await seedRounds([
+      { id: 970201, name: "Growing Yourself Up — Spring 2027" },
+    ]);
     const id = await seedApplicant(createSales, {
       n: 1,
       offerId: LE,
@@ -390,7 +453,15 @@ test.describe("offering the other programme", () => {
           exact: false,
         }),
       ).toBeVisible();
-      await dialog.getByRole("button", { name: /Confirm|Offer/ }).click();
+      // The round they would join, named before the click.
+      await expect(
+        dialog.getByText("the only round still taking applications", {
+          exact: false,
+        }),
+      ).toBeVisible();
+      await dialog
+        .getByRole("button", { name: "Offer Growing Yourself Up" })
+        .click();
       await expect(page.getByText("Decision recorded.")).toBeVisible();
 
       // INDEPENDENT DATABASE READ-BACK — not the page's opinion of itself.
@@ -412,6 +483,9 @@ test.describe("offering the other programme", () => {
       expect(after[0]!.stage).toBe("approved");
       expect(after[0]!.outcome).toBeNull();
       expect(after[0]!.archived_at).toBeNull();
+      // AND A ROUND. The first version of this left it null, which wins into
+      // a client with no round and no start date.
+      expect(after[0]!.cohort_id).toBe(970201);
 
       // The programme change is recorded where the Application/Opportunity
       // agreement guard looks for it — written by the database, since
@@ -479,6 +553,138 @@ test.describe("offering the other programme", () => {
       }
     } finally {
       await cleanupApplicant(1);
+      await clearRounds([970201]);
+    }
+  });
+
+  test("no round open: refused, and said so before the click", async ({
+    page,
+    createSales,
+  }) => {
+    const email = freshEmail("le-gyu-none");
+    // A round exists, and it is not taking applications.
+    await seedRounds([{ id: 970202, name: "Growing Yourself Up — Closed" }]);
+    await db()
+      .from("cohorts")
+      .update({ status: "applications_closed" })
+      .eq("id", 970202);
+    const id = await seedApplicant(createSales, {
+      n: 11,
+      offerId: LE,
+      ownerEmail: email,
+      lastName: "NoRound",
+    });
+    try {
+      await signIn(page, email);
+      await openApplication(page, id.application);
+
+      await page
+        .getByRole("button", { name: "Offer Growing Yourself Up" })
+        .click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByText("has no round open")).toBeVisible();
+      await expect(
+        dialog.getByText("a client with no round and no start date", {
+          exact: false,
+        }),
+      ).toBeVisible();
+      // Nothing to click but Cancel.
+      await expect(dialog.getByRole("button", { name: /^Offer/ })).toHaveCount(
+        0,
+      );
+
+      // INDEPENDENT READ-BACK: nothing happened.
+      const application = await readApplication(id.application);
+      expect(application.status).toBe("pending");
+      expect(application.reviewed_at).toBeNull();
+      const deals = await readDealsFor(id.contact);
+      expect(deals[0]!.offer_id).toBe(LE);
+      expect(deals[0]!.cohort_id).toBeNull();
+      expect(await readOfferEvents(id.deal)).toHaveLength(0);
+      expect(
+        (await readKitOperations(id.application)).filter(
+          (row) => row.kind === "decision",
+        ),
+      ).toHaveLength(0);
+
+      // And the database refuses it directly too, not only the page.
+      const { data: refusal } = await db().rpc("review_application", {
+        p_application_id: id.application,
+        p_outcome: "offered_other_programme",
+        p_cohort_id: null,
+      });
+      expect((refusal as { status: string }).status).toBe("no-eligible-cohort");
+    } finally {
+      await cleanupApplicant(11);
+      await clearRounds([970202]);
+    }
+  });
+
+  test("two rounds open: Leif chooses, and that round is what is recorded", async ({
+    page,
+    createSales,
+  }) => {
+    const email = freshEmail("le-gyu-two");
+    await seedRounds([
+      { id: 970203, name: "Spring 2027", close: "2027-06-30" },
+      { id: 970204, name: "Summer 2027", close: "2027-09-30" },
+    ]);
+    const id = await seedApplicant(createSales, {
+      n: 12,
+      offerId: LE,
+      ownerEmail: email,
+      lastName: "TwoRounds",
+    });
+    try {
+      await signIn(page, email);
+      await openApplication(page, id.application);
+
+      // The database will not guess either, asked directly.
+      const { data: asked } = await db().rpc("review_application", {
+        p_application_id: id.application,
+        p_outcome: "offered_other_programme",
+        p_cohort_id: null,
+      });
+      expect((asked as { status: string }).status).toBe(
+        "cohort-choice-required",
+      );
+      expect(await readApplication(id.application)).toMatchObject({
+        status: "pending",
+      });
+
+      await page
+        .getByRole("button", { name: "Offer Growing Yourself Up" })
+        .click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByText("Which round?")).toBeVisible();
+      await expect(dialog.getByText("Spring 2027")).toBeVisible();
+      await expect(dialog.getByText("Summer 2027")).toBeVisible();
+      // No single confirm, because confirming without choosing is a guess.
+      await expect(
+        dialog.getByRole("button", { name: "Offer Growing Yourself Up" }),
+      ).toHaveCount(0);
+
+      // The second round.
+      await dialog
+        .getByRole("button", { name: "Offer this round" })
+        .nth(1)
+        .click();
+      await expect(page.getByText("Decision recorded.")).toBeVisible();
+
+      const deals = await readDealsFor(id.contact);
+      expect(deals).toHaveLength(1);
+      expect(deals[0]!.offer_id).toBe(GYU);
+      expect(deals[0]!.cohort_id).toBe(970204);
+      // And the application still says what it always said.
+      const application = await readApplication(id.application);
+      expect(application.offer_id).toBe(LE);
+      expect(application.intended_cohort_id).toBeNull();
+      expect(application.recommended_offer_id).toBe(GYU);
+    } finally {
+      await cleanupApplicant(12);
+      await clearRounds([970203, 970204]);
     }
   });
 
@@ -519,9 +725,10 @@ test.describe("offering the other programme", () => {
       expect(after).toHaveLength(1);
       expect(after[0]!.offer_id).toBe(LE);
       // A round belongs to the programme that has rounds. The Living Example
-      // has none, so the sale leaves it behind rather than carrying a cohort
-      // that belongs to another programme.
+      // has none, so the SALE leaves it behind — while the APPLICATION keeps
+      // it, which is the pair this whole decision turns on.
       expect(after[0]!.cohort_id).toBeNull();
+      expect(String(application.intended_cohort_id)).toBe(String(COHORT));
       expect(after[0]!.stage).toBe("approved");
       expect(after[0]!.outcome).toBeNull();
 
@@ -533,7 +740,7 @@ test.describe("offering the other programme", () => {
       const operations = await readKitOperations(id.application);
       const decision = operations.filter((row) => row.kind === "decision");
       expect(decision).toHaveLength(1);
-      expect(decision[0]!.kit_tag_name).toBe("GYU-OfferedMiniDD");
+      expect(decision[0]!.kit_tag_name).toBe("GYU-OfferedLE");
       expect(operations.map((row) => row.kit_tag_name)).not.toContain(
         "GYU-Approved",
       );

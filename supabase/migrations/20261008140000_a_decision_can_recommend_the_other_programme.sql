@@ -350,14 +350,69 @@ create trigger on_deal_recommended_programme_change
   execute function public.record_recommended_programme_change();
 
 -- ---------------------------------------------------------------------------
+-- 6. A recommendation into a group programme needs a round
+-- ---------------------------------------------------------------------------
+-- The first version of this migration left the Opportunity on Growing
+-- Yourself Up with cohort_id NULL, because the LE Opportunity it moved had no
+-- cohort to carry. Nothing refused that, and nothing downstream would have
+-- either: enrollments have no cohort of their own — the Deal's round IS the
+-- client's round — so winning that sale would have produced a GYU client with
+-- no round, no start date (handle_deal_won reads program_start_at from the
+-- Deal's cohort), and no presence in any round's capacity, which counts by
+-- cohort_id. A quiet, legal, wrong record.
+--
+-- THERE IS NO EXISTING COHORT-SELECTION AUTHORITY TO REUSE, and that is a
+-- finding rather than a gap: nothing in this CRM infers a round. The public
+-- form takes it from the URL, adoption takes it from the Application's own
+-- intended_cohort_id, a waitlist batch and a Deal edit take it from Leif. So
+-- this does not invent an inference either — it assigns only where there is
+-- nothing to choose between, and asks Leif otherwise.
+--
+-- What IS reused is the predicate. "Still taking people" already had a
+-- canonical definition in the public application path — the status AND the
+-- Denver-date window — and this is that same question, so it is that same
+-- rule. src/components/atomic-crm/cohorts/cohortEligibility.ts is its one
+-- TypeScript home; this is its one SQL home.
+create or replace function public.offer_accepting_cohorts(p_offer_id bigint)
+returns setof public.cohorts
+language sql
+stable
+set search_path to 'public'
+as $$
+  select c.*
+    from cohorts c
+   where c.offer_id = p_offer_id
+     and c.status = 'applications_open'
+     and (c.applications_open_at is null
+          or (now() at time zone 'America/Denver')::date >= c.applications_open_at)
+     and (c.applications_close_at is null
+          or (now() at time zone 'America/Denver')::date <= c.applications_close_at)
+   order by c.applications_close_at nulls last, c.id;
+$$;
+
+revoke all on function public.offer_accepting_cohorts(bigint) from public;
+revoke all on function public.offer_accepting_cohorts(bigint) from anon;
+grant execute on function public.offer_accepting_cohorts(bigint) to authenticated;
+grant execute on function public.offer_accepting_cohorts(bigint) to service_role;
+
+-- ---------------------------------------------------------------------------
 -- 4. review_application(), with three more answers
 -- ---------------------------------------------------------------------------
 -- Same lock, same refusals, same one transaction. Everything that can refuse
 -- the new outcomes is checked BEFORE the first write, so a refusal is still a
 -- state in which nothing happened.
+-- The third parameter is the destination ROUND, and it exists because a
+-- recommendation into a group programme needs one. It defaults to null, which
+-- is what every existing two-argument caller sends and what every outcome but
+-- the recommendation means. The two-argument form is dropped rather than kept
+-- beside it: two overloads where one has a default makes a two-argument call
+-- ambiguous, and PostgREST would start failing on every decision Leif makes.
+drop function if exists public.review_application(bigint, text);
+
 create or replace function public.review_application(
   p_application_id bigint,
-  p_outcome text
+  p_outcome text,
+  p_cohort_id bigint default null
 ) returns jsonb
 language plpgsql
 set search_path to 'public'
@@ -370,6 +425,8 @@ declare
   v_recommended_offer_id bigint;
   v_recommended offers%rowtype;
   v_candidates int;
+  v_destination_cohort_id bigint;
+  v_eligible_cohorts int;
 begin
   -- The decisions a live review can record. 'denied' and 'waitlist' are
   -- historical-import vocabulary and are not decisions anybody makes here.
@@ -447,6 +504,60 @@ begin
     IF v_deal.pricing_mode = 'scholarship' THEN
       RETURN jsonb_build_object('status', 'scholarship-held', 'opportunity_id', v_deal.id);
     END IF;
+
+    -- A round, when the destination has rounds.
+    --
+    -- Assign where there is nothing to choose between; refuse where there is
+    -- nothing to assign; ask where there is a choice. Never infer one, because
+    -- nothing in this CRM infers a round and the answer becomes part of
+    -- somebody's history.
+    IF v_recommended.type = 'group' THEN
+      SELECT count(*) INTO v_eligible_cohorts
+        FROM public.offer_accepting_cohorts(v_recommended_offer_id);
+
+      IF v_eligible_cohorts = 0 THEN
+        -- Refused rather than written cohortless. A GYU sale with no round
+        -- wins into a client with no round and no start date.
+        RETURN jsonb_build_object(
+          'status', 'no-eligible-cohort',
+          'recommended_offer_id', v_recommended_offer_id,
+          'recommended_offer_name', v_recommended.name
+        );
+      END IF;
+
+      IF p_cohort_id IS NOT NULL THEN
+        -- Leif chose. It still has to be a round of the recommended programme
+        -- that is actually taking people, so a stale tab cannot place somebody
+        -- in a round that closed while it was open.
+        IF NOT EXISTS (
+          SELECT 1 FROM public.offer_accepting_cohorts(v_recommended_offer_id) c
+           WHERE c.id = p_cohort_id
+        ) THEN
+          RETURN jsonb_build_object(
+            'status', 'cohort-invalid',
+            'cohort_id', p_cohort_id,
+            'recommended_offer_id', v_recommended_offer_id
+          );
+        END IF;
+        v_destination_cohort_id := p_cohort_id;
+      ELSIF v_eligible_cohorts = 1 THEN
+        SELECT c.id INTO v_destination_cohort_id
+          FROM public.offer_accepting_cohorts(v_recommended_offer_id) c;
+      ELSE
+        -- Two rounds are both open. Which one somebody joins is a real
+        -- decision, so it is asked for rather than guessed.
+        RETURN jsonb_build_object(
+          'status', 'cohort-choice-required',
+          'recommended_offer_id', v_recommended_offer_id,
+          'recommended_offer_name', v_recommended.name,
+          'candidates', (
+            SELECT jsonb_agg(jsonb_build_object('id', c.id, 'name', c.name)
+                             ORDER BY c.applications_close_at NULLS LAST, c.id)
+              FROM public.offer_accepting_cohorts(v_recommended_offer_id) c
+          )
+        );
+      END IF;
+    END IF;
   END IF;
 
   v_reviewed_at := now();
@@ -474,15 +585,19 @@ begin
     -- programme's approved path. The SAME Opportunity: nothing here creates a
     -- second one.
     --
-    -- A round belongs to the programme that has rounds. Moving into an
-    -- individual programme leaves any cohort behind, exactly as
-    -- transfer_enrolled_opportunity_offer() does, and moving into a group
-    -- programme does not pick one — that is a later conversation, and
-    -- handle_deal_saved() is content with a group Opportunity that has no
-    -- cohort yet.
+    -- A round belongs to the programme that has rounds, and the round was
+    -- settled above: assigned when exactly one is taking people, chosen by
+    -- Leif when several are, and the decision refused outright when none is.
+    -- Moving into an individual programme leaves any round behind, exactly as
+    -- transfer_enrolled_opportunity_offer() does.
     UPDATE deals
        SET offer_id = v_recommended_offer_id,
-           cohort_id = CASE WHEN v_recommended.type = 'group' THEN cohort_id ELSE NULL END,
+           -- The round resolved above for a group destination, and NULL for an
+           -- individual one, which is how a GYU applicant offered The Living
+           -- Example leaves their old round behind. Their APPLICATION keeps
+           -- it: intended_cohort_id is what they asked for and is never
+           -- rewritten here.
+           cohort_id = v_destination_cohort_id,
            stage = 'approved',
            outcome = NULL
      WHERE id = v_deal.id;
@@ -526,6 +641,7 @@ begin
     'opportunity_id', v_deal.id,
     'reviewed_at', v_reviewed_at,
     'recommended_offer_id', v_recommended_offer_id,
+    'destination_cohort_id', v_destination_cohort_id,
     'completed_task_id', v_task_id
   );
 END;
@@ -545,5 +661,12 @@ revoke all on function public.record_recommended_programme_change() from authent
 revoke all on function public.enforce_bespoke_kit_separation() from public;
 revoke all on function public.enforce_bespoke_kit_separation() from anon;
 revoke all on function public.enforce_bespoke_kit_separation() from authenticated;
+
+-- The two-argument form is gone, so its grants go with it and the new shape
+-- gets the same ones.
+revoke all on function public.review_application(bigint, text, bigint) from public;
+revoke all on function public.review_application(bigint, text, bigint) from anon;
+grant execute on function public.review_application(bigint, text, bigint) to authenticated;
+grant execute on function public.review_application(bigint, text, bigint) to service_role;
 
 commit;

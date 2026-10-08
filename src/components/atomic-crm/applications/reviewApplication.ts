@@ -1,6 +1,7 @@
 import type { DataProvider, Identifier } from "ra-core";
 
-import type { Application, Deal, Enrollment, Offer } from "../types";
+import type { Application, Cohort, Deal, Enrollment, Offer } from "../types";
+import { acceptingCohortsOf } from "../cohorts/cohortEligibility";
 import {
   applyDoNotEngageToContact,
   buildDoNotEngageDealUpdate,
@@ -30,29 +31,49 @@ export type ApplicationReviewOutcome =
   | "bespoke_accepted"
   | "bespoke_rejected";
 
+export type ReviewApplicationRefusal =
+  | "already-reviewed"
+  | "no-opportunity"
+  | "opportunity-mismatch"
+  | "outcome-invalid"
+  | "application-invalid"
+  | "opportunity-invalid"
+  // Only the recommendation can reach these, and every one of them is
+  // checked before anything is written.
+  | "recommendation-ambiguous"
+  | "already-enrolled"
+  | "scholarship-held"
+  // The destination has rounds and none of them is taking people. Refused
+  // rather than written cohortless: a group sale with no round wins into a
+  // client with no round and no start date.
+  | "no-eligible-cohort"
+  // Two rounds are both open, so which one somebody joins is a real decision
+  // and is asked for rather than guessed. The candidates come back with it.
+  | "cohort-choice-required"
+  | "cohort-invalid";
+
 export type ReviewApplicationResult =
   | { applied: true }
   | {
       applied: false;
-      reason:
-        | "already-reviewed"
-        | "no-opportunity"
-        | "opportunity-mismatch"
-        | "outcome-invalid"
-        | "application-invalid"
-        | "opportunity-invalid"
-        // Only the recommendation can hit these three, and all three are
-        // checked before anything is written.
-        | "recommendation-ambiguous"
-        | "already-enrolled"
-        | "scholarship-held";
+      reason: ReviewApplicationRefusal;
+      /** Present on cohort-choice-required: the rounds Leif may choose. */
+      candidates?: Array<{ id: Identifier; name: string }>;
+      /** Present on the cohort refusals: the programme being recommended. */
+      recommendedOfferName?: string;
     };
 
 type ReviewCapableProvider = DataProvider & {
   reviewApplication?: (input: {
     applicationId: Identifier;
     outcome: ApplicationReviewOutcome;
-  }) => Promise<{ status: string; application_status?: string }>;
+    cohortId?: Identifier | null;
+  }) => Promise<{
+    status: string;
+    application_status?: string;
+    candidates?: Array<{ id: Identifier; name: string }> | null;
+    recommended_offer_name?: string | null;
+  }>;
 };
 
 // Centralizes every write an Application review decision requires across
@@ -71,6 +92,7 @@ export const reviewApplication = async ({
   dataProvider,
   application,
   outcome,
+  cohortId = null,
 }: {
   dataProvider: DataProvider;
   application: Pick<Application, "id">;
@@ -78,6 +100,15 @@ export const reviewApplication = async ({
   // from the Application under the lock, because a caller's copy of it is
   // exactly as stale as the status check it was meant to accompany.
   outcome: ApplicationReviewOutcome;
+  /**
+   * The destination ROUND, when the recommended programme has rounds and more
+   * than one of them is taking people. Null everywhere else — including when
+   * exactly one is, because then there is nothing to choose and the authority
+   * assigns it. A round named here is still checked against the programme and
+   * against whether it is still open, so a stale tab cannot place somebody in
+   * a round that closed while it was sitting there.
+   */
+  cohortId?: Identifier | null;
 }): Promise<ReviewApplicationResult> => {
   // ONE authority, one transaction, one lock.
   //
@@ -92,20 +123,24 @@ export const reviewApplication = async ({
   // overwriting it. See 20261001090000.
   const rpc = (dataProvider as ReviewCapableProvider).reviewApplication;
   if (typeof rpc === "function") {
-    const result = await rpc({ applicationId: application.id, outcome });
+    const result = await rpc({
+      applicationId: application.id,
+      outcome,
+      cohortId,
+    });
     if (result.status === "reviewed") return { applied: true };
     return {
       applied: false,
-      reason: (result.status ?? "already-reviewed") as Exclude<
-        ReviewApplicationResult,
-        { applied: true }
-      >["reason"],
+      reason: (result.status ?? "already-reviewed") as ReviewApplicationRefusal,
+      candidates: result.candidates ?? undefined,
+      recommendedOfferName: result.recommended_offer_name ?? undefined,
     };
   }
   return await reviewApplicationMirror({
     dataProvider,
     applicationId: application.id,
     outcome,
+    cohortId,
   });
 };
 
@@ -120,10 +155,12 @@ export const reviewApplicationMirror = async ({
   dataProvider,
   applicationId,
   outcome,
+  cohortId = null,
 }: {
   dataProvider: DataProvider;
   applicationId: Identifier;
   outcome: ApplicationReviewOutcome;
+  cohortId?: Identifier | null;
 }): Promise<ReviewApplicationResult> => {
   const { data: currentApplication } = await dataProvider.getOne<Application>(
     "applications",
@@ -148,6 +185,7 @@ export const reviewApplicationMirror = async ({
   // Everything the recommendation can refuse, resolved BEFORE the first
   // write, so a refusal still means nothing happened.
   let recommended: Offer | null = null;
+  let destinationCohortId: Identifier | null = null;
   if (outcome === "offered_other_programme") {
     const resolved = await resolveRecommendedProgramme(
       dataProvider,
@@ -172,6 +210,44 @@ export const reviewApplicationMirror = async ({
     if (currentDeal.pricing_mode === "scholarship") {
       return { applied: false, reason: "scholarship-held" };
     }
+
+    // A round, when the destination has rounds. Assign where there is nothing
+    // to choose between, refuse where there is nothing to assign, ask where
+    // there is a choice — never infer one.
+    if (recommended.type === "group") {
+      const { data: cohorts } = await dataProvider.getList<Cohort>("cohorts", {
+        filter: {},
+        pagination: { page: 1, perPage: 200 },
+        sort: { field: "id", order: "ASC" },
+      });
+      const eligible = acceptingCohortsOf(recommended.id, cohorts);
+      if (eligible.length === 0) {
+        return {
+          applied: false,
+          reason: "no-eligible-cohort",
+          recommendedOfferName: recommended.name,
+        };
+      }
+      if (cohortId != null) {
+        const chosen = eligible.find(
+          (cohort) => String(cohort.id) === String(cohortId),
+        );
+        if (!chosen) return { applied: false, reason: "cohort-invalid" };
+        destinationCohortId = chosen.id;
+      } else if (eligible.length === 1) {
+        destinationCohortId = eligible[0].id;
+      } else {
+        return {
+          applied: false,
+          reason: "cohort-choice-required",
+          recommendedOfferName: recommended.name,
+          candidates: eligible.map((cohort) => ({
+            id: cohort.id,
+            name: cohort.name,
+          })),
+        };
+      }
+    }
   }
 
   const reviewedAt = new Date().toISOString();
@@ -189,7 +265,7 @@ export const reviewApplicationMirror = async ({
 
   await dataProvider.update("deals", {
     id: currentDeal.id,
-    data: buildDealUpdate(outcome, recommended, currentDeal),
+    data: buildDealUpdate(outcome, recommended, destinationCohortId),
     previousData: currentDeal,
   });
 
@@ -257,7 +333,7 @@ const resolveRecommendedProgramme = async (
 const buildDealUpdate = (
   outcome: ApplicationReviewOutcome,
   recommended: Offer | null,
-  currentDeal: Pick<Deal, "cohort_id">,
+  destinationCohortId: Identifier | null,
 ): Partial<Deal> => {
   switch (outcome) {
     case "approved":
@@ -271,12 +347,15 @@ const buildDealUpdate = (
       return { stage: "approved", outcome: null };
     case "offered_other_programme":
       // The SAME Opportunity moves to the recommended programme and behaves
-      // like that programme's approved path. A round belongs to the programme
-      // that has rounds, so moving into an individual programme leaves any
-      // cohort behind — and moving into a group one does not pick a round.
+      // like that programme's approved path. The round was settled before any
+      // of this was written: assigned when exactly one is taking people,
+      // chosen by Leif when several are, the decision refused outright when
+      // none is — and null for an individual destination, which is how a GYU
+      // applicant offered The Living Example leaves their old round behind
+      // while their APPLICATION keeps it.
       return {
         offer_id: recommended!.id,
-        cohort_id: recommended!.type === "group" ? currentDeal.cohort_id : null,
+        cohort_id: destinationCohortId,
         stage: "approved",
         outcome: null,
       };

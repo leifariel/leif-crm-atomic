@@ -26,7 +26,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-import type { Application, Offer } from "../types";
+import type { Application, Cohort, Offer } from "../types";
+import { acceptingCohortsOf } from "../cohorts/cohortEligibility";
+import { RecommendProgrammeDialog } from "./RecommendProgrammeDialog";
 import {
   applicationStatusBadgeVariant,
   applicationStatusLabels,
@@ -58,6 +60,15 @@ const REFUSAL_NOTICE: Record<string, string> = {
     "This person is already enrolled, so their programme moves through the client page rather than an application decision.",
   "scholarship-held":
     "This opportunity holds a scholarship place, so its programme cannot change until that place is released.",
+  // The dialog says both of these before the click, so reaching them here
+  // means the rounds changed underneath an open page. Said again rather than
+  // swallowed, because nothing was recorded either time.
+  "no-eligible-cohort":
+    "That programme has no round still taking applications, so nothing was recorded. Open a round first.",
+  "cohort-choice-required":
+    "That programme has more than one round open now, so the round has to be chosen. Nothing was recorded.",
+  "cohort-invalid":
+    "That round is no longer taking applications, so nothing was recorded.",
 };
 
 /**
@@ -81,11 +92,29 @@ const useRecommendedProgramme = (
     },
     { retry: false },
   );
+  const { data: cohorts } = useGetList<Cohort>(
+    "cohorts",
+    {
+      filter: {},
+      pagination: { page: 1, perPage: 200 },
+      sort: { field: "id", order: "ASC" },
+    },
+    { retry: false },
+  );
   const candidates = (offers ?? []).filter(
     (offer) =>
       offer.is_active !== false && String(offer.id) !== String(fromOfferId),
   );
-  return candidates.length === 1 ? candidates[0] : null;
+  const recommended = candidates.length === 1 ? candidates[0] : null;
+  return {
+    recommended,
+    // The same predicate the authority uses, from the same module, so the
+    // dialog cannot offer a round the database is about to refuse.
+    eligibleCohorts:
+      recommended && recommended.type === "group"
+        ? acceptingCohortsOf(recommended.id, cohorts)
+        : [],
+  };
 };
 
 // The operational control area of the Application review page (Native
@@ -123,17 +152,21 @@ export const ApplicationReviewActions = ({
   const [confirmingDoNotEngage, setConfirmingDoNotEngage] = useState(false);
   const [confirmingRecommendation, setConfirmingRecommendation] =
     useState(false);
-  const recommended = useRecommendedProgramme(
+  const { recommended, eligibleCohorts } = useRecommendedProgramme(
     fromOfferId ?? application.offer_id,
   );
 
-  const runOutcome = async (outcome: ApplicationReviewOutcome) => {
+  const runOutcome = async (
+    outcome: ApplicationReviewOutcome,
+    cohortId: Identifier | null = null,
+  ) => {
     setPendingOutcome(outcome);
     try {
       const result = await reviewApplication({
         dataProvider,
         application,
         outcome,
+        cohortId,
       });
       if (!result.applied) {
         // The authority refused, under its lock, from current truth — a stale
@@ -284,36 +317,23 @@ export const ApplicationReviewActions = ({
         }}
         onClose={() => setConfirmingDoNotEngage(false)}
       />
-      {/* Confirmed, because two consequential things follow: the sales path
-          moves to the other programme, and Kit may send that programme's
-          cross-programme message. "May" is the honest word — the CRM reads
-          which event a tag is configured for and never Kit's automation
-          topology (kitAutomationRisk.ts). */}
-      <Confirm
-        isOpen={confirmingRecommendation && recommended != null}
-        title={translate(
-          "resources.applications.review.recommend_confirm_title",
-          {
-            _: "Offer %{name} %{programme} instead?",
-            name: applicantName,
-            programme: recommended?.name ?? "",
-          },
-        )}
-        content={translate(
-          "resources.applications.review.recommend_confirm_body",
-          {
-            _: "Their application still records the programme they applied for. Their sales opportunity moves to %{programme}, and Kit may send the message configured for that recommendation.",
-            programme: recommended?.name ?? "",
-          },
-        )}
-        confirmColor="primary"
-        loading={isBusy}
-        onConfirm={() => {
-          setConfirmingRecommendation(false);
-          runOutcome("offered_other_programme");
-        }}
-        onClose={() => setConfirmingRecommendation(false)}
-      />
+      {/* Not the generic Confirm any more. The destination has ROUNDS, and
+          which round somebody joins is a decision the dialog has to be able
+          to carry — see RecommendProgrammeDialog for the four cases. */}
+      {recommended && (
+        <RecommendProgrammeDialog
+          open={confirmingRecommendation}
+          onOpenChange={setConfirmingRecommendation}
+          applicantName={applicantName}
+          recommended={recommended}
+          eligibleCohorts={eligibleCohorts}
+          busy={isBusy}
+          onConfirm={(cohortId) => {
+            setConfirmingRecommendation(false);
+            runOutcome("offered_other_programme", cohortId);
+          }}
+        />
+      )}
     </>
   );
 };

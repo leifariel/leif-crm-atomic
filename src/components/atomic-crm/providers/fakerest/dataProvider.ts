@@ -940,15 +940,24 @@ export const createDataProvider = ({
     reviewApplication: async (input: {
       applicationId: Identifier;
       outcome: string;
+      cohortId?: Identifier | null;
     }) => {
       const result = await reviewApplicationMirror({
         dataProvider,
         applicationId: input.applicationId,
         outcome: input.outcome as ApplicationReviewOutcome,
+        cohortId: input.cohortId ?? null,
       });
+      // Shaped exactly like the RPC's jsonb, field for field — the cohort
+      // answers carry a payload, and a key missing here is a field the demo
+      // silently loses while production has it.
       return result.applied
         ? { status: "reviewed" }
-        : { status: result.reason };
+        : {
+            status: result.reason,
+            candidates: result.candidates ?? null,
+            recommended_offer_name: result.recommendedOfferName ?? null,
+          };
     },
     createManualApplication: async (input: ManualApplicationInput) => {
       const result = await createManualApplicationMirror(dataProvider, input);

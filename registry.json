@@ -1882,6 +1882,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/cohorts/cohortEligibility.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/cohorts/cohortDates.ts",
           "type": "registry:component"
         },
@@ -2067,6 +2071,10 @@
         },
         {
           "path": "src/components/atomic-crm/applications/ResolveOpportunityDialog.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/applications/RecommendProgrammeDialog.tsx",
           "type": "registry:component"
         },
         {

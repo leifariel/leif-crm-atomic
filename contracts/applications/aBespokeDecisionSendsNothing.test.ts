@@ -36,6 +36,12 @@ const REVIEW = read(
   "src/components/atomic-crm/applications/reviewApplication.ts",
 );
 const TABLES = read("supabase/schemas/01_tables.sql");
+const ELIGIBILITY = read(
+  "src/components/atomic-crm/cohorts/cohortEligibility.ts",
+);
+const PUBLIC_CONTEXT = read(
+  "src/components/atomic-crm/public-application/publicOfferContext.ts",
+);
 const GRANTS = read("supabase/schemas/06_grants.sql");
 
 describe("a bespoke decision cannot send the standard email", () => {
@@ -194,6 +200,72 @@ describe("a recommendation moves the sale and never the application", () => {
       "if exists (select 1 from enrollments where opportunity_id = new.id) then",
     );
     expect(MIGRATION).toContain("'already-enrolled'");
+  });
+});
+
+describe("a recommendation into a group programme needs a round", () => {
+  test("none of the three cohort refusals can happen after a write", () => {
+    const beforeFirstWrite = MIGRATION.slice(
+      0,
+      MIGRATION.indexOf("UPDATE applications"),
+    );
+    for (const refusal of [
+      "'no-eligible-cohort'",
+      "'cohort-choice-required'",
+      "'cohort-invalid'",
+    ]) {
+      expect(beforeFirstWrite).toContain(refusal);
+    }
+  });
+
+  test("the round comes from the resolver, never from the Opportunity being moved", () => {
+    // The first version wrote `cohort_id = case when group then cohort_id end`,
+    // which carried the LE Opportunity's own (null) round into Growing
+    // Yourself Up and left a group sale with no round.
+    const dealUpdate = MIGRATION.slice(
+      MIGRATION.indexOf("SET offer_id = v_recommended_offer_id"),
+    ).slice(0, 700);
+    expect(dealUpdate).toContain("cohort_id = v_destination_cohort_id");
+    expect(dealUpdate).not.toContain("THEN cohort_id ELSE");
+  });
+
+  test("nothing infers a round: it is assigned only when there is exactly one", () => {
+    const branch = MIGRATION.slice(
+      MIGRATION.indexOf("IF v_recommended.type = 'group' THEN"),
+    ).slice(0, 2600);
+    expect(branch).toContain("IF v_eligible_cohorts = 0 THEN");
+    expect(branch).toContain("ELSIF v_eligible_cohorts = 1 THEN");
+    expect(branch).toContain("'cohort-choice-required'");
+    // A chosen round is still checked against the programme AND against still
+    // being open, so a stale tab cannot place somebody in a closed round.
+    expect(branch).toContain(
+      "FROM public.offer_accepting_cohorts(v_recommended_offer_id) c",
+    );
+    expect(branch).toContain("WHERE c.id = p_cohort_id");
+  });
+
+  test("eligibility is ONE rule with one home per language", () => {
+    // SQL.
+    expect(MIGRATION).toContain(
+      "create or replace function public.offer_accepting_cohorts(p_offer_id bigint)",
+    );
+    expect(MIGRATION).toContain("c.status = 'applications_open'");
+    expect(MIGRATION).toContain("(now() at time zone 'America/Denver')::date");
+    // TypeScript — and the public form now shares it rather than holding a
+    // second copy that would eventually disagree.
+    expect(ELIGIBILITY).toContain("export const isCohortAcceptingApplications");
+    expect(PUBLIC_CONTEXT).toContain("isCohortAcceptingApplications(cohort)");
+    expect(PUBLIC_CONTEXT).not.toContain(
+      'cohort.status === "applications_open"',
+    );
+  });
+
+  test("a recommendation never rewrites the round the applicant asked for", () => {
+    const appUpdate = MIGRATION.slice(
+      MIGRATION.indexOf("UPDATE applications"),
+      MIGRATION.indexOf("-- 2. The Opportunity, aligned with it."),
+    );
+    expect(appUpdate).not.toContain("intended_cohort_id");
   });
 });
 

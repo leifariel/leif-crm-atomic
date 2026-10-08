@@ -1,7 +1,7 @@
 import type { DataProvider } from "ra-core";
 
 import type { Cohort, Offer } from "../types";
-import { getDenverDateString } from "../dashboard/artOracle/selectDailyArtwork";
+import { isCohortAcceptingApplications } from "../cohorts/cohortEligibility";
 
 // The public form's read-side context: only the handful of fields an
 // applicant is allowed to see (name, whether applications are open) —
@@ -71,13 +71,10 @@ export const getGroupCohortContext = async (
     return { kind: "not-found" };
   }
 
-  const today = getDenverDateString();
-  const isAccepting =
-    cohort.status === "applications_open" &&
-    (!cohort.applications_open_at || today >= cohort.applications_open_at) &&
-    (!cohort.applications_close_at || today <= cohort.applications_close_at);
-
-  if (!isAccepting) {
+  // This rule now lives in cohorts/cohortEligibility.ts, because an
+  // Application decision that recommends Growing Yourself Up has to ask the
+  // same question and a second copy of it would eventually disagree.
+  if (!isCohortAcceptingApplications(cohort)) {
     return {
       kind: "group-closed",
       offerName: offer.name,
