@@ -166,6 +166,7 @@ const ApplicationShowContent = () => {
             <ApplicationAnswerSections
               applicationId={record.id}
               rawAnswers={record.raw_answers}
+              formKey={record.form_key}
             />
           </Section>
 

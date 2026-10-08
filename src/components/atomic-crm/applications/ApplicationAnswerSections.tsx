@@ -38,11 +38,25 @@ import { ApplicationResponses } from "./ApplicationResponses";
 export const ApplicationAnswerSections = ({
   applicationId,
   rawAnswers,
+  formKey,
 }: {
   applicationId: Identifier;
   rawAnswers: Record<string, unknown> | null | undefined;
+  /**
+   * `applications.form_key`, which decides whether an authoritative wording
+   * for this submission exists at all.
+   *
+   * It is written in exactly one place: materialize_native_application_
+   * responses(), in the SAME transaction that writes application_responses.
+   * So a non-null form_key means this submission's own question wording is
+   * recorded and reachable, and a guessed label is never acceptable for it.
+   * Null means no registry wording ever existed — a recovered Notion record,
+   * or a native submission whose Offer had no registered form version — and
+   * the key-label map is the only thing that can name those questions.
+   */
+  formKey?: string | null;
 }) => {
-  const { data: responses } = useGetList<ApplicationResponse>(
+  const { data: responses, isPending } = useGetList<ApplicationResponse>(
     "application_responses",
     {
       filter: { application_id: applicationId },
@@ -50,6 +64,28 @@ export const ApplicationAnswerSections = ({
       sort: { field: "position", order: "ASC" },
     },
   );
+
+  // A VERSIONED submission waits for its own words. Never guesses them.
+  //
+  // The key-label map (answerLabels.ts) is keyed only by question_key, and a
+  // key can outlive the question it asked: gyu_commitment_scale asked "On a
+  // scale from 1–10, how ready are you…" under the old Growing Yourself Up
+  // form and "On a scale of 1–10, how committed are you…" under the shared
+  // set. One map entry cannot be true for both generations. So for an
+  // application whose wording IS recorded, the map is not an authority and is
+  // not consulted while the recorded wording is still loading — a moment of
+  // nothing is better than a moment of the wrong question against somebody's
+  // answer.
+  //
+  // This is deliberately NOT the blanket isPending gate that was here before.
+  // That gate hid a person's words: CI caught an imported Application whose
+  // answers live ONLY in raw_answers rendering an empty section, because it
+  // waited on a query that had nothing to say about it. The branch is the
+  // point — versioned submissions wait, raw-only ones never do.
+  const versioned = formKey != null && formKey !== "";
+  if (versioned && isPending) {
+    return <ApplicationResponses applicationId={applicationId} />;
+  }
 
   // While the responses are still unknown, every raw answer renders.
   //
