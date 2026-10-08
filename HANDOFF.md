@@ -4106,10 +4106,58 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8f. Application decision expansion — BUILT, NOT YET DEPLOYED (2026-10-08)
+## 8f. Application decision expansion — DEPLOYED 2026-10-08, AWAITING PRODUCTION ACCEPTANCE
 
-Two decisions an Application review could not record. Migration
-`20261008140000`, deterministic, 157 total.
+**`origin/main` = `442b4483`**, four commits, oldest → newest: `d335b2c4`
+(the decision), `06f7cb29` (handoff), `9cd26fbb` (the round), `442b4483` (the
+final names). Migration `20261008140000`, deterministic, **157 total**.
+
+**`📡 Push supabase migrations` SUCCEEDED**, after
+`🔒 Verify production project identity`, and `📡 Deploy supabase functions`
+succeeded too. The only red step in the whole Deploy run is the long-standing
+`📡 Deploy GitHub pages`. `✅ Check` is green throughout — Typecheck, Test,
+Build, ESLint, e2e-test — and Prettier and ESLint are green in the Deploy run.
+
+**Reading that run correctly, because it is easy to get backwards.** The steps
+named "Check SUPABASE_… secret" and "Supabase deployment skipped" are WARNING
+steps: each runs only when something is missing. Seeing them all *skipped* is
+the healthy state, and it means `IS_SUPABASE_CONFIGURED` was true. An earlier
+report of this job described those skips as the deployment having been skipped,
+which was exactly inverted. The step to look for is
+`📡 Push supabase migrations` itself.
+
+**Vercel production carries the new UI, proved by content.** The bundle it
+serves, `/assets/index-CAJmOI5b.js`, contains `Bespoke Denied`,
+`Bespoke Accepted`, `offered_other_programme`, `recommended_offer_id`,
+`Which round?`, `Offer this round`, `has no round open` and
+`the only round still taking applications` — every one of them absent from the
+previous production commit — and **none** of the superseded names
+(`MiniDD_OfferedGYU`, `GYU-OfferedLE`, `BespokeAcceptance`, `bespoke_rejected`,
+`Bespoke rejection`).
+
+**Two production facts provable without database credentials**, by what
+PostgREST answers an anonymous caller: `offer_accepting_cohorts(p_offer_id)`
+and `review_application(p_application_id, p_outcome, p_cohort_id)` both answer
+`42501 permission denied for function` — the error for a function that EXISTS
+and is closed to `anon` — where a name that does not exist answers `PGRST202
+Could not find the function`. So both new authorities are live, and neither is
+reachable by the public key.
+
+Payment commit `c9dcc918` is not an ancestor. No Builder file is on
+`origin/main`. No Gmail or sales-call file changed in the range.
+
+### ⚠️ DO NOT USE THE NEW DECISIONS ON REAL APPLICANTS UNTIL THE SIX TAGS ARE MAPPED
+
+The code is live; the CRM does not yet know the six Kit tag ids. Deciding
+before they are mapped records the decision correctly and **silently reaches
+Kit with nothing** — `enqueue_kit_application_sync()` returns null on an
+unmapped event, so the applicant is never tagged and the cross-programme email
+never goes. The decision is one-way (there is no decision editing yet), so
+that is not something to undo afterwards.
+
+**Offer Growing Yourself Up**, **Offer The Living Example**, **Bespoke
+Accepted** and **Bespoke Denied** are off limits on a real applicant until the
+mapping step below is finished and the read-back proves all six.
 
 **OFFERING THE OTHER PROGRAMME IS NOT A REJECTION.** Leif is willing to work
 with this person; she thinks the other programme suits them better. The two
