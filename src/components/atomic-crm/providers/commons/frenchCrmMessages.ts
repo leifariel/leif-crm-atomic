@@ -338,6 +338,7 @@ export const frenchCrmMessages = {
       action: {
         new: "Nouvelle cohorte",
         create: "Créer une cohorte",
+        edit: "Modifier la cohorte",
       },
       enrolled_count: "%{enrolled} / %{maximum} inscrits",
       enrolled_count_label: "Inscrits",

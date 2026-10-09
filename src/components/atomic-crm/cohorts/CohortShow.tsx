@@ -128,7 +128,16 @@ const CohortShowContent = () => {
             )}
             label={record.name}
           />
-          <EditButton />
+          {/* "Edit" alone did not say WHAT it edits, on a page that sits
+              under a programme and shows its clients. A round and its
+              programme are different objects with different settings — the
+              programme's Kit automation and payment options live on the
+              programme — so the action names the one it opens. */}
+          <EditButton
+            label={translate("resources.cohorts.action.edit", {
+              _: "Edit cohort",
+            })}
+          />
         </div>
       </div>
 

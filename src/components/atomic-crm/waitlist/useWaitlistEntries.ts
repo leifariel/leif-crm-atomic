@@ -64,14 +64,33 @@ export const useWaitlistEntries = ({
   const contactIds = [
     ...new Set(activeEntries.map((entry) => entry.contact_id)),
   ];
-  const { data: contacts, isPending: contactsPending } = useGetMany<Contact>(
+  const { data: contacts } = useGetMany<Contact>(
     "contacts",
     { ids: contactIds },
-    { enabled: contactIds.length > 0 },
+    {
+      enabled: contactIds.length > 0,
+      // ADDING ONE PERSON MUST NOT UNMOUNT THE PAGE.
+      //
+      // The id set is part of this query's key, so adding somebody makes it
+      // a NEW query with no cached answer — which reported "pending" with no
+      // data, and every page that hosts a waitlist guards on that with
+      // `if (isPending) return null`. The whole page came out of the DOM for
+      // a moment, the document collapsed to the height of the window, the
+      // browser clamped the scroll to 0, and Leif — who adds people several
+      // at a time — was returned to the top after every single one.
+      //
+      // Measured: scrollY 733 before the add, 0 after, with the document
+      // height unchanged either side. Keeping the previous answer while the
+      // new one loads means the rows she was already looking at never stop
+      // existing, so there is nothing to collapse and nothing to restore.
+      placeholderData: (previous: Contact[] | undefined) => previous,
+    },
   );
 
+  // Pending means "nothing to show yet", not "something is in flight". A
+  // waitlist that has already rendered keeps rendering.
   const isPending =
-    entriesPending || (contactIds.length > 0 && contactsPending);
+    entriesPending || (contactIds.length > 0 && contacts == null);
 
   if (isPending) {
     return { isPending: true, entries: [] as WaitlistEntryRow[] };

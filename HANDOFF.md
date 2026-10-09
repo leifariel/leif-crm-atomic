@@ -4105,6 +4105,128 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8g. Programme configuration polish — IN PROGRESS (2026-10-09)
+
+Three bounded jobs. **Two are done; the payment-option configuration UX is
+audited and NOT built** — see the audit below for why that was the right place
+to stop.
+
+### B. A round's Edit says which object it edits
+
+`CohortShow`'s action read **Edit**, on a page that sits under a programme and
+lists its clients. It now reads **Edit cohort**. A round and its programme are
+different objects with different settings — the programme's Kit automation and
+payment options live on the programme — so the action names the one it opens.
+Nothing else moved: no programme Kit mapping is duplicated onto a round, and
+no programme summary was added to a cohort page.
+
+### C. Adding to a waitlist no longer sends Leif to the top
+
+Leif adds people several at a time — they arrive through Instagram and she
+works through them in one sitting — and every add was costing her a scroll
+back down.
+
+**Root cause, measured rather than guessed.** `useWaitlistEntries` resolves
+names with `useGetMany("contacts", { ids: contactIds })`. The id set is part
+of that query's KEY, so adding somebody makes it a **new query with no cached
+answer** — it reported `isPending` with no data, and every page that hosts a
+waitlist guards on exactly that with `if (isPending) return null`. The whole
+page left the DOM for a moment, the document collapsed to the height of the
+window, the browser clamped the scroll to 0, and the page came back at the
+top.
+
+Measured on the real built app: **scrollY 733 before the add, 0 after**, with
+`document.documentElement.scrollHeight` unchanged at 1233 either side — so it
+was never a content-height change, and never navigation. A trace of the
+teardown also ruled out the dialog: opening the modal moves the page 733 → 318
+(see the finding below) but **cancelling it leaves 318 alone**. Only a save
+reached 0.
+
+**The repair is structural, not a remembered offset.** The contacts query
+keeps its previous answer while the new one loads, so the rows Leif was
+looking at never stop existing — there is nothing to collapse and nothing to
+restore. `isPending` now means "nothing to show yet" rather than "something is
+in flight".
+
+`e2e/waitlistQuickAddKeepsPlace.spec.ts` proves it on the programme page and
+on a round's page, adding two people in a row. With the hook reverted it fails
+`Expected > 200, Received 0` — the defect exactly.
+
+**Two things the test itself taught.** Its first version passed against the
+broken build: the clean room's page is short enough that the Waitlist heading
+was already on screen at scrollY 0, so `scrollIntoViewIfNeeded()` did nothing
+and "is the heading visible" was trivially true. It now forces a short
+viewport, scrolls to the bottom, asserts it actually moved, and asserts the
+**scroll position** — which is the thing that was lost. A test that cannot
+reach the fold cannot see a defect that only exists below it.
+
+**Reported, not fixed: opening any modal on a scrolled page moves it.**
+scrollY 733 → 318 the moment the dialog opens, from the Radix/
+`react-remove-scroll` body lock (`overflow: hidden; position: relative`), and
+it stays there on cancel. That is every modal in the CRM, not the waitlist's,
+and it is a separate piece of work.
+
+### A. Payment options — audited, and deliberately not built yet
+
+The generic table is real: `OfferShow.tsx` renders payment options with the
+admin kit's `DataTable`, which brings row checkboxes, Select all, Export and
+Delete by default. None of that is Leif's job, which is to configure what a
+programme offers.
+
+**1. The model.** `offer_payment_options (id, offer_id, name, total,
+installments, installment_amount, is_public, pricing_mode)`. `is_public`
+distinguishes "offered to everyone" from "authorised case by case" (Financial
+Need); `pricing_mode` scopes an option to `standard` or `scholarship` and is
+cross-validated against the Deal's own mode.
+
+**2. What references one.** `deals.selected_payment_option_id`, whose foreign
+key has **no ON DELETE clause** — so `NO ACTION`, and the database already
+refuses to delete an option any Deal points at. An option nothing references
+can still be hard-deleted, which is where "stop offering this" would quietly
+destroy the record of what was once offered.
+
+**3. Are they mutable?** Yes — RLS allows authenticated insert, update and
+delete, and there is no RPC door in front of them.
+
+**4. Is there a deactivated state?** **No.** `is_public` is a different
+question and reusing it would conflate "authorised case by case" with
+"withdrawn". Deactivation needs its own column.
+
+**5. What reads these rows, and the one real hazard.**
+
+- `handle_deal_saved()` **snapshots** `selected_payment_total`,
+  `selected_installment_count` and `selected_installment_amount` onto the Deal,
+  and re-snapshots ONLY when the chosen option or the pricing mode changes. So
+  editing an option's amounts does not rewrite an existing Opportunity.
+- A **won** Deal never consults the catalogue at all: `assessCheckoutForDeal()`
+  returns early for `stage !== 'won'`, and a sold Opportunity is charged from
+  its own agreed terms, synthesised in `stripe_checkout` with `id: -1`. **An
+  existing client is structurally untouchable by a catalogue edit.**
+- The hazard is narrow and genuine: a **prospect who is not yet won but whose
+  Deal has already frozen `selected_payment_option_id`**. `offer_page` shows
+  them the Deal's SNAPSHOT, while `stripe_checkout` re-reads the catalogue row
+  and charges its LIVE amounts. Editing that option between their seeing the
+  page and paying would show one number and charge another. That inconsistency
+  exists today and is not created by a configuration UI — but a comfortable
+  Edit button makes it far easier to reach.
+
+**6. Safest semantics.** Add freely. Edit with the above said out loud when
+live Deals reference the option. Never hard-delete from the UI: add
+`is_active`, filter the catalogue paths (`offer_page`, `stripe_checkout`,
+`publicOfferPageContext`, `resolveAuthorizedCheckoutTerms`, `DealInputs`) on
+it, and leave the already-selected path alone so a prospect mid-flight is not
+stranded.
+
+**7. Do clients snapshot their terms elsewhere?** Yes — on the Deal, as above,
+plus `deal_payment_schedule_items` and `deal_stripe_plan_objects` for what has
+actually been agreed and collected.
+
+**Why it is not built.** It needs a migration, five read paths changed
+together, and real-Postgres proof that an existing client's money is
+untouched. That is a slice, not a corner of one, and the prospect-mid-flight
+finding above wants Leif's decision before code: whether an edit should be
+refused, warned about, or allowed while a live Deal holds that option.
+
 ## 8f. Application decision expansion — PRODUCTION ACCEPTED 2026-10-09
 
 Leif can offer an applicant the other programme, or answer one personally,

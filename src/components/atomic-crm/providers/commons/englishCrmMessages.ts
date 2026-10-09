@@ -339,6 +339,9 @@ export const englishCrmMessages = {
       action: {
         new: "New Cohort",
         create: "Create Cohort",
+        // Names the object, because a round sits under a programme and the
+        // two have different settings.
+        edit: "Edit cohort",
       },
       enrolled_count: "%{enrolled} / %{maximum} enrolled",
       enrolled_count_label: "Enrolled",
