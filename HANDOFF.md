@@ -9,9 +9,8 @@ transfer checkpoint. **The repository, the database and production are the
 authority. Where this prose disagrees with them, they win — say so rather than
 quietly picking one.**
 
-**Where things stand right now (2026-10-08).** `origin/main` is at
-`38a2fd3c`, production holds **156 migrations**, and one slice sits locally
-unpushed (§8f, which brings the repository to **157**).
+**Where things stand right now (2026-10-09).** `origin/main` is at
+`a703303a` and production holds **157 migrations**, with nothing unpushed.
 **GYU APPLICATION QUESTION PARITY is production-accepted** (§8e), after
 Applications + Clients information architecture (§8d) and the testimonial /
 offboarding work (§8b-testimonial-built). Two things stay deliberately parked
@@ -19,14 +18,14 @@ and must not be touched, committed, pushed or deployed: the payment commit
 `c9dcc918` on `capacity-waitlist`, and the Application Form Builder, which
 lives uncommitted in the main checkout's working tree (§8b-builder).
 
-**Application decision expansion is BUILT and NOT YET DEPLOYED** (§8f): it
-needs six Kit tags Leif creates by hand before the two cross-programme emails
-can go anywhere, and the two email drafts are hers to edit. **The queue after
-it:** (1) sales-call workflow polish — passed-but-unlogged calls stay at the
+**Application decision expansion is PRODUCTION ACCEPTED** (§8f), with all six
+Kit tags mapped. **The queue after it:** (1) programme configuration polish —
+real payment-option configuration, "Edit cohort" naming, and waitlist
+quick-add scroll preservation; (2) sales-call workflow polish — passed-but-unlogged calls stay at the
 top reading "Call passed", a call-impressions / reminders field saved
 atomically with the outcome as call-specific history rather than a loose note,
 and editing a completed outcome including No-show → Attended with its
-downstream consequences reconciled safely; (2) Gmail (§9).
+downstream consequences reconciled safely; (3) Gmail (§9).
 
 ---
 
@@ -4106,58 +4105,56 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8f. Application decision expansion — DEPLOYED 2026-10-08, AWAITING PRODUCTION ACCEPTANCE
+## 8f. Application decision expansion — PRODUCTION ACCEPTED 2026-10-09
 
-**`origin/main` = `442b4483`**, four commits, oldest → newest: `d335b2c4`
-(the decision), `06f7cb29` (handoff), `9cd26fbb` (the round), `442b4483` (the
-final names). Migration `20261008140000`, deterministic, **157 total**.
+Leif can offer an applicant the other programme, or answer one personally,
+and both decisions behave truthfully end to end. Production tip `a703303a`;
+migration `20261008140000`, deterministic, **157 total**.
 
-**`📡 Push supabase migrations` SUCCEEDED**, after
-`🔒 Verify production project identity`, and `📡 Deploy supabase functions`
-succeeded too. The only red step in the whole Deploy run is the long-standing
-`📡 Deploy GitHub pages`. `✅ Check` is green throughout — Typecheck, Test,
-Build, ESLint, e2e-test — and Prettier and ESLint are green in the Deploy run.
+**Production verification, read back by Leif.** Migration total 157 and the
+decision migration applied exactly once. New-event mappings = 6, all with
+real Kit ids. Bespoke mappings in the wrong mode = 0, bespoke mappings
+claiming an automation = 0, Offered mappings incorrectly manual = 0. The
+eight original mappings preserved, Do Not Engage still unmapped, duplicate
+tag decisions = 0.
 
-**Reading that run correctly, because it is easy to get backwards.** The steps
-named "Check SUPABASE_… secret" and "Supabase deployment skipped" are WARNING
-steps: each runs only when something is missing. Seeing them all *skipped* is
-the healthy state, and it means `IS_SUPABASE_CONFIGURED` was true. An earlier
-report of this job described those skips as the deployment having been skipped,
-which was exactly inverted. The step to look for is
-`📡 Push supabase migrations` itself.
+**The six production Kit mappings, as they now stand:**
 
-**Vercel production carries the new UI, proved by content.** The bundle it
-serves, `/assets/index-CAJmOI5b.js`, contains `Bespoke Denied`,
-`Bespoke Accepted`, `offered_other_programme`, `recommended_offer_id`,
-`Which round?`, `Offer this round`, `has no round open` and
-`the only round still taking applications` — every one of them absent from the
-previous production commit — and **none** of the superseded names
-(`MiniDD_OfferedGYU`, `GYU-OfferedLE`, `BespokeAcceptance`, `bespoke_rejected`,
-`Bespoke rejection`).
+| Programme | Event | Tag |
+|---|---|---|
+| The Living Example | offered_other_programme | `LE_Offered_GYU` |
+| | bespoke_accepted | `LE_Bespoke_Accepted` |
+| | bespoke_denied | `LE_Bespoke_Denied` |
+| Growing Yourself Up | offered_other_programme | `GYU_Offered_LE` |
+| | bespoke_accepted | `GYU_Bespoke_Accepted` |
+| | bespoke_denied | `GYU_Bespoke_Denied` |
 
-**Two production facts provable without database credentials**, by what
-PostgREST answers an anonymous caller: `offer_accepting_cohorts(p_offer_id)`
-and `review_application(p_application_id, p_outcome, p_cohort_id)` both answer
-`42501 permission denied for function` — the error for a function that EXISTS
-and is closed to `anon` — where a name that does not exist answers `PGRST202
-Could not find the function`. So both new authorities are live, and neither is
-reachable by the public key.
+**Human acceptance.** An LE application offers *Offer Growing Yourself Up*,
+*Bespoke Accepted* and *Bespoke Denied*; a GYU application offers *Offer The
+Living Example* and the same two. The LE → GYU cohort-selection dialog was
+verified in production and cancelled — **no real applicant was mutated.**
 
-Payment commit `c9dcc918` is not an ancestor. No Builder file is on
-`origin/main`. No Gmail or sales-call file changed in the range.
+### What this cost, and the two rules it leaves
 
-### ⚠️ DO NOT USE THE NEW DECISIONS ON REAL APPLICANTS UNTIL THE SIX TAGS ARE MAPPED
+Six commits, three of them repairs to the same mistake made in different
+places. Both are worth more than the feature.
 
-The code is live; the CRM does not yet know the six Kit tag ids. Deciding
-before they are mapped records the decision correctly and **silently reaches
-Kit with nothing** — `enqueue_kit_application_sync()` returns null on an
-unmapped event, so the applicant is never tagged and the cross-programme email
-never goes. The decision is one-way (there is no decision editing yet), so
-that is not something to undo afterwards.
+**A UX claim is proved by walking the user's route, in the built app, or it
+is not proved.** The Kit mapping box existed the whole time and had no door:
+first for the group programme on the Programs hub, then — after I "fixed" it
+— for BOTH programmes on the detail pages, which is where Leif actually
+manages a programme. In between I reported the affordance as "live and
+reachable" on the strength of counting a prop name in the production bundle.
+That proved which build was deployed and nothing whatever about reachability,
+and a screenshot refuted it. Deployment identity and reachability are
+different questions and a bundle answers only the first.
 
-**Offer Growing Yourself Up**, **Offer The Living Example**, **Bespoke
-Accepted** and **Bespoke Denied** are off limits on a real applicant until the
-mapping step below is finished and the read-back proves all six.
+**A stale bundle argues both ways.** Walking the repaired route the first
+time, the menu was absent — and the page was right; the browser tab was
+holding the previous build. One more step and that would have been reported
+as a broken repair, which is the same error with the sign flipped. The app is
+a PWA; hard-refresh before judging it, and check which asset actually loaded
+before believing either answer.
 
 **OFFERING THE OTHER PROGRAMME IS NOT A REJECTION.** Leif is willing to work
 with this person; she thinks the other programme suits them better. The two
@@ -4435,15 +4432,11 @@ the other programme**, **Bespoke Accepted** and **Bespoke Denied**. Both
 programmes, both browser projects. With the two pages reverted, all three
 tests fail.
 
-### MANUAL STEP STILL OUTSTANDING — map the six, after deploy
+### Where the mapping lives, now that it is done
 
-The tags exist in Kit; the CRM does not yet know their ids. **Programs → the
-programme → its header "⋯" → Edit program → the Kit automation box.** That is
-the route for both programmes, from the page Leif actually manages them on.
-Six mappings, two programmes:
-
-- The Living Example: `LE_Offered_GYU`, `LE_Bespoke_Accepted`, `LE_Bespoke_Denied`
-- Growing Yourself Up: `GYU_Offered_LE`, `GYU_Bespoke_Accepted`, `GYU_Bespoke_Denied`
+**Programs → the programme → its header "⋯" → Edit program → the Kit
+automation box**, for both programmes, from the page Leif actually manages
+them on. All six are mapped in production (the table in §8f above).
 
 The picker reads Leif's real Kit catalogue, so each one is chosen rather than
 typed, and the id stored is Kit's own. **Each Choose writes its mapping
