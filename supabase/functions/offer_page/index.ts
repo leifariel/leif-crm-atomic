@@ -122,11 +122,16 @@ const resolveCatalogOptions = async (
     ];
   }
 
+  // Nothing chosen yet, so this is a new selection: only what the programme
+  // still offers. A retired option stays readable for whoever already chose
+  // it (the branch above answers from the Deal's own snapshot) — it just
+  // stops being offered to anybody new.
   const { data: options } = await supabaseAdmin
     .from("offer_payment_options")
     .select("id, name, total, installments, installment_amount")
     .eq("offer_id", deal.offer_id)
     .eq("is_public", true)
+    .eq("is_active", true)
     .eq("pricing_mode", deal.pricing_mode)
     .order("id", { ascending: true });
   return ((options ?? []) as OfferPaymentOptionRow[]).map((option) => ({

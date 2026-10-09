@@ -189,7 +189,20 @@ const DealInfoInputs = () => {
         <ReferenceInput
           source="selected_payment_option_id"
           reference="offer_payment_options"
-          filter={{ offer_id: offerId, pricing_mode: pricingMode }}
+          // A NEW selection sees only what the programme still offers. A
+          // Deal that already holds a retired option keeps it: its terms are
+          // read from the Deal and from the unfiltered getOne above, and
+          // retiring an option stops it being offered rather than cancelling
+          // an agreement (20261009120000).
+          filter={{
+            offer_id: offerId,
+            pricing_mode: pricingMode,
+            // Retired options are not offered again. "@neq false" rather
+            // than "= true" so a row that never recorded an opinion still
+            // lists: the column is NOT NULL DEFAULT true in the database,
+            // and absence means on offer, not withdrawn.
+            "is_active@neq": false,
+          }}
         >
           <AutocompleteInput
             label="resources.deals.fields.selected_payment_option_catalog"

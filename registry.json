@@ -846,6 +846,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/offers/paymentOptionActions.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/offers/offerConstants.ts",
           "type": "registry:component"
         },
@@ -859,6 +863,10 @@
         },
         {
           "path": "src/components/atomic-crm/offers/OfferShow.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/offers/OfferPaymentOptionsSection.tsx",
           "type": "registry:component"
         },
         {

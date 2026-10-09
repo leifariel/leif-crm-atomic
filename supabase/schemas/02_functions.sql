@@ -5102,3 +5102,138 @@ begin
   return null;
 end;
 $$;
+
+
+-- ---------------------------------------------------------------------------
+-- Configuring what a programme offers (20261009120000)
+-- ---------------------------------------------------------------------------
+create or replace function public.set_offer_payment_option(
+  p_offer_id bigint,
+  p_name text,
+  p_total numeric,
+  p_installments smallint,
+  p_installment_amount numeric,
+  p_is_public boolean default true,
+  p_pricing_mode text default 'standard',
+  p_option_id bigint default null
+) returns jsonb
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+declare
+  v_existing offer_payment_options%rowtype;
+  v_references int;
+  v_new_id bigint;
+begin
+  if not exists (select 1 from offers where id = p_offer_id) then
+    return jsonb_build_object('status', 'offer-invalid');
+  end if;
+  if btrim(coalesce(p_name, '')) = '' then
+    return jsonb_build_object('status', 'name-required');
+  end if;
+  if p_pricing_mode not in ('standard', 'scholarship') then
+    return jsonb_build_object('status', 'pricing-mode-invalid');
+  end if;
+  if p_installments is null or p_installments < 1 then
+    return jsonb_build_object('status', 'installments-invalid');
+  end if;
+  if p_total is null or p_total < 0
+     or p_installment_amount is null or p_installment_amount < 0 then
+    return jsonb_build_object('status', 'amount-invalid');
+  end if;
+  -- The same arithmetic stripe_checkout refuses to charge on: an instalment
+  -- plan that does not add up is a number nobody can honour.
+  if p_installments > 1
+     and round(p_installment_amount * p_installments, 2) <> round(p_total, 2) then
+    return jsonb_build_object(
+      'status', 'instalments-do-not-add-up',
+      'total', p_total,
+      'reconstructed', round(p_installment_amount * p_installments, 2));
+  end if;
+
+  -- ---- a new one -----------------------------------------------------------
+  if p_option_id is null then
+    insert into offer_payment_options
+      (offer_id, name, total, installments, installment_amount, is_public, pricing_mode)
+    values
+      (p_offer_id, btrim(p_name), p_total, p_installments, p_installment_amount,
+       coalesce(p_is_public, true), p_pricing_mode)
+    returning id into v_new_id;
+    return jsonb_build_object('status', 'added', 'option_id', v_new_id);
+  end if;
+
+  -- ---- an existing one -----------------------------------------------------
+  select * into v_existing from offer_payment_options
+   where id = p_option_id for update;
+  if v_existing.id is null then
+    return jsonb_build_object('status', 'option-invalid');
+  end if;
+  if v_existing.offer_id <> p_offer_id then
+    return jsonb_build_object('status', 'option-not-of-this-offer');
+  end if;
+
+  select count(*) into v_references
+    from deals where selected_payment_option_id = p_option_id;
+
+  if v_references = 0 then
+    -- Nobody agreed to it, so there is no agreement to protect.
+    update offer_payment_options
+       set name = btrim(p_name),
+           total = p_total,
+           installments = p_installments,
+           installment_amount = p_installment_amount,
+           is_public = coalesce(p_is_public, true),
+           pricing_mode = p_pricing_mode,
+           updated_at = now()
+     where id = p_option_id;
+    return jsonb_build_object('status', 'updated', 'option_id', p_option_id);
+  end if;
+
+  -- Somebody chose this. The row stays exactly as they agreed to it, stops
+  -- being offered, and the edit becomes the next version.
+  insert into offer_payment_options
+    (offer_id, name, total, installments, installment_amount, is_public,
+     pricing_mode, replaces_option_id)
+  values
+    (p_offer_id, btrim(p_name), p_total, p_installments, p_installment_amount,
+     coalesce(p_is_public, true), p_pricing_mode, p_option_id)
+  returning id into v_new_id;
+
+  update offer_payment_options set is_active = false, updated_at = now()
+   where id = p_option_id;
+
+  return jsonb_build_object(
+    'status', 'versioned',
+    'option_id', v_new_id,
+    'replaced_option_id', p_option_id,
+    'agreements_preserved', v_references);
+end;
+$$;
+
+create or replace function public.set_offer_payment_option_active(
+  p_option_id bigint,
+  p_is_active boolean
+) returns jsonb
+language plpgsql
+security definer
+set search_path to 'public'
+as $$
+declare
+  v_existing offer_payment_options%rowtype;
+begin
+  select * into v_existing from offer_payment_options
+   where id = p_option_id for update;
+  if v_existing.id is null then
+    return jsonb_build_object('status', 'option-invalid');
+  end if;
+
+  update offer_payment_options
+     set is_active = coalesce(p_is_active, false), updated_at = now()
+   where id = p_option_id;
+
+  return jsonb_build_object(
+    'status', 'set', 'option_id', p_option_id,
+    'is_active', coalesce(p_is_active, false));
+end;
+$$;

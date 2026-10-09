@@ -476,6 +476,53 @@ const getDataProviderWithCustomMethods = () => {
     },
     // Which tag a programme's event applies, from now on. Validating
     // authority; it never touches an operation that already exists.
+    // Configuring what a programme offers. The table is closed to the
+    // browser; this RPC counts the Deals that already chose an option and
+    // either corrects it or versions it, in one transaction. See
+    // offers/paymentOptionActions.ts.
+    async setOfferPaymentOption(draft: {
+      offerId: Identifier;
+      name: string;
+      total: number;
+      installments: number;
+      installmentAmount: number;
+      isPublic: boolean;
+      pricingMode: string;
+      optionId?: Identifier | null;
+    }) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "set_offer_payment_option",
+        {
+          p_offer_id: draft.offerId,
+          p_name: draft.name,
+          p_total: draft.total,
+          p_installments: draft.installments,
+          p_installment_amount: draft.installmentAmount,
+          p_is_public: draft.isPublic,
+          p_pricing_mode: draft.pricingMode,
+          p_option_id: draft.optionId ?? null,
+        },
+      );
+      if (error) {
+        console.error("set_offer_payment_option.error", error);
+        throw new Error("Failed to save that payment option");
+      }
+      return data as Record<string, unknown>;
+    },
+    async setOfferPaymentOptionActive(input: {
+      optionId: Identifier;
+      isActive: boolean;
+    }) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "set_offer_payment_option_active",
+        { p_option_id: input.optionId, p_is_active: input.isActive },
+      );
+      if (error) {
+        console.error("set_offer_payment_option_active.error", error);
+        throw new Error("Failed to change that payment option");
+      }
+      return data as Record<string, unknown>;
+    },
     async setProgramKitTag(input: {
       offerId: Identifier;
       event: string;

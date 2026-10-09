@@ -87,6 +87,10 @@ import { syncContactRelationshipFields } from "./contactRelationshipFields";
 import { syncDealSalesCallAt } from "../../sales-calls/syncDealSalesCallAt";
 import { ensureDealStageEvent } from "../../deals/ensureDealStageEvent";
 import { assertNoDuplicateBookedSalesCall } from "../../sales-calls/salesCallValidation";
+import {
+  setOfferPaymentOptionActiveMirror,
+  setOfferPaymentOptionMirror,
+} from "../../offers/paymentOptionActions";
 
 const TASK_MARKED_AS_DONE = "TASK_MARKED_AS_DONE";
 const TASK_MARKED_AS_UNDONE = "TASK_MARKED_AS_UNDONE";
@@ -916,6 +920,23 @@ export const createDataProvider = ({
       kitTagName: string;
       applicationId?: Identifier | null;
     }) => addKitTagMirror(dataProvider, input),
+    setOfferPaymentOption: async (draft: never) => {
+      const result = await setOfferPaymentOptionMirror(dataProvider, draft);
+      // Shaped exactly like the RPC's jsonb, field for field. The caller
+      // parses that shape, so returning the mirror's own camelCase here
+      // silently lost replaced_option_id — the demo would have said
+      // "versioned" and been unable to say what it replaced.
+      return {
+        status: result.status,
+        option_id: "optionId" in result ? result.optionId : null,
+        replaced_option_id:
+          "replacedOptionId" in result ? result.replacedOptionId : null,
+        agreements_preserved:
+          "agreementsPreserved" in result ? result.agreementsPreserved : null,
+      } as never;
+    },
+    setOfferPaymentOptionActive: async (input: never) =>
+      (await setOfferPaymentOptionActiveMirror(dataProvider, input)) as never,
     setProgramKitTag: async (input: {
       offerId: Identifier;
       event: "applicant" | "approved" | "needs_higher_care" | "not_fit";

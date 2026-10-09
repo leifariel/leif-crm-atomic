@@ -237,13 +237,22 @@ const resolvePaymentOptions = async (
       sort: { field: "id", order: "ASC" },
     },
   );
-  return options.map((option) => ({
-    id: option.id,
-    name: option.name,
-    total: option.total,
-    installments: option.installments,
-    installmentAmount: option.installment_amount,
-  }));
+  return (
+    options
+      // A NEW selection sees only what is still offered. Asked as "not
+      // retired" rather than "is active" because is_active is NOT NULL
+      // DEFAULT true in the database — a row that has never said otherwise is
+      // on offer, and treating absence as retirement would hide every option
+      // that predates the column.
+      .filter((option) => option.is_active !== false)
+      .map((option) => ({
+        id: option.id,
+        name: option.name,
+        total: option.total,
+        installments: option.installments,
+        installmentAmount: option.installment_amount,
+      }))
+  );
 };
 
 const resolveOptionName = async (

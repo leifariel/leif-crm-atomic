@@ -1,13 +1,10 @@
-import { useRecordContext, useTranslate } from "ra-core";
-import { DataTable } from "@/components/admin/data-table";
 import { NumberField } from "@/components/admin/number-field";
 import { RecordField } from "@/components/admin/record-field";
-import { ReferenceManyField } from "@/components/admin/reference-many-field";
 import { Show } from "@/components/admin/show";
-import { Badge } from "@/components/ui/badge";
 
 import { useConfigurationContext } from "../root/ConfigurationContext";
 import type { Offer } from "../types";
+import { OfferPaymentOptionsSection } from "./OfferPaymentOptionsSection";
 import { offerTypeLabels } from "./offerConstants";
 
 // Administrative/reference UI: lets the owner inspect an Offer's shape and
@@ -44,48 +41,15 @@ const PriceField = () => {
   );
 };
 
+// The same rows the edit form configures, read only. Configuring them is
+// one job in one place (OfferInputs -> OfferPaymentOptionsSection); this
+// page reports.
+//
+// It used to be the admin kit's DataTable, which brought row checkboxes,
+// Select all, Export and a bulk Delete — against rows that
+// deals.selected_payment_option_id points at. None of that was Leif's job
+// and the Delete was the dangerous part.
 const PaymentOptionsSection = () => {
-  const record = useRecordContext<Offer>();
-  const translate = useTranslate();
-  if (!record) return null;
-
-  return (
-    <div className="flex flex-col gap-2 mt-4">
-      <h3 className="text-base font-medium">
-        {translate("resources.offer_payment_options.name", {
-          smart_count: 2,
-        })}
-      </h3>
-      <ReferenceManyField
-        reference="offer_payment_options"
-        target="offer_id"
-        sort={{ field: "id", order: "ASC" }}
-      >
-        <DataTable>
-          <DataTable.Col source="name" />
-          <DataTable.Col label="resources.offer_payment_options.fields.total">
-            <NumberField source="total" />
-          </DataTable.Col>
-          <DataTable.Col source="installments" />
-          <DataTable.Col label="resources.offer_payment_options.fields.installment_amount">
-            <NumberField source="installment_amount" />
-          </DataTable.Col>
-          <DataTable.Col label={false}>
-            <PublicBadge />
-          </DataTable.Col>
-        </DataTable>
-      </ReferenceManyField>
-    </div>
-  );
-};
-
-const PublicBadge = () => {
-  const record = useRecordContext();
-  const translate = useTranslate();
-  if (!record || record.is_public) return null;
-  return (
-    <Badge variant="outline">
-      {translate("resources.offer_payment_options.authorized_only")}
-    </Badge>
-  );
+  const { currency } = useConfigurationContext();
+  return <OfferPaymentOptionsSection currency={currency} readOnly />;
 };

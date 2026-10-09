@@ -1428,6 +1428,24 @@ alter table public.deals
 alter table public.deals
     add constraint deals_selected_payment_option_id_fkey foreign key (selected_payment_option_id) references public.offer_payment_options(id);
 
+-- Still offered for NEW selections — a different question from is_public.
+-- A chosen option is never edited in place; the edit becomes the next
+-- version and this retires the old one (20261009120000).
+alter table public.offer_payment_options
+    add column if not exists is_active boolean not null default true;
+alter table public.offer_payment_options
+    add column if not exists replaces_option_id bigint;
+alter table public.offer_payment_options
+    drop constraint if exists offer_payment_options_replaces_another_check;
+alter table public.offer_payment_options
+    add constraint offer_payment_options_replaces_another_check
+    check (replaces_option_id is null or replaces_option_id <> id);
+alter table public.offer_payment_options
+    drop constraint if exists offer_payment_options_replaces_option_id_fkey;
+alter table public.offer_payment_options
+    add constraint offer_payment_options_replaces_option_id_fkey
+    foreign key (replaces_option_id) references public.offer_payment_options(id) on update cascade;
+
 alter table public.offer_payment_options
     add constraint offer_payment_options_offer_id_fkey foreign key (offer_id) references public.offers(id) on update cascade on delete cascade;
 
@@ -1645,6 +1663,7 @@ create unique index deals_stripe_subscription_id_idx on public.deals (stripe_sub
 create unique index deals_stripe_subscription_schedule_id_idx on public.deals (stripe_subscription_schedule_id) where (stripe_subscription_schedule_id is not null);
 create unique index contacts_stripe_customer_id_idx on public.contacts (stripe_customer_id) where (stripe_customer_id is not null);
 create index offer_payment_options_offer_id_idx on public.offer_payment_options using btree (offer_id);
+create index offer_payment_options_active_idx on public.offer_payment_options using btree (offer_id, is_active);
 create index cohorts_offer_id_idx on public.cohorts using btree (offer_id);
 create index applications_opportunity_id_idx on public.applications using btree (opportunity_id);
 -- The canonical read path is now "this Contact's Applications".

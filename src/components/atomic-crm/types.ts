@@ -200,6 +200,16 @@ export type OfferPaymentOption = {
   // must be explicit. Read via `pricing_mode ?? "standard"` wherever the
   // distinction matters.
   pricing_mode?: PricingMode;
+  // Still offered for NEW selections. A DIFFERENT question from is_public,
+  // which asks whether an option is listed to everyone or authorised case by
+  // case — Financial Need is is_public false and very much still offered.
+  // Retiring an option never cancels an agreement somebody already has: a
+  // Deal that selected it keeps it, and is charged what it recorded
+  // (20261009120000).
+  is_active?: boolean;
+  // Which option this one replaced, when an edit to a chosen option became
+  // the next version rather than a rewrite. Null for an original.
+  replaces_option_id?: Identifier | null;
   created_at: string;
   updated_at: string;
 } & Pick<RaRecord, "id">;

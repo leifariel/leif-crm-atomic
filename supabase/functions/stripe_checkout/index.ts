@@ -129,9 +129,31 @@ const resolveAuthorizedOption = async (
       .eq("id", deal.selected_payment_option_id)
       .maybeSingle();
     const option = (data as OfferPaymentOptionRow | null) ?? null;
-    return option && option.pricing_mode === deal.pricing_mode ? option : null;
+    if (!option || option.pricing_mode !== deal.pricing_mode) return null;
+    // THE AMOUNTS COME FROM THE DEAL, NEVER FROM THE CATALOGUE.
+    //
+    // This used to charge the catalogue row's current numbers while the
+    // Offer Page showed the prospect the Deal's snapshot of them — so an
+    // edit in between meant the page said one thing and Stripe did another.
+    // A payment option is a versioned template now (20261009120000): editing
+    // a chosen one leaves it alone and creates the next version, so the two
+    // can no longer drift. Reading the snapshot anyway is the belt: what
+    // somebody agreed to is recorded on their own Deal, and that is what
+    // they are charged.
+    //
+    // is_active is deliberately NOT required here. Retiring an option stops
+    // it being OFFERED; it does not cancel an agreement somebody already has.
+    return {
+      ...option,
+      total: deal.selected_payment_total ?? option.total,
+      installments: deal.selected_installment_count ?? option.installments,
+      installment_amount:
+        deal.selected_installment_amount ?? option.installment_amount,
+    };
   }
 
+  // Nothing chosen yet, so this IS a new selection: only what the programme
+  // still offers.
   const { data: options } = await supabaseAdmin
     .from("offer_payment_options")
     .select(
@@ -139,6 +161,7 @@ const resolveAuthorizedOption = async (
     )
     .eq("offer_id", deal.offer_id)
     .eq("is_public", true)
+    .eq("is_active", true)
     .eq("pricing_mode", deal.pricing_mode);
   return (
     ((options ?? []) as OfferPaymentOptionRow[]).find(

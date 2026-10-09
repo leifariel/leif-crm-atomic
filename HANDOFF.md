@@ -4105,11 +4105,10 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8g. Programme configuration polish — IN PROGRESS (2026-10-09)
+## 8g. Programme configuration polish — BUILT, NOT YET DEPLOYED (2026-10-09)
 
-Three bounded jobs. **Two are done; the payment-option configuration UX is
-audited and NOT built** — see the audit below for why that was the right place
-to stop.
+Three bounded jobs, all three built. Migration `20261009120000`,
+deterministic, **158 total**.
 
 ### B. A round's Edit says which object it edits
 
@@ -4166,66 +4165,93 @@ scrollY 733 → 318 the moment the dialog opens, from the Radix/
 it stays there on cancel. That is every modal in the CRM, not the waitlist's,
 and it is a separate piece of work.
 
-### A. Payment options — audited, and deliberately not built yet
+### A. Payment options are versioned programme templates
 
-The generic table is real: `OfferShow.tsx` renders payment options with the
-admin kit's `DataTable`, which brings row checkboxes, Select all, Export and
-Delete by default. None of that is Leif's job, which is to configure what a
-programme offers.
+The generic table is gone: `OfferShow` rendered these rows through the admin
+kit's `DataTable`, which brought row checkboxes, Select all, Export and a bulk
+Delete — against rows that `deals.selected_payment_option_id` points at. One
+of them is somebody's agreement, and Delete was the dangerous part.
 
-**1. The model.** `offer_payment_options (id, offer_id, name, total,
-installments, installment_amount, is_public, pricing_mode)`. `is_public`
-distinguishes "offered to everyone" from "authorised case by case" (Financial
-Need); `pricing_mode` scopes an option to `standard` or `scholarship` and is
-cross-validated against the Deal's own mode.
+**Leif's rule.** The moment a Deal selects an option, that row is historical
+truth. Editing it then creates the next version and retires the old one; the
+Deal keeps pointing at what it agreed to. She is never asked to understand
+versions — she saves, and the authority decides.
 
-**2. What references one.** `deals.selected_payment_option_id`, whose foreign
-key has **no ON DELETE clause** — so `NO ACTION`, and the database already
-refuses to delete an option any Deal points at. An option nothing references
-can still be hard-deleted, which is where "stop offering this" would quietly
-destroy the record of what was once offered.
+| What she does | What happens |
+|---|---|
+| edits an option nobody chose | the row itself is corrected, stays active |
+| edits an option somebody chose | the row is untouched and retired; the edit becomes a new active row carrying `replaces_option_id` |
+| deactivates one | it stops being offered; every existing agreement is unaffected |
+| deletes one | **not offered.** Deactivate is the only withdrawal |
 
-**3. Are they mutable?** Yes — RLS allows authenticated insert, update and
-delete, and there is no RPC door in front of them.
+**`is_active` is a new column, not a reuse of `is_public`.** They answer
+different questions: `is_public` is "listed to everyone, or authorised case by
+case" — Financial Need is `is_public = false` and very much still offered —
+and `is_active` is "still offered for NEW selections". Conflating them would
+have retired every case-by-case option.
 
-**4. Is there a deactivated state?** **No.** `is_public` is a different
-question and reusing it would conflate "authorised case by case" with
-"withdrawn". Deactivation needs its own column.
+**One door.** `set_offer_payment_option()` is SECURITY DEFINER and counts the
+referencing Deals with the option row locked, so an option cannot acquire its
+first agreement between the check and the write. `insert, update, delete` on
+`offer_payment_options` is **revoked from `authenticated`**, which makes "a
+chosen option is never rewritten" a property of the database rather than a
+habit of the UI. It also refuses an instalment plan that does not add up to
+its total — the same arithmetic `stripe_checkout` refuses to charge on, now
+caught at configuration time instead of at the till.
 
-**5. What reads these rows, and the one real hazard.**
+### The checkout mismatch this closes
 
-- `handle_deal_saved()` **snapshots** `selected_payment_total`,
-  `selected_installment_count` and `selected_installment_amount` onto the Deal,
-  and re-snapshots ONLY when the chosen option or the pricing mode changes. So
-  editing an option's amounts does not rewrite an existing Opportunity.
-- A **won** Deal never consults the catalogue at all: `assessCheckoutForDeal()`
-  returns early for `stage !== 'won'`, and a sold Opportunity is charged from
-  its own agreed terms, synthesised in `stripe_checkout` with `id: -1`. **An
-  existing client is structurally untouchable by a catalogue edit.**
-- The hazard is narrow and genuine: a **prospect who is not yet won but whose
-  Deal has already frozen `selected_payment_option_id`**. `offer_page` shows
-  them the Deal's SNAPSHOT, while `stripe_checkout` re-reads the catalogue row
-  and charges its LIVE amounts. Editing that option between their seeing the
-  page and paying would show one number and charge another. That inconsistency
-  exists today and is not created by a configuration UI — but a comfortable
-  Edit button makes it far easier to reach.
+`stripe_checkout` re-read the catalogue row's LIVE amounts when charging a
+prospect who had already been shown the Deal's SNAPSHOT of them. Edit the
+option in between and the page said one number while Stripe charged another.
 
-**6. Safest semantics.** Add freely. Edit with the above said out loud when
-live Deals reference the option. Never hard-delete from the UI: add
-`is_active`, filter the catalogue paths (`offer_page`, `stripe_checkout`,
-`publicOfferPageContext`, `resolveAuthorizedCheckoutTerms`, `DealInputs`) on
-it, and leave the already-selected path alone so a prospect mid-flight is not
-stranded.
+Both halves are fixed. Versioning means a chosen option's amounts cannot
+change at all; and **the charge is now built from the Deal's own recorded
+terms**, in `stripe_checkout` and in its TypeScript mirror
+`resolveAuthorizedCheckoutTerms`. Reading the Deal is what makes the two agree
+rather than merely likely to.
 
-**7. Do clients snapshot their terms elsewhere?** Yes — on the Deal, as above,
-plus `deal_payment_schedule_items` and `deal_stripe_plan_objects` for what has
-actually been agreed and collected.
+`is_active` is deliberately NOT required on that path. Retiring an option
+stops it being offered; it does not cancel an agreement somebody already has,
+and filtering fulfilment on it would strand a prospect mid-payment.
 
-**Why it is not built.** It needs a migration, five read paths changed
-together, and real-Postgres proof that an existing client's money is
-untouched. That is a slice, not a corner of one, and the prospect-mid-flight
-finding above wants Leif's decision before code: whether an edit should be
-refused, warned about, or allowed while a live Deal holds that option.
+**Read paths, split by the question they ask.** New-selection surfaces show
+only what is still offered — `offer_page`, `publicOfferPageContext`,
+`resolveAuthorizedCheckoutTerms`'s catalogue branch, and Leif's own
+`DealInputs` picker. The already-chosen path is answered from the Deal.
+The TypeScript side asks `is_active !== false` rather than `=== true`,
+because the column is `NOT NULL DEFAULT true` and a row that never recorded
+an opinion is on offer, not withdrawn.
+
+### Proof
+
+`e2e/paymentOptionVersioning.spec.ts` — six tests against real Postgres with
+an independent read-back: an unreferenced option corrected in place; a chosen
+one versioned with the original byte-for-byte intact and the Deal still
+agreeing to 4800/6/800 while the catalogue moves to 5400/6/900; **a Won
+client whose Deal row, Enrollment and payment-schedule items are identical
+before and after**; deactivation leaving an agreement payable; `is_public`
+and `pricing_mode` surviving retirement untouched; and the browser being
+unable to write the table at all.
+
+`offers/paymentOptionLifecycle.test.ts` covers what the mirror decides — add,
+correct, version, refuse — so the demo and the component tests exercise the
+same call sites.
+
+**Sensitivity:** replacing the authority with one that rewrites a chosen
+option in place fails CASE 2 with `Expected "versioned", Received "updated"`.
+Worth noting what still passed: CASE 3. A Won client is protected by the
+Deal's snapshot whether or not the catalogue behaves, which is why both
+proofs exist rather than one.
+
+### One thing found and not fixed
+
+The FakeRest hook for the new RPC first returned the mirror's own camelCase
+result while the caller parses the RPC's snake_case jsonb — so the demo would
+have said "versioned" and been unable to say what it replaced. Caught by the
+test, fixed, and the hook now carries the same "shaped exactly like the RPC's
+jsonb, field for field" note the manual-application hook already carries for
+the same reason.
 
 ## 8f. Application decision expansion — PRODUCTION ACCEPTED 2026-10-09
 

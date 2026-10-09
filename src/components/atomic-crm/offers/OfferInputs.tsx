@@ -7,6 +7,7 @@ import { TextInput } from "@/components/admin/text-input";
 
 import { offerTypeLabels } from "./offerConstants";
 import { OfferKitSection } from "./OfferKitSection";
+import { OfferPaymentOptionsSection } from "./OfferPaymentOptionsSection";
 
 const offerTypeChoices = [
   { id: "individual", name: offerTypeLabels.individual },
@@ -56,6 +57,9 @@ export const OfferInputs = () => {
         defaultValue={true}
         helperText={false}
       />
+      {/* A programme's configuration, in one place: what it costs and how
+          Kit announces a decision about it. */}
+      <OfferPaymentOptionsSection />
       <OfferKitSection />
     </div>
   );

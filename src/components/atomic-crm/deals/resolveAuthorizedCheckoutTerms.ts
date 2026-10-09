@@ -181,10 +181,24 @@ const resolveAuthorizedOption = async (
       })
       .then(({ data }) => data)
       .catch(() => null);
-    return option &&
-      (option.pricing_mode ?? "standard") === (deal.pricing_mode ?? "standard")
-      ? option
-      : null;
+    if (
+      !option ||
+      (option.pricing_mode ?? "standard") !== (deal.pricing_mode ?? "standard")
+    ) {
+      return null;
+    }
+    // The agreed amounts come from the DEAL, mirroring stripe_checkout. A
+    // chosen option is never edited in place (20261009120000) so the two
+    // cannot drift, and reading the Deal is what makes that true rather than
+    // merely likely. is_active is deliberately not required: retiring an
+    // option stops it being offered, it does not cancel an agreement.
+    return {
+      ...option,
+      total: deal.selected_payment_total ?? option.total,
+      installments: deal.selected_installment_count ?? option.installments,
+      installment_amount:
+        deal.selected_installment_amount ?? option.installment_amount,
+    };
   }
 
   const { data: options } = await dataProvider.getList<OfferPaymentOption>(
@@ -199,9 +213,12 @@ const resolveAuthorizedOption = async (
       sort: { field: "id", order: "ASC" },
     },
   );
+  // Only what is still offered, and "not retired" rather than "is active"
+  // for the same reason publicOfferPageContext gives.
   return (
-    options.find((option) => String(option.id) === String(requestedOptionId)) ??
-    null
+    options
+      .filter((option) => option.is_active !== false)
+      .find((option) => String(option.id) === String(requestedOptionId)) ?? null
   );
 };
 

@@ -252,6 +252,17 @@ grant all on table public.offer_payment_options to service_role;
 -- public Edge Function -- reads or writes this table through the anon
 -- role, only through service_role. See 20260913230000_anon_table_grant_hardening.sql.
 revoke select, insert, update, delete on table public.offer_payment_options from anon;
+-- Closed to the browser: every change goes through set_offer_payment_option,
+-- which refuses to rewrite an option somebody already chose.
+revoke insert, update, delete on table public.offer_payment_options from authenticated;
+revoke all on function public.set_offer_payment_option(bigint, text, numeric, smallint, numeric, boolean, text, bigint) from public;
+revoke all on function public.set_offer_payment_option(bigint, text, numeric, smallint, numeric, boolean, text, bigint) from anon;
+grant execute on function public.set_offer_payment_option(bigint, text, numeric, smallint, numeric, boolean, text, bigint) to authenticated;
+grant execute on function public.set_offer_payment_option(bigint, text, numeric, smallint, numeric, boolean, text, bigint) to service_role;
+revoke all on function public.set_offer_payment_option_active(bigint, boolean) from public;
+revoke all on function public.set_offer_payment_option_active(bigint, boolean) from anon;
+grant execute on function public.set_offer_payment_option_active(bigint, boolean) to authenticated;
+grant execute on function public.set_offer_payment_option_active(bigint, boolean) to service_role;
 
 grant all on table public.cohorts to anon;
 grant all on table public.cohorts to authenticated;
