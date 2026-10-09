@@ -4400,18 +4400,55 @@ honest aside "Kit automation not fully configured".
   the framework, because a raw `element.click()` does not open a Radix
   dropdown.
 
+### …and then had the wrong door — the proof that was not a proof
+
+The hub repair above was real and is kept. **It was not the gap Leif hit.** She
+manages a programme from its own DETAIL page — `/#/programs/individual/1` —
+which showed the heading, Copy Application Link and capacity, and offered no
+way to edit the programme at all. Neither did the group one.
+
+**And the proof I gave for the first repair was worthless for the question
+being asked.** I counted a prop name in the production bundle and concluded
+the affordance was "live and reachable". A call site existing somewhere says
+nothing about whether the route somebody walks exposes it. Deployment identity
+is what a bundle can prove; reachability is not, and I used one for the other.
+The rule this leaves: **a UX claim is proved by walking the user's route, in
+the built app, or it is not proved.**
+
+**The repair:** both programme detail pages now carry one programme-level menu
+in their header — The Living Example's beside the Copy Application Link it
+already had, Growing Yourself Up's alone — wrapped in
+`data-testid="programme-header-actions"`. It is the same `ProgramCardMenu` the
+hub cards use, and **Edit program** opens the same Offer edit form. No second
+settings form, nothing on a client row, no change to capacity, clients or
+applications.
+
+The test hook earns its place: a group programme's page also lists its rounds,
+and a round card carries a menu of its own that goes to the round's form.
+Reaching for "the first Program actions on the page" found that one and proved
+nothing — which is how the regression caught itself before the repair existed.
+
+`e2e/programmeConfiguration.spec.ts` walks the real route in the built app
+against real Postgres: nav → Programs → the programme → Edit program → the
+Offer form with its name filled in → the Kit automation box carrying **Offered
+the other programme**, **Bespoke Accepted** and **Bespoke Denied**. Both
+programmes, both browser projects. With the two pages reverted, all three
+tests fail.
+
 ### MANUAL STEP STILL OUTSTANDING — map the six, after deploy
 
 The tags exist in Kit; the CRM does not yet know their ids. **Programs → the
-programme's "⋯" menu → Edit program → the Kit automation box.** That is the
-route for BOTH programmes now; before the repair above it existed only for
-The Living Example. Six mappings, two programmes:
+programme → its header "⋯" → Edit program → the Kit automation box.** That is
+the route for both programmes, from the page Leif actually manages them on.
+Six mappings, two programmes:
 
 - The Living Example: `LE_Offered_GYU`, `LE_Bespoke_Accepted`, `LE_Bespoke_Denied`
 - Growing Yourself Up: `GYU_Offered_LE`, `GYU_Bespoke_Accepted`, `GYU_Bespoke_Denied`
 
 The picker reads Leif's real Kit catalogue, so each one is chosen rather than
-typed, and the id stored is Kit's own. A bespoke mapping sets its own
+typed, and the id stored is Kit's own. **Each Choose writes its mapping
+immediately** — `set_program_kit_tag` is called there and then, and the form's
+Save persists only the Offer's own fields. Cancel does not undo a mapping. A bespoke mapping sets its own
 `followup_mode = 'manual_email'`; attempting to give a bespoke event a tag
 already used by a sending decision answers
 `tag-already-used-by-another-decision` and writes nothing.

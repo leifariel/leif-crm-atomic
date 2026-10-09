@@ -3,6 +3,7 @@ import { useTranslate } from "ra-core";
 
 import { CohortCapacityCard } from "../dashboard/CohortCapacityCard";
 import { PageHeader, Section } from "../misc/ProgramLayout";
+import { ProgramCardMenu } from "./ProgramCardMenu";
 import { AddToWaitlistButton } from "../waitlist/AddToWaitlistButton";
 import { WaitlistSection } from "../waitlist/WaitlistSection";
 import { useWaitlistEntries } from "../waitlist/useWaitlistEntries";
@@ -39,6 +40,22 @@ export const GroupProgramPage = () => {
     <div className="flex flex-col gap-8 mt-1 p-1 max-w-3xl">
       <div className="flex items-start justify-between gap-4">
         <PageHeader title={offer.name} summary={offer.duration} />
+        {/* The same one menu the 1:1 programme's page carries. A round has
+            its own below; this one is the PROGRAMME's, and it is the only
+            route to the Kit automation its decisions need. */}
+        <div
+          className="flex items-center gap-2"
+          data-testid="programme-header-actions"
+        >
+          <ProgramCardMenu
+            resource="offers"
+            id={offer.id}
+            name={offer.name}
+            editPath={`/offers/${offer.id}`}
+            archive={{ is_active: false }}
+            archived={offer.is_active === false}
+          />
+        </div>
       </div>
 
       <WaitlistSection

@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import type { SlotHolder } from "../capacity/individualCapacity";
 import { OpeningsLine } from "../capacity/OpeningsLine";
 import { PageHeader, PersonCard, Section } from "../misc/ProgramLayout";
+import { ProgramCardMenu } from "./ProgramCardMenu";
 import { formatISODateString } from "../deals/dealUtils";
 import { enrollmentStatusLabels } from "../enrollments/enrollmentConstants";
 import { CopyApplicationLinkButton } from "../public-application/CopyApplicationLinkButton";
@@ -132,10 +133,28 @@ export const IndividualProgramPage = () => {
             </>
           }
         />
-        <div className="flex items-center gap-2">
+        {/* The programme's own header actions. Leif manages a programme from
+            THIS page, so configuring it has to be here — the Programs hub's
+            card menu was not somewhere she goes, and the Offers list is
+            described in its own code as low-prominence administrative UI.
+            One menu, beside the link she already uses. */}
+        <div
+          className="flex items-center gap-2"
+          data-testid="programme-header-actions"
+        >
           <CopyApplicationLinkButton
             path={LivingExampleApplicationPage.path}
             label={offer.name}
+          />
+          <ProgramCardMenu
+            resource="offers"
+            id={offer.id}
+            name={offer.name}
+            // The Offer's existing edit form, which is where the Kit
+            // automation box lives. Never a second settings form.
+            editPath={`/offers/${offer.id}`}
+            archive={{ is_active: false }}
+            archived={offer.is_active === false}
           />
         </div>
       </div>
