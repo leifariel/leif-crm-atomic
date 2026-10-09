@@ -47,12 +47,19 @@ export const PageHeader = ({
 // above the list it acts on.
 export const Section = ({
   title,
+  count,
   id,
   emphasis = "primary",
   action,
   children,
 }: {
   title: string;
+  // How many things are in this section, rendered into the heading as
+  // `Applications · 34`. A collapsed list that does not say how much it
+  // is hiding is worse than a long one, so every section that can grow
+  // states its size here — including when it is zero, because "nobody
+  // yet" is an answer too.
+  count?: number;
   id?: string;
   emphasis?: "primary" | "secondary";
   action?: ReactNode;
@@ -70,7 +77,7 @@ export const Section = ({
             : "text-xl font-semibold"
         }
       >
-        {title}
+        {count == null ? title : `${title} · ${count}`}
       </h2>
       {action}
     </div>

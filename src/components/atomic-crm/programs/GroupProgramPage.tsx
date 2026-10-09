@@ -3,6 +3,7 @@ import { useTranslate } from "ra-core";
 
 import { CohortCapacityCard } from "../dashboard/CohortCapacityCard";
 import { PageHeader, Section } from "../misc/ProgramLayout";
+import { PreviewList } from "../misc/PreviewList";
 import { ProgramCardMenu } from "./ProgramCardMenu";
 import { AddToWaitlistButton } from "../waitlist/AddToWaitlistButton";
 import { WaitlistSection } from "../waitlist/WaitlistSection";
@@ -68,6 +69,7 @@ export const GroupProgramPage = () => {
 
       <Section
         title={translate("crm.programs.cohorts_section", { _: "Cohorts" })}
+        count={cohorts.length}
       >
         {cohorts.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -76,11 +78,20 @@ export const GroupProgramPage = () => {
             })}
           </p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
-            {cohorts.map((cohort) => (
-              <CohortCapacityCard cohort={cohort} key={cohort.id} />
-            ))}
-          </div>
+          // A round's card is taller than a person's row, so a programme
+          // with years of history behind it pushes everything below it off
+          // the page. Same disclosure, same limit, counted in the heading.
+          <PreviewList
+            storeKey={`offer.${offer.id}.cohorts`}
+            items={cohorts}
+            renderRows={(visible) => (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
+                {visible.map((cohort) => (
+                  <CohortCapacityCard cohort={cohort} key={cohort.id} />
+                ))}
+              </div>
+            )}
+          />
         )}
       </Section>
     </div>

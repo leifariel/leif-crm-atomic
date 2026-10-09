@@ -309,6 +309,15 @@ const withDiagnostics = async (
   }
 };
 
+// Current Clients holds twelve people and collapses at the shared preview
+// limit (misc/PreviewList), so a test that reads the WHOLE list has to open
+// it the way Leif does. Asserted through the real control rather than by
+// rendering everything: the collapse is the behaviour now, and a test that
+// quietly bypassed it would stop describing the page.
+const showEveryClient = async (screen: Awaited<ReturnType<typeof render>>) => {
+  await screen.getByRole("button", { name: /^\d+ more$/ }).click();
+};
+
 describe("Living Example program page — capacity Leif can plan around", () => {
   // THE CLOCK ON THE TEST ITSELF. Ten renders of the whole CRM in one file,
   // each waiting for a page that arrives in stages. On its own that is under
@@ -428,6 +437,9 @@ describe("Living Example program page — capacity Leif can plan around", () => 
           .first(),
       )
       .toBeVisible();
+    // Jules is the longest-standing client, so he is the twelfth row — past
+    // the collapse.
+    await showEveryClient(screen);
     expect(screen.container.textContent).toContain(
       "expected final session week Nov 15, 2026",
     );
@@ -505,8 +517,9 @@ describe("Living Example program page — capacity Leif can plan around", () => 
     const { element } = buildTestCrm();
     const screen = await render(element);
     await expect
-      .element(screen.getByRole("heading", { name: "Current Clients" }))
+      .element(screen.getByRole("heading", { name: /^Current Clients/ }))
       .toBeVisible();
+    await showEveryClient(screen);
 
     const page = screen.container.textContent ?? "";
     const current = page.slice(

@@ -747,6 +747,10 @@ export const englishCrmMessages = {
     },
   },
   crm: {
+    preview: {
+      more: "%{count} more",
+      show_less: "Show less",
+    },
     action: {
       reset_password: "Reset Password",
     },

@@ -8,6 +8,7 @@ import { ClientEditModal } from "../enrollments/ClientEditModal";
 import { enrollmentStatusLabels } from "../enrollments/enrollmentConstants";
 import type { SlotHolder } from "../capacity/slotHolder";
 import { PersonCard, Section } from "../misc/ProgramLayout";
+import { PreviewList } from "../misc/PreviewList";
 
 // The clients Leif has committed to and not yet placed in a week.
 //
@@ -44,52 +45,59 @@ export const NeedsStartWeekSection = ({
         title={translate("crm.programs.needs_start_week", {
           _: "Needs Start Week",
         })}
+        count={clients.length}
       >
-        <div className="flex flex-col gap-2">
-          {clients.map((client) => (
-            <PersonCard
-              key={client.enrollmentId}
-              contactId={client.contactId}
-              // Their own client page, not their Contact page: that is
-              // where the rest of the enrollment lives, and where
-              // StartWeekCard asks the same question.
-              rowLinkTo={`/enrollments/${client.enrollmentId}/show`}
-              name={
-                client.name ||
-                translate("crm.programs.unnamed_client", {
-                  _: "an unnamed client",
-                })
-              }
-              meta={translate("crm.programs.start_week_not_set", {
-                _: "Start week not set",
-              })}
-              trailing={
-                // Transparent by default, and only the button takes
-                // clicks back. The row behind this is a link, and measured
-                // on a Pixel 5 it was this wrapper — its own padding and
-                // the gap between badge and button — that intercepted the
-                // tap at the row's centre, so tapping the row did nothing
-                // on a narrow screen. Decoration and whitespace are not
-                // click targets; the control is.
-                <div className="pointer-events-none flex items-center gap-2">
-                  <Badge variant="outline">
-                    {enrollmentStatusLabels[client.status]}
-                  </Badge>
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="pointer-events-auto"
-                    onClick={() => setEditing(client)}
-                  >
-                    {translate("crm.programs.set_start_week", {
-                      _: "Set start week",
-                    })}
-                  </Button>
-                </div>
-              }
-            />
-          ))}
-        </div>
+        <PreviewList
+          storeKey="programme.needs-start-week"
+          items={clients}
+          renderRows={(visible) => (
+            <div className="flex flex-col gap-2">
+              {visible.map((client) => (
+                <PersonCard
+                  key={client.enrollmentId}
+                  contactId={client.contactId}
+                  // Their own client page, not their Contact page: that is
+                  // where the rest of the enrollment lives, and where
+                  // StartWeekCard asks the same question.
+                  rowLinkTo={`/enrollments/${client.enrollmentId}/show`}
+                  name={
+                    client.name ||
+                    translate("crm.programs.unnamed_client", {
+                      _: "an unnamed client",
+                    })
+                  }
+                  meta={translate("crm.programs.start_week_not_set", {
+                    _: "Start week not set",
+                  })}
+                  trailing={
+                    // Transparent by default, and only the button takes
+                    // clicks back. The row behind this is a link, and measured
+                    // on a Pixel 5 it was this wrapper — its own padding and
+                    // the gap between badge and button — that intercepted the
+                    // tap at the row's centre, so tapping the row did nothing
+                    // on a narrow screen. Decoration and whitespace are not
+                    // click targets; the control is.
+                    <div className="pointer-events-none flex items-center gap-2">
+                      <Badge variant="outline">
+                        {enrollmentStatusLabels[client.status]}
+                      </Badge>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="pointer-events-auto"
+                        onClick={() => setEditing(client)}
+                      >
+                        {translate("crm.programs.set_start_week", {
+                          _: "Set start week",
+                        })}
+                      </Button>
+                    </div>
+                  }
+                />
+              ))}
+            </div>
+          )}
+        />
       </Section>
 
       {editing && (

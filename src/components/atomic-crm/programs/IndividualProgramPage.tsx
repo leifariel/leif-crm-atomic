@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import type { SlotHolder } from "../capacity/individualCapacity";
 import { OpeningsLine } from "../capacity/OpeningsLine";
 import { PageHeader, PersonCard, Section } from "../misc/ProgramLayout";
+import { PreviewList } from "../misc/PreviewList";
 import { ProgramCardMenu } from "./ProgramCardMenu";
 import { formatISODateString } from "../deals/dealUtils";
 import { enrollmentStatusLabels } from "../enrollments/enrollmentConstants";
@@ -163,6 +164,7 @@ export const IndividualProgramPage = () => {
         title={translate("crm.programs.current_clients", {
           _: "Current Clients",
         })}
+        count={capacity?.occupied.length ?? 0}
       >
         {capacity == null || capacity.occupied.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -171,11 +173,17 @@ export const IndividualProgramPage = () => {
             })}
           </p>
         ) : (
-          <div className="flex flex-col gap-2">
-            {capacity.occupied.map((client) => (
-              <SlotPersonCard key={client.enrollmentId} client={client} />
-            ))}
-          </div>
+          <PreviewList
+            storeKey={`offer.${offer.id}.current-clients`}
+            items={capacity.occupied}
+            renderRows={(visible) => (
+              <div className="flex flex-col gap-2">
+                {visible.map((client) => (
+                  <SlotPersonCard key={client.enrollmentId} client={client} />
+                ))}
+              </div>
+            )}
+          />
         )}
       </Section>
 
@@ -187,12 +195,19 @@ export const IndividualProgramPage = () => {
           title={translate("crm.programs.starting_later", {
             _: "Starting Later",
           })}
+          count={capacity.committed.length}
         >
-          <div className="flex flex-col gap-2">
-            {capacity.committed.map((client) => (
-              <SlotPersonCard key={client.enrollmentId} client={client} />
-            ))}
-          </div>
+          <PreviewList
+            storeKey={`offer.${offer.id}.starting-later`}
+            items={capacity.committed}
+            renderRows={(visible) => (
+              <div className="flex flex-col gap-2">
+                {visible.map((client) => (
+                  <SlotPersonCard key={client.enrollmentId} client={client} />
+                ))}
+              </div>
+            )}
+          />
         </Section>
       )}
 

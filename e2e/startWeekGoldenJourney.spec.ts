@@ -76,6 +76,15 @@ const openProgramme = async (page: Page, offerId: number | string) => {
   await expect(
     page.getByRole("heading", { name: "Upcoming Openings" }),
   ).toBeVisible();
+  // Current Clients collapses past the shared preview limit
+  // (misc/PreviewList), and every test in this file reads the WHOLE list —
+  // "no client row links to a Contact page" is only worth anything over all
+  // twelve of them. So this opens it the way Leif does. The expansion is
+  // remembered, so on a later visit there is nothing left to click.
+  const more = page
+    .getByTestId(`preview-offer.${offerId}.current-clients`)
+    .getByRole("button", { name: /^\d+ more$/ });
+  if ((await more.count()) > 0) await more.click();
 };
 
 const openClient = async (page: Page, enrollmentId: number) => {

@@ -41,8 +41,8 @@ const OPENINGS = read(
 describe("the three client phases, three client sections", () => {
   test("the page renders a section per non-released phase", () => {
     const body = code(PAGE);
-    expect(body).toMatch(/capacity\.occupied\.map/);
-    expect(body).toMatch(/capacity\.committed\.map/);
+    expect(body).toMatch(/items=\{capacity\.occupied\}/);
+    expect(body).toMatch(/items=\{capacity\.committed\}/);
     expect(body).toMatch(
       /<NeedsStartWeekSection clients=\{capacity\.unscheduled\}/,
     );
@@ -63,7 +63,10 @@ describe("the three client phases, three client sections", () => {
   test("the unscheduled section sits with the client sections, not under the forecast", () => {
     const body = code(PAGE);
     const needs = body.indexOf("NeedsStartWeekSection clients");
-    const current = body.indexOf("capacity.occupied.map");
+    const current = body.indexOf("items={capacity.occupied}");
+    // -1 from both sides would make the two comparisons below pass without
+    // proving anything, so the anchor has to be found first.
+    expect(current).toBeGreaterThan(-1);
     const openings = body.indexOf("<UpcomingOpeningsSection");
     expect(needs).toBeGreaterThan(current);
     expect(needs).toBeLessThan(openings);

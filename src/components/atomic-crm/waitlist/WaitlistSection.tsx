@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 import { Section } from "../misc/ProgramLayout";
+import { PREVIEW_LIMIT, PreviewList } from "../misc/PreviewList";
 import { formatTimestampString } from "../deals/dealUtils";
 import type { WaitlistEntryRow } from "./useWaitlistEntries";
 import {
@@ -28,10 +29,14 @@ import { isImportProvenance } from "./isImportProvenance";
 // rather than one PersonCard per person; the same "contained list inside a
 // rounded section" density pattern the Applications page already
 // established for its own many-row sections, not a new visual language.
-// Capped at VISIBLE_COUNT with a "show more" toggle (same established
-// pattern as dashboard/DashboardTasks.tsx) so 50+ waiting people never
-// force the page itself to become enormous.
-const VISIBLE_COUNT = 8;
+// Capped with a "N more" disclosure so 50+ waiting people never force the
+// page itself to become enormous.
+//
+// Density pass: that collapse was first written here, and then every other
+// programme section wanted it. It now lives in misc/PreviewList.tsx — the
+// count in the heading, the preview limit, and the expand/collapse control
+// are the same ones the Enrolled Clients, People Deciding, Applications and
+// Cohorts sections use, so a list behaves the same wherever Leif meets it.
 
 // Human-acceptance repair pass, §1: an 8-row collapse keeps a 50-person
 // list from taking over the page, but doesn't make finding ONE person in
@@ -71,7 +76,6 @@ export const WaitlistSection = ({
   availability?: string | null;
 }) => {
   const translate = useTranslate();
-  const [expanded, setExpanded] = useState(false);
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -119,23 +123,13 @@ export const WaitlistSection = ({
     );
   }, [entries, isSearching, query]);
 
-  // Searching always shows every match, regardless of the collapsed state.
-  const visibleEntries = isSearching
-    ? matchingEntries
-    : expanded
-      ? matchingEntries
-      : matchingEntries.slice(0, VISIBLE_COUNT);
-  const remaining = isSearching
-    ? 0
-    : matchingEntries.length - visibleEntries.length;
-
-  const title = `${translate("resources.waitlist_entries.name", {
+  const title = translate("resources.waitlist_entries.name", {
     _: "Waitlist",
     smart_count: 1,
-  })} · ${entries.length}`;
+  });
 
   return (
-    <Section title={title} action={action}>
+    <Section title={title} count={entries.length} action={action}>
       {availability && (
         <p className="text-sm text-muted-foreground -mt-1">{availability}</p>
       )}
@@ -186,7 +180,7 @@ export const WaitlistSection = ({
         </p>
       ) : (
         <div className="flex flex-col gap-2">
-          {entries.length > VISIBLE_COUNT && (
+          {entries.length > PREVIEW_LIMIT && (
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -222,62 +216,61 @@ export const WaitlistSection = ({
               })}
             </p>
           ) : (
-            <Card className="p-0">
-              <CardContent className="p-0 divide-y">
-                {visibleEntries.map((entry) => (
-                  <div
-                    key={entry.entryId}
-                    className="flex items-center justify-between gap-3 px-4 py-2.5"
-                  >
-                    {canInvite && (
-                      <Checkbox
-                        className="shrink-0"
-                        aria-label={entry.name}
-                        disabled={!isInvitable(entry)}
-                        checked={selectedIds.has(String(entry.entryId))}
-                        onCheckedChange={() => toggleOne(entry.entryId)}
-                      />
-                    )}
-                    <div className="flex min-w-0 flex-1 items-baseline gap-2">
-                      <Link
-                        to={`/contacts/${entry.contactId}/show`}
-                        className="text-sm font-medium hover:underline shrink-0"
+            <PreviewList
+              storeKey={`waitlist.${offerId ?? "none"}.${cohortId ?? "general"}`}
+              items={matchingEntries}
+              // A search that only looked at the first eight rows would
+              // answer the wrong question, so it bypasses the collapse.
+              showAll={isSearching}
+              renderRows={(visible) => (
+                <Card className="p-0">
+                  <CardContent className="p-0 divide-y">
+                    {visible.map((entry) => (
+                      <div
+                        key={entry.entryId}
+                        className="flex items-center justify-between gap-3 px-4 py-2.5"
                       >
-                        {entry.name}
-                      </Link>
-                      <span className="text-xs text-muted-foreground truncate">
-                        {metaFor(entry, (key, fallback) =>
-                          translate(key, { _: fallback }),
+                        {canInvite && (
+                          <Checkbox
+                            className="shrink-0"
+                            aria-label={entry.name}
+                            disabled={!isInvitable(entry)}
+                            checked={selectedIds.has(String(entry.entryId))}
+                            onCheckedChange={() => toggleOne(entry.entryId)}
+                          />
                         )}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Badge
-                        variant={waitlistEntryStatusBadgeVariant[entry.status]}
-                      >
-                        {waitlistEntryStatusLabels[entry.status]}
-                      </Badge>
-                      <WaitlistEntryActions
-                        entryId={entry.entryId}
-                        status={entry.status}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-              {remaining > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setExpanded(true)}
-                  className="text-sm text-muted-foreground underline hover:no-underline text-left px-4 pb-3 pt-1"
-                >
-                  {translate("crm.dashboard.tasks_load_more", {
-                    _: "%{count} more",
-                    count: remaining,
-                  })}
-                </button>
+                        <div className="flex min-w-0 flex-1 items-baseline gap-2">
+                          <Link
+                            to={`/contacts/${entry.contactId}/show`}
+                            className="text-sm font-medium hover:underline shrink-0"
+                          >
+                            {entry.name}
+                          </Link>
+                          <span className="text-xs text-muted-foreground truncate">
+                            {metaFor(entry, (key, fallback) =>
+                              translate(key, { _: fallback }),
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge
+                            variant={
+                              waitlistEntryStatusBadgeVariant[entry.status]
+                            }
+                          >
+                            {waitlistEntryStatusLabels[entry.status]}
+                          </Badge>
+                          <WaitlistEntryActions
+                            entryId={entry.entryId}
+                            status={entry.status}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
               )}
-            </Card>
+            />
           )}
         </div>
       )}

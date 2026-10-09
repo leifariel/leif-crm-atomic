@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 
 import { PageHeader, PersonCard, Section } from "../misc/ProgramLayout";
+import { PreviewList } from "../misc/PreviewList";
 import { useConfigurationContext } from "../root/ConfigurationContext";
 import { findDealLabel, formatISODateString } from "../deals/dealUtils";
 import {
@@ -145,6 +146,7 @@ const CohortShowContent = () => {
         title={translate("resources.cohorts.people.enrolled", {
           _: "Enrolled Clients",
         })}
+        count={enrolledClients.length}
       >
         {enrolledClients.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -153,27 +155,33 @@ const CohortShowContent = () => {
             })}
           </p>
         ) : (
-          <div className="flex flex-col gap-2">
-            {enrolledClients.map((client) => (
-              <PersonCard
-                key={client.dealId}
-                contactId={client.contactId}
-                // Presented as a client, so it opens the client profile.
-                // The generic Contact page shows no start/end dates,
-                // payment state, onboarding or sessions — the same reason
-                // the Clients page and the individual programme page use
-                // this route. A group client is still a client.
-                rowLinkTo={`/enrollments/${client.enrollmentId}/show`}
-                name={client.name}
-                trailing={
-                  // Decoration; the row behind it is the link.
-                  <Badge variant="outline" className="pointer-events-none">
-                    {enrollmentStatusLabels[client.status]}
-                  </Badge>
-                }
-              />
-            ))}
-          </div>
+          <PreviewList
+            storeKey={`cohort.${record.id}.enrolled`}
+            items={enrolledClients}
+            renderRows={(visible) => (
+              <div className="flex flex-col gap-2">
+                {visible.map((client) => (
+                  <PersonCard
+                    key={client.dealId}
+                    contactId={client.contactId}
+                    // Presented as a client, so it opens the client profile.
+                    // The generic Contact page shows no start/end dates,
+                    // payment state, onboarding or sessions — the same reason
+                    // the Clients page and the individual programme page use
+                    // this route. A group client is still a client.
+                    rowLinkTo={`/enrollments/${client.enrollmentId}/show`}
+                    name={client.name}
+                    trailing={
+                      // Decoration; the row behind it is the link.
+                      <Badge variant="outline" className="pointer-events-none">
+                        {enrollmentStatusLabels[client.status]}
+                      </Badge>
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          />
         )}
       </Section>
 
@@ -181,6 +189,7 @@ const CohortShowContent = () => {
         title={translate("crm.dashboard.people_deciding_title", {
           _: "People Deciding",
         })}
+        count={peopleDeciding.length}
       >
         {peopleDeciding.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -189,21 +198,28 @@ const CohortShowContent = () => {
             })}
           </p>
         ) : (
-          <div className="flex flex-col gap-2">
-            {peopleDeciding.map((person) => (
-              <PersonCard
-                key={person.dealId}
-                contactId={person.contactId}
-                name={person.name}
-                meta={findDealLabel(dealStages, person.stage)}
-              />
-            ))}
-          </div>
+          <PreviewList
+            storeKey={`cohort.${record.id}.deciding`}
+            items={peopleDeciding}
+            renderRows={(visible) => (
+              <div className="flex flex-col gap-2">
+                {visible.map((person) => (
+                  <PersonCard
+                    key={person.dealId}
+                    contactId={person.contactId}
+                    name={person.name}
+                    meta={findDealLabel(dealStages, person.stage)}
+                  />
+                ))}
+              </div>
+            )}
+          />
         )}
       </Section>
 
       <Section
         title={translate("resources.applications.name", { smart_count: 2 })}
+        count={applications.length}
       >
         {applications.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -212,26 +228,34 @@ const CohortShowContent = () => {
             })}
           </p>
         ) : (
-          <div className="flex flex-col gap-2">
-            {applications.map((application) => (
-              <PersonCard
-                key={application.applicationId}
-                contactId={application.contactId}
-                to={`/applications/${application.applicationId}/show`}
-                name={application.name}
-                meta={formatISODateString(
-                  application.submittedAt.split("T")[0]!,
-                )}
-                trailing={
-                  <Badge
-                    variant={applicationStatusBadgeVariant[application.status]}
-                  >
-                    {applicationStatusLabels[application.status]}
-                  </Badge>
-                }
-              />
-            ))}
-          </div>
+          <PreviewList
+            storeKey={`cohort.${record.id}.applications`}
+            items={applications}
+            renderRows={(visible) => (
+              <div className="flex flex-col gap-2">
+                {visible.map((application) => (
+                  <PersonCard
+                    key={application.applicationId}
+                    contactId={application.contactId}
+                    to={`/applications/${application.applicationId}/show`}
+                    name={application.name}
+                    meta={formatISODateString(
+                      application.submittedAt.split("T")[0]!,
+                    )}
+                    trailing={
+                      <Badge
+                        variant={
+                          applicationStatusBadgeVariant[application.status]
+                        }
+                      >
+                        {applicationStatusLabels[application.status]}
+                      </Badge>
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          />
         )}
       </Section>
 

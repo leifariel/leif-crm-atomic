@@ -4105,10 +4105,13 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8g. Programme configuration polish — BUILT, NOT YET DEPLOYED (2026-10-09)
+## 8g. Programme configuration UX — A/B/C DEPLOYED, D BUILT (2026-10-09)
 
-Three bounded jobs, all three built. Migration `20261009120000`,
-deterministic, **158 total**.
+Four bounded jobs. **A, B and C are deployed** at `c263968f` — migration
+`20261009120000`, deterministic, **158 total**, `📡 Push supabase
+migrations` green and the only red step the known `📡 Deploy GitHub pages`
+noise. **D (list density) is built and not yet pushed.** The slice is not
+accepted until all four are verified in production by Leif.
 
 ### B. A round's Edit says which object it edits
 
@@ -4252,6 +4255,79 @@ have said "versioned" and been unable to say what it replaced. Caught by the
 test, fixed, and the hook now carries the same "shaped exactly like the RPC's
 jsonb, field for field" note the manual-application hook already carries for
 the same reason.
+
+### D. A section says how many, and shows a few
+
+Leif opens a round to answer one question — usually "who still needs
+something from me" — and the page rendered every row of every section on the
+way there: eleven clients, then everybody deciding, then every application the
+round had ever received, then the whole waitlist. The Cohort Details she
+scrolled for sat underneath all of it.
+
+Now every repeated-row section states its SIZE in its own heading
+(`Applications · 20`) and shows the first **8** rows, with `N more`
+opening the rest in place and `Show less` closing it again. The count is the
+part that matters: a collapsed list that does not say what it is hiding is
+worse than a long one.
+
+**One primitive, one limit.** `misc/PreviewList.tsx` owns the limit, the
+disclosure control and the remembered state; `Section` gained a `count`
+prop so the heading is computed in one place. The Waitlist had the first copy
+of this behaviour and the dashboard's task buckets another — a second
+slightly-different "N more" is how the same list ends up expanding differently
+depending on which page you reached it from, so the Waitlist was **migrated
+onto the primitive** rather than left beside it. Its local search still
+bypasses the collapse (`showAll`), because a search that only looked at the
+first eight rows would answer the wrong question.
+
+**Audited, section by section, on the rendered pages:**
+
+| Page | Section | Now |
+|---|---|---|
+| Round (cohort) | Enrolled Clients, People Deciding, Applications | counted + collapsed |
+| | Waitlist | already was; migrated onto the primitive |
+| | Cohort Details | fixed fields, not a list — unchanged |
+| GYU programme | Cohorts | counted + collapsed (a round's card is taller than a person's row) |
+| | Waitlist | counted + collapsed |
+| LE programme | Current Clients, Starting Later, Needs Start Week | counted + collapsed |
+| | Upcoming Openings (months) | **left alone** — bounded by the clients' own finish weeks, not by anything that grows |
+
+**State is remembered, not component-local.** Expansion lives in the admin
+store (`localStorageStore` in production), keyed per section per record, so
+a refresh, a refetch, or opening and closing a lightbox leaves the section
+exactly as Leif left it — and expanding one round's Applications never expands
+another's. A quick-add to an OPENED waitlist has to keep both properties at
+once: the scroll repair (C) kept the place by not remounting, but an expansion
+held in component state would still have snapped shut, putting her back at the
+top of a list of fifteen.
+
+### Proof
+
+`e2e/sectionDensity.spec.ts` — three tests in the built app against real
+Postgres, seeded past the limit (20 applications, 14 waiting) so the page is
+genuinely long: the counts and the collapse; `12 more` opening all twenty
+with the URL unchanged and the Waitlist still collapsed beside it;
+`Show less` closing it; an opened section still open **after a reload**; and
+adding to an opened Waitlist leaving it open at `Waitlist · 15` with the
+scroll still down the page.
+
+`cohorts/sectionDensity.test.tsx` — the same six behaviours against the real
+Cohort page, including independence between sections and survival of a remount
+against a persistent store.
+
+**Sensitivity.** Restoring unbounded rendering (`const visible = items`)
+fails **5 of 6** unit tests and **all 3** built-app tests. The one that still
+passes is "states its size in its own heading" — correctly, since the count is
+true whether or not anything is hidden.
+
+**Two tests had to be opened, not weakened.** `IndividualProgramPage`'s
+capacity tests read the WHOLE twelve-client list; they now click the real
+`N more` first, which is the click Leif makes. And
+`contracts/programs/everyClientHasAHome.test.ts` anchored on
+`capacity.occupied.map`; it anchors on `items={capacity.occupied}` now —
+and the ordering test in the same file was passing **vacuously** on
+`indexOf` returning −1 for its anchor, so it now asserts the anchor was
+found.
 
 ## 8f. Application decision expansion — PRODUCTION ACCEPTED 2026-10-09
 

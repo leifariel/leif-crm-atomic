@@ -736,6 +736,10 @@ export const frenchCrmMessages = {
     },
   },
   crm: {
+    preview: {
+      more: "%{count} de plus",
+      show_less: "Afficher moins",
+    },
     action: {
       reset_password: "Réinitialiser le mot de passe",
     },
