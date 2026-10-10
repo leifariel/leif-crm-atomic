@@ -4105,7 +4105,45 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8g. Programme configuration UX — A–D DEPLOYED, E BUILT (2026-10-09)
+## 8g. Programme configuration UX — PRODUCTION ACCEPTED 2026-10-10
+
+Accepted by Leif in production at `00b25c6a`; migration `20261009120000`
+applied exactly once, **158 total**.
+
+**What she verified, on the real pages.**
+
+| Page | Order confirmed |
+|---|---|
+| A round (GYU cohort) | Enrolled Clients → People Deciding → Applications → Waitlist → Cohort Details |
+| The programme (GYU parent) | Clients → People Deciding → Applications → Waitlist → Cohorts |
+| The Living Example | Current Clients → Starting Later → Upcoming Openings → People Deciding → Waitlist |
+
+And the semantics behind them: an approved or pending APPLICATION is no
+longer misclassified as somebody deciding, on any of the three; People
+Deciding is the canonical Decision-stage authority everywhere; the parent
+programme reads across its rounds with truthful round labels and no Living
+Example people in it; needs-a-week clients are visible and actionable
+inside Starting Later; Upcoming Openings collapses; the preview limit is 3
+with working "N more" / "Show less".
+
+Still intact from the earlier passes: payment configuration with
+Add / Edit / Deactivate, an instalment plan that does not add up refused,
+"Edit cohort", and a waitlist quick-add that leaves her at the waitlist.
+
+**Production database verification, read back by Leif.** Migration
+`20261009120000` applied exactly once, 158 total. Payment authority and
+security checks PASS — the browser cannot write `offer_payment_options`,
+both writers are SECURITY DEFINER with pinned search paths, EXECUTE granted
+explicitly. Catalogue health PASS: **10 active payment options, no retired
+ones yet, 0 Deals currently referencing `selected_payment_option_id`, and
+no payment drift.** The versioning rule has therefore not yet been exercised
+by a real agreement — the first edit to a chosen option will be the first
+time it runs on live data, and the verification query reports it when it
+does.
+
+### The record of how it got here
+
+
 
 Five bounded jobs. **A, B, C deployed at `c263968f`; D (density) deployed
 at `b78c33ed`** — migration `20261009120000`, deterministic, **158 total**,
