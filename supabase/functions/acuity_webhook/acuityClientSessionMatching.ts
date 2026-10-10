@@ -18,9 +18,6 @@ export type ClientSessionOfferRow = {
   name: string;
   client_session_acuity_appointment_type_id: string | null;
 };
-type DealRow = { id: number; contact_id: number; offer_id: number };
-type EnrollmentRow = { id: number; opportunity_id: number; status: string };
-
 // Offer-level only (no Cohort-level session mapping — group-offer session
 // attendance is out of scope for this slice). Never a display-name match —
 // same stable-ID principle as acuityMatching.ts's own resolver.
@@ -87,25 +84,16 @@ export const findOrCreateContactForClientSession = async (params: {
 // session" — never guessed. Only an ACTIVE Enrollment counts; zero or 2+
 // active matches both come back unresolved (enrollment: null) rather than
 // picking one.
-export const findActiveEnrollmentForClientSession = async (params: {
-  contactId: number;
-  offerId: number;
-}): Promise<{ enrollment: EnrollmentRow | null; ambiguous: boolean }> => {
-  const { data: deals } = await supabaseAdmin
-    .from("deals")
-    .select("id, contact_id, offer_id")
-    .eq("contact_id", params.contactId)
-    .eq("offer_id", params.offerId);
-  const dealIds = ((deals ?? []) as DealRow[]).map((deal) => deal.id);
-  if (dealIds.length === 0) return { enrollment: null, ambiguous: false };
-
-  const { data: enrollments } = await supabaseAdmin
-    .from("enrollments")
-    .select("id, opportunity_id, status")
-    .in("opportunity_id", dealIds)
-    .eq("status", "active");
-  const active = (enrollments ?? []) as EnrollmentRow[];
-  if (active.length === 0) return { enrollment: null, ambiguous: false };
-  if (active.length > 1) return { enrollment: null, ambiguous: true };
-  return { enrollment: active[0], ambiguous: false };
-};
+// findActiveEnrollmentForClientSession USED TO LIVE HERE.
+//
+// It answered "which Enrollment owns this session?" once, at webhook time,
+// from "this contact has exactly one ACTIVE Enrollment for this offer" —
+// and wrote null whenever that was not yet true. Production proved that is
+// not a rare miss: 62 of 255 sessions were left blank, 26 of them created
+// before their Enrollment existed at all.
+//
+// The question now has ONE answer, in one place, consulted whenever it
+// might have changed: the view client_session_enrollment_candidates, via
+// ../_shared/reconcileClientSessionEnrollments.ts. Nothing here decides
+// provenance any more, on purpose — a second implementation is how the two
+// drift apart.

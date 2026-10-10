@@ -2,10 +2,10 @@ import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 import type { AcuityAppointmentDetails } from "./acuityApi.ts";
 import { jsonResponse } from "./acuitySalesCallHandlers.ts";
 import {
-  findActiveEnrollmentForClientSession,
   findOrCreateContactForClientSession,
   resolveOfferForClientSession,
 } from "./acuityClientSessionMatching.ts";
+import { reconcileClientSessionEnrollments } from "../_shared/reconcileClientSessionEnrollments.ts";
 
 // Client + Session Operations slice A, cadence-corrected. Mirrors (does
 // not share code with — Deno Edge Functions can't import from src/)
@@ -15,7 +15,9 @@ import {
 // create/touch any Task — Tasks/Needs Attention for client-session
 // anomalies are explicitly out of scope for this slice (a rare
 // unresolved/ambiguous session is preserved with enrollment_id null, same
-// as sales_calls' own precedent, but without a resolution UI yet). A
+// as sales_calls' own precedent — and that state was NOT rare: 62 of 255
+// production sessions sat unlinked, so the link now converges rather than
+// being decided once here. A
 // booked session is assumed attended BY DEFAULT (cadence correction — see
 // types.ts's own ClientSession comment); none of these handlers ever set
 // no_show_at, that stays the Enrollment page's own explicit human action.
@@ -50,16 +52,18 @@ export const handleClientSessionScheduled = async (
 
   const contact = await findOrCreateContactForClientSession(appointment);
 
-  const { enrollment, ambiguous } = await findActiveEnrollmentForClientSession({
-    contactId: contact.id,
-    offerId: offer.id,
-  });
-
   const { data: clientSession, error } = await supabaseAdmin
     .from("client_sessions")
     .insert({
       contact_id: contact.id,
-      enrollment_id: enrollment?.id ?? null,
+      // Provenance is NOT decided here. The row is written first and the
+      // one link authority decides afterwards, so ingestion, the nightly
+      // sweep and the historical backfill can never disagree — and a
+      // session booked before its Enrollment exists gets linked when the
+      // Enrollment arrives instead of never. The matcher that used to run
+      // here answered once and left 62 production rows blank; see
+      // ../_shared/reconcileClientSessionEnrollments.ts.
+      enrollment_id: null,
       offer_id: offer.id,
       status: "booked",
       scheduled_at: appointment.datetime,
@@ -80,9 +84,16 @@ export const handleClientSessionScheduled = async (
     new_scheduled_at: appointment.datetime,
   });
 
+  const linkage = await reconcileClientSessionEnrollments(clientSession.id);
+
   return jsonResponse({
     status: "booked",
-    matchReason: enrollment ? "matched" : ambiguous ? "ambiguous" : "none",
+    matchReason:
+      linkage.linked > 0
+        ? "matched"
+        : linkage.ambiguous > 0
+          ? "ambiguous"
+          : "none",
   });
 };
 

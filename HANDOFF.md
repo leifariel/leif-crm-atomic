@@ -21,10 +21,14 @@ lives uncommitted in the main checkout's working tree (§8b-builder).
 **Application decision expansion is PRODUCTION ACCEPTED** (§8f), with all six
 Kit tags mapped.
 
-**A production bug is repaired and waiting to deploy (§8k).** Four clients were
-falsely told they had skipped the week of Oct 4–7; a week is now compared as
-calendar days in Denver, and the four tasks close themselves on the next
-calendar sync after deploy. Nothing to run by hand.
+**A production bug is repaired and waiting to deploy (§8l, with §8k).** Three
+clients — Ava Frotton, Denise Cormier, Gina McNamara — were falsely told they
+had skipped the week of Oct 4–7. The cause was NOT the timezone bug §8k fixes:
+their sessions were in the table with `client_sessions.enrollment_id` null, and
+the detector only found sessions through that column. Cadence truth no longer
+depends on it, and provenance now converges instead of being decided once.
+Jess Beauchamp genuinely had no session that week and her task stays open.
+Nothing to run by hand.
 
 **The queue after it:** (1) programme configuration polish —
 real payment-option configuration, "Edit cohort" naming, and waitlist
@@ -4111,6 +4115,130 @@ parent record for every reference. For a deal that was a no-op; for any
 parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
+
+## 8l. A missing link is not an absent session — REPAIRED, AWAITING DEPLOY (2026-10-10)
+
+**The correction that matters.** §8k fixed a real timezone bug and it should
+ship. It explains **none** of the four production tasks that started the
+investigation. Production forensics said so plainly: for Ava Frotton, Denise
+Cormier and Gina McNamara the old rule AND the corrected rule both answered
+MISSED, because there was no session row the detector could see at all.
+
+**The real cause.** `client_sessions.enrollment_id` is **nullable
+provenance**, and the cadence detector asked its question as
+
+```ts
+client_sessions where enrollment_id = <this enrollment>
+```
+
+`findActiveEnrollmentForClientSession` resolved that column **once**, when the
+Acuity appointment arrived, from "this contact has exactly one *active*
+Enrollment for this offer" — and wrote null whenever that was not yet true.
+Nothing ever revisited it. **62 of 255** production sessions carried null,
+every one of them `source = 'acuity'`, **59** of them belonging to a contact
+who has an Enrollment, and **26** created *before* their Enrollment existed,
+so the one-shot lookup could not possibly have succeeded.
+
+The proof that this was the cause and not a coincidence: **twelve** sessions
+exist in the week of 4–7 October across all clients. Exactly **three** have
+`enrollment_id` null, and they are Ava, Denise and Gina. Every other client
+that week is linked, and none of them got a false task.
+
+**Jess Beauchamp is not one of them.** She had no session that week — Leif
+confirmed it. Her task is correct and must stay open. Three clear, one
+remains; a repair that clears all four is not a repair.
+
+### The canonical question, said once
+
+> Did this client have a qualifying session for **this programme** during
+> **this expected week**?
+
+`src/components/atomic-crm/sessions/cadenceFulfillment.ts` (mirrored into
+`supabase/functions/_shared/`) is the only place that answers it:
+
+- a session **linked** to this Enrollment, in this week — fulfils
+- an **unlinked** session, **same contact and same offer**, whose Denver
+  calendar day is inside this week — fulfils
+- cancelled, a no-show, the **wrong programme**, somebody else, a session
+  explicitly linked to a **different** Enrollment, the wrong week — never
+- nothing qualifying — missed
+
+It is **not** loosened to "same contact": a Growing Yourself Up booking does
+not answer a Living Example week. And it **never guesses** — if two expected
+weeks could each own the same unlinked hour it returns `ambiguous`, spends it
+on neither, and reports the count, rather than closing one of Leif's
+questions with an hour that may belong to the other. Production has no
+overlapping weeks today (audited: 270 live windows, zero overlapping pairs,
+zero contact+offer with more than one Enrollment); the guard exists because a
+returning client would create exactly that.
+
+### Provenance converges, it does not run once
+
+The link question now has **one** answer, expressed once as a read-only view,
+`public.client_session_enrollment_candidates` (migration
+`20261010190000`). Deterministic means **exactly one** Enrollment can
+truthfully own the session:
+
+- **tier 1** — the session's Denver day is one of that Enrollment's live
+  expected days (every one of the 57 production links qualifies here)
+- **tier 2**, only when no expected week contains the day — that Enrollment
+  was running on it. Status is deliberately *not* required to be `active`: a
+  session that happened while an Enrollment was running belongs to it even if
+  that Enrollment has since ended.
+- zero or several candidates leave the column **null** with the reason
+  recorded. It never reasons from "this contact has one active Enrollment
+  today" — that is the matcher that produced these nulls.
+
+`_shared/reconcileClientSessionEnrollments.ts` is the only writer, and it
+guards every write with `.is("enrollment_id", null)`, so it can **only fill a
+blank** and never rewrite provenance. It runs in three places and the old
+matcher has been **deleted** rather than left as a second implementation:
+
+1. **Acuity ingestion** — the handler inserts the row and then asks the
+   authority, instead of deciding for itself
+2. **the nightly sync** — after the expected-session schedule is rebuilt and
+   before cadence is judged, which is the order that matters, because tier 1
+   reads the schedule that run just wrote
+3. **once over the history**, in the migration
+
+### What the repair will do in production
+
+From the preflight, read live: **62** unlinked · **57 deterministic** (all
+tier 1) · **5 no-candidate** (sessions 7, 29, 64, 238, 249) · **0 ambiguous**.
+Exactly **3** open cadence questions are answered by an unlinked session, and
+they are the three named. **9** explicit classifications of Leif's exist and
+are never touched — the repair only ever closes an *unclassified* issue.
+
+- Ava Frotton → issue 19 resolves, task 405 completed, history
+  `created -> resolved`, `enrollment_id` 67
+- Denise Cormier → issue 18, task 404, `enrollment_id` 66
+- Gina McNamara → issue 21, task 407, `enrollment_id` 40
+- **Jess Beauchamp → issue 20 and task 406 stay open and unclassified.**
+  Nothing is invented and no session is imported.
+
+`supabase/preflight/cadence_link_preflight.sql` is one complete read-only
+statement covering all of it, usable before the deploy and again afterwards
+as the readback. It carries the link rule inline because the view ships with
+the repair and does not exist yet at preflight time; the two were compared on
+real Postgres over one session of each classification and agreed on every row.
+**Once deployed, delete that copy and read the view instead.**
+
+**A duplicate the preflight caught:** two Contacts are named *Denise
+Cormier*, 106 and **344**. 344 has no sessions, no Opportunity and no
+Enrollment, so the diagnosis is unaffected — but it is one of the same-name
+pairs waiting on Leif.
+
+**No email can be sent from any of this.** Re-audited after the repair: no
+send path in any changed file, and no trigger on `client_sessions`, `tasks`,
+`client_session_cadence_issues` or the issue events reaches anything external.
+
+**Replay boundary stays closed:** 162 versions = 136 deterministic + 26
+MAIN-only. The backfill derives every link from rows already present, so it
+replays into an empty database as a no-op and is deterministic by
+construction — it is *not* a production-data repair and is not in the
+manifest.
+
+---
 
 ## 8k. False "no session booked" tasks — REPAIRED, AWAITING DEPLOY (2026-10-10)
 

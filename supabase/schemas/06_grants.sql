@@ -916,3 +916,11 @@ revoke all on function public.reconcile_kit_identities() from public;
 revoke all on function public.reconcile_kit_identities() from anon;
 revoke all on function public.reconcile_kit_identities() from authenticated;
 grant execute on function public.reconcile_kit_identities() to service_role;
+
+-- Deciding provenance is the CRM''s own server-side work. A browser never
+-- asks this question, and a new view holds no privileges until one is
+-- granted, so anon and authenticated are simply never given any.
+revoke all on public.client_session_enrollment_candidates from public;
+revoke all on public.client_session_enrollment_candidates from anon;
+revoke all on public.client_session_enrollment_candidates from authenticated;
+grant select on public.client_session_enrollment_candidates to service_role;

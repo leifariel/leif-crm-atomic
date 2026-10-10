@@ -382,6 +382,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/sessions/cadenceFulfillment.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/sessions/bookClientSession.ts",
           "type": "registry:component"
         },

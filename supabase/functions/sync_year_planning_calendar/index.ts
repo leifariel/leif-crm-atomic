@@ -6,6 +6,7 @@ import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 import { syncExpectedSessionWindows } from "./syncExpectedSessionWindows.ts";
 import { rebuildEnrollmentExpectedSessions } from "./rebuildEnrollmentExpectedSessions.ts";
 import { detectClientSessionCadenceIssues } from "./detectClientSessionCadenceIssues.ts";
+import { reconcileClientSessionEnrollments } from "../_shared/reconcileClientSessionEnrollments.ts";
 
 // Client + Session Operations cadence correction — the read-only Google
 // Calendar ingestion this slice's product correction requires (Leif's
@@ -119,9 +120,16 @@ const runSync = async () => {
   // assigned weeks alone was what allowed a corrected Start Date to
   // produce a capacity board and a session plan that disagreed.
   const assignment = await rebuildEnrollmentExpectedSessions();
+  // Provenance converges here, AFTER the expected weeks are rebuilt and
+  // BEFORE cadence is judged. The order is the point: the link authority's
+  // strongest fact is "the session's day is one of this Enrollment's
+  // expected days", so it must read the schedule this run just wrote. A
+  // session booked before its Enrollment existed gets its link now rather
+  // than never. See ../_shared/reconcileClientSessionEnrollments.ts.
+  const linkage = await reconcileClientSessionEnrollments();
   const detection = await detectClientSessionCadenceIssues();
 
-  return { syncResults, assignment, detection };
+  return { syncResults, assignment, linkage, detection };
 };
 
 Deno.serve(async (req: Request) =>

@@ -62,15 +62,34 @@ function createFakeDb(seed: Record<string, Row[]>) {
           }),
         };
       },
+      // Chainable, because a write may carry more than one filter: the
+      // link reconciler guards its update with .is("enrollment_id", null)
+      // so it can only ever fill a blank, and a fake that ignored the
+      // second filter would let that guard rot.
       update(patch: Row) {
-        return {
+        const writeFilters: [string, unknown][] = [];
+        const apply = () => {
+          tables[table] = tables[table].map((r) =>
+            writeFilters.every(([f, v]) => (r[f] ?? null) === v)
+              ? { ...r, ...patch }
+              : r,
+          );
+          return { data: null, error: null };
+        };
+        const chain = {
           eq(field: string, value: unknown) {
-            tables[table] = tables[table].map((r) =>
-              r[field] === value ? { ...r, ...patch } : r,
-            );
-            return Promise.resolve({ data: null, error: null });
+            writeFilters.push([field, value]);
+            return chain;
+          },
+          is(field: string, value: unknown) {
+            writeFilters.push([field, value]);
+            return chain;
+          },
+          then(resolve: (v: unknown) => void) {
+            resolve(apply());
           },
         };
+        return chain;
       },
       then(resolve: (v: unknown) => void) {
         resolve({
@@ -101,6 +120,7 @@ import {
   tryHandleClientSessionCanceled,
 } from "./acuityClientSessionHandlers";
 import type { AcuityAppointmentDetails } from "./acuityApi";
+import { reconcileClientSessionEnrollments } from "../_shared/reconcileClientSessionEnrollments.ts";
 
 const CLIENT_SESSION_TYPE_ID = "90522599";
 const buildAppointment = (
@@ -144,7 +164,15 @@ describe("acuityClientSessionHandlers", () => {
   });
 
   describe("handleClientSessionScheduled", () => {
-    it("matches the one legitimate active Enrollment silently", async () => {
+    // The fake assigns 1000 to the first row it inserts, which is the
+    // session itself — so the link authority's answer can be seeded for it.
+    const NEW_SESSION_ID = 1000;
+
+    it("writes the session, then takes the link authority's answer", async () => {
+      // Provenance is no longer decided here. The handler inserts the row
+      // and asks the one authority, so ingestion and the historical
+      // backfill cannot disagree. What the authority DECIDES is proved
+      // against real Postgres; what this proves is the wiring.
       fakeDb.current = seedWith({
         contacts: [
           {
@@ -156,6 +184,13 @@ describe("acuityClientSessionHandlers", () => {
         ],
         deals: [{ id: 10, contact_id: 1, offer_id: 1 }],
         enrollments: [{ id: 100, opportunity_id: 10, status: "active" }],
+        client_session_enrollment_candidates: [
+          {
+            session_id: NEW_SESSION_ID,
+            classification: "deterministic",
+            proposed_enrollment_id: 100,
+          },
+        ],
       });
       const response = await handleClientSessionScheduled(
         buildAppointment(),
@@ -168,6 +203,87 @@ describe("acuityClientSessionHandlers", () => {
       expect(created.enrollment_id).toBe(100);
       expect(created.offer_id).toBe(1);
       expect(fakeDb.current!.tables.client_session_events).toHaveLength(1);
+    });
+
+    it("never rewrites provenance that already exists", async () => {
+      // The reconciler guards its write with .is("enrollment_id", null), so
+      // it can only ever FILL a blank. Even if the authority proposed a
+      // different Enrollment for a session that already names one, the row
+      // does not move.
+      fakeDb.current = seedWith({
+        contacts: [
+          {
+            id: 1,
+            first_name: "Ada",
+            last_name: "Lovelace",
+            email_jsonb: [{ email: "ada@example.com", type: "Other" }],
+          },
+        ],
+        deals: [{ id: 10, contact_id: 1, offer_id: 1 }],
+        enrollments: [{ id: 100, opportunity_id: 10, status: "active" }],
+        client_sessions: [
+          {
+            id: 900,
+            contact_id: 1,
+            offer_id: 1,
+            enrollment_id: 100,
+            status: "booked",
+            scheduled_at: "2026-10-06T18:00:00.000Z",
+          },
+        ],
+        client_session_enrollment_candidates: [
+          {
+            session_id: 900,
+            classification: "deterministic",
+            proposed_enrollment_id: 101,
+          },
+        ],
+      });
+
+      await reconcileClientSessionEnrollments(900);
+
+      const row = fakeDb.current!.tables.client_sessions.find(
+        (r) => r.id === 900,
+      )!;
+      expect(row.enrollment_id).toBe(100);
+    });
+
+    it("leaves the link blank rather than guessing when the authority is unsure", async () => {
+      fakeDb.current = seedWith({
+        contacts: [
+          {
+            id: 1,
+            first_name: "Ada",
+            last_name: "Lovelace",
+            email_jsonb: [{ email: "ada@example.com", type: "Other" }],
+          },
+        ],
+        deals: [{ id: 10, contact_id: 1, offer_id: 1 }],
+        enrollments: [
+          { id: 100, opportunity_id: 10, status: "active" },
+          { id: 101, opportunity_id: 10, status: "active" },
+        ],
+        client_session_enrollment_candidates: [
+          {
+            session_id: NEW_SESSION_ID,
+            classification: "ambiguous",
+            proposed_enrollment_id: null,
+          },
+        ],
+      });
+      const response = await handleClientSessionScheduled(
+        buildAppointment(),
+        "acuity-1",
+      );
+      expect(await json(response)).toEqual({
+        status: "booked",
+        matchReason: "ambiguous",
+      });
+      // The session is kept, unlinked. Nothing is invented and nothing is
+      // thrown away — the nightly sweep will revisit it.
+      expect(
+        fakeDb.current!.tables.client_sessions[0].enrollment_id,
+      ).toBeNull();
     });
 
     it("preserves an unresolved session (enrollment_id null) when zero legitimate Enrollments exist", async () => {
