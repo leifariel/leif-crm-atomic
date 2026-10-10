@@ -21,14 +21,16 @@ lives uncommitted in the main checkout's working tree (§8b-builder).
 **Application decision expansion is PRODUCTION ACCEPTED** (§8f), with all six
 Kit tags mapped.
 
-**A production bug is repaired and waiting to deploy (§8l, with §8k).** Three
-clients — Ava Frotton, Denise Cormier, Gina McNamara — were falsely told they
-had skipped the week of Oct 4–7. The cause was NOT the timezone bug §8k fixes:
-their sessions were in the table with `client_sessions.enrollment_id` null, and
-the detector only found sessions through that column. Cadence truth no longer
-depends on it, and provenance now converges instead of being decided once.
-Jess Beauchamp genuinely had no session that week and her task stays open.
-Nothing to run by hand.
+**The false "no session booked" repair is PRODUCTION ACCEPTED (§8l, with §8k),
+2026-10-10 at `803477a8`, production on 162 migrations.** Three clients — Ava
+Frotton, Denise Cormier, Gina McNamara — had been falsely told they skipped the
+week of Oct 4–7. The cause was NOT the timezone bug §8k fixes: their sessions
+sat in the table with `client_sessions.enrollment_id` null, and the detector
+only found sessions through that column. Cadence truth no longer depends on it,
+and provenance converges instead of being decided once. Jess Beauchamp genuinely
+had no session and her task correctly remains open. **One defect is carried
+forward:** a browser-triggered Sync Calendar failure is invisible and opaque —
+the JWT path lacks the try/catch and logging the cron path has (§8l).
 
 **The queue after it:** (1) programme configuration polish —
 real payment-option configuration, "Edit cohort" naming, and waitlist
@@ -4116,7 +4118,70 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8l. A missing link is not an absent session — REPAIRED, AWAITING DEPLOY (2026-10-10)
+## 8l. A missing link is not an absent session — PRODUCTION ACCEPTED 2026-10-10
+
+### PRODUCTION ACCEPTED 2026-10-10 at `803477a8`
+
+Leif reauthenticated, pressed **Sync Calendar** once, waited and refreshed.
+Needs Attention went from four cadence tasks to one. Independently read back
+from production:
+
+| | Issue | Task | Session → Enrollment |
+|---|---|---|---|
+| Ava Frotton | 19 resolved 21:57, unclassified | 405 **completed**, done_date 21:57 | 45 → 67 |
+| Denise Cormier | 18 resolved 21:57, unclassified | 404 **completed**, done_date 21:57 | 63 → 66 |
+| Gina McNamara | 21 resolved 21:57, unclassified | 407 **completed**, done_date 21:57 | 8 → 40 |
+| **Jess Beauchamp** | **20 still OPEN**, unclassified | **406 still pending** | none — canonical MISSED |
+
+Each resolved issue carries history `created -> resolved`, **one** resolved
+event, **one** Task. One open cadence question remains in production, and it
+is the right one. The sync wrote exactly 3 events, completed exactly tasks
+404/405/407, created **no** issue, **no** Task and **no** session row (255
+unchanged, no duplicate `acuity_appointment_id`).
+
+**Backfill final truth:** 62 unlinked before → **57** deterministically
+linked by migration `20261010190000` → **5** still null, and they are exactly
+the no-candidate set `7, 29, 64, 238, 249`, all still classified
+`no-candidate`. No link points at an Enrollment that cannot own its session
+(checked enrollment → opportunity → contact/offer for every linked row).
+
+**Leif's own answers survived:** 9 explicit classifications before, 9 after,
+none touched in the window, 4 notes intact. The machine only ever closed an
+unclassified issue.
+
+**No external side effect:** 0 Kit operations enqueued by the sync, queue
+unchanged at 56 succeeded, 0 waitlist operations ever, neither invite tag
+mapped. (Kit operation 74 — a `GYU-Applicant` tag at 19:20 UTC — is an
+ordinary application submission that predates both the deploy and the sync.)
+
+### The operational defect this exposed — FIX NEXT
+
+**Leif's first click did nothing and told her nothing.** `synced_at` stayed at
+the 18:00 cron, so stage 1 never completed and the whole pipeline was skipped;
+after signing out and in, the identical action worked. Stale browser auth is
+the strong inference, **not a proof** — there is no record of the first
+invocation, and that is the actual defect:
+
+```ts
+// the JWT (browser) path
+const result = await runSync();   // no try/catch, no console.error
+return jsonResponse(result);
+```
+
+The cron path wraps the same call in `try/catch` with a `console.error`; the
+browser path has neither, so a failure there is invisible afterwards and
+reaches Leif as an opaque toast. **Smallest repair:** give the JWT path the
+same catch and logging, and have the error say which stage failed, so "the
+calendar could not be reached" and "your session expired" are
+distinguishable. **Regression:** both callers must handle a `runSync` throw
+identically — remove the JWT catch and it fails.
+
+**Convergence:** idempotency is proved against real Postgres in the
+clean-room system proof (a third pass resolves nothing, writes no duplicate
+event) and in the detector's own unit tests. A second *production* pass had
+not yet run at the time of acceptance; the `sync-year-planning-calendar` cron
+fires every six hours and converges it without anyone clicking.
+
 
 **The correction that matters.** §8k fixed a real timezone bug and it should
 ship. It explains **none** of the four production tasks that started the
@@ -4240,7 +4305,7 @@ manifest.
 
 ---
 
-## 8k. False "no session booked" tasks — REPAIRED, AWAITING DEPLOY (2026-10-10)
+## 8k. False "no session booked" tasks — PRODUCTION ACCEPTED 2026-10-10 (shipped with §8l)
 
 **The report.** Four clients — Denise Cormier, Ava Frotton, Jess Beauchamp and
 Gina McNamara — were each flagged "No session booked for week of Oct 4–7". Leif
