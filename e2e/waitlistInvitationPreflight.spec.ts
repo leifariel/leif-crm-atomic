@@ -327,6 +327,31 @@ test.describe("a preflight is a snapshot, not an invitation", () => {
     expect(error).not.toBeNull();
   });
 
+  test("the browser cannot enqueue a Kit tag directly", async () => {
+    // enqueue_kit_operation creates an outbox row carrying ANY tag id for
+    // ANY contact. It is SECURITY DEFINER and the only legitimate callers
+    // are the functions that have already decided a request is allowed.
+    //
+    // It lost its revoke for a while: adding a defaulted parameter meant
+    // dropping and recreating it, and a created function starts with no ACL
+    // at all — which in Postgres is EXECUTE to PUBLIC. The production
+    // preflight query found it. This keeps it found.
+    const asOwner = createClient(
+      SUPABASE_URL,
+      process.env.VITE_SB_PUBLISHABLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } },
+    );
+    const { error } = await asOwner.rpc("enqueue_kit_operation", {
+      p_contact_id: 1,
+      p_application_id: null,
+      p_kind: "manual",
+      p_origin: "manual_owner",
+      p_kit_tag_id: 24082722,
+      p_kit_tag_name: "MiniDD_Applicant",
+    });
+    expect(error).not.toBeNull();
+  });
+
   test("the same person in both final sets is surfaced", async () => {
     await mapTag(LE, LE_TAG, "LE_Waitlist_Invited");
     await mapTag(GYU, GYU_TAG, "GYU_Waitlist_Invited");

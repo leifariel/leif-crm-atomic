@@ -4105,6 +4105,58 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8j. Two things the production preflight found (2026-10-10)
+
+Deployed at `7ea09bb2`; migration `20261010160000`, deterministic, **161
+total**, NOT yet pushed.
+
+### A revoke that a DROP threw away — live in production now
+
+`enqueue_kit_operation()` creates an outbox row carrying any tag id for any
+contact. It is SECURITY DEFINER, and `20260929120000` revoked it from
+public, anon, authenticated and service_role: the only legitimate callers
+are the functions that have already decided a request is allowed.
+
+`20261010120000` added a defaulted parameter to it. A new default makes a
+SECOND function rather than a new version of the first, so that migration
+dropped the old signature and created the new one — **and a created function
+starts with no ACL at all, which in Postgres means EXECUTE to PUBLIC.** The
+revoke was undone by a drop that had nothing to do with it.
+
+It is live. A signed-in CRM user could call it directly and queue any Kit
+tag for any contact, bypassing every rule above it. Only Leif has a CRM
+login, so the exposure is small — but it is real and
+`20261010160000` closes it.
+
+Found by the production preflight query, which asks of every function in
+this pathway whether its EXECUTE was stated or left open. That check is why
+this is a two-line migration rather than an incident. `proacl is null` is
+easy to read past and impossible to miss once asked, and
+`e2e/waitlistInvitationPreflight.spec.ts` now keeps it asked.
+
+**The general lesson:** adding a defaulted parameter to a SECURITY DEFINER
+function means dropping it, and a drop takes its grants with it. Any
+migration that does this must restate them.
+
+### The Kit worker drains the SHARED queue
+
+Not just the batch that motivated the run. The real-Kit proof discovered it
+the hard way — two unrelated clean-room fixture operations went out against
+real Kit — and production has the same property: anything pending in
+`kit_sync_operations` is carried out on the next worker pass, whoever
+started it.
+
+There is no per-batch scoping today, and inventing one was outside this
+task. What exists instead is a gate: section 4 of the production preflight
+counts everything claimable, breaks it down by origin and event, lists every
+unrelated row with its subject, tag and age, and returns **STOP — Leif
+decides** if any of them would go out alongside the invitations. The queue
+is normally empty, so this is usually one PASS line.
+
+A `p_origin` filter on `claim_kit_sync_operations` would make a worker run
+scopeable, and is the obvious next small step if the gate ever becomes
+tedious.
+
 ## 8i. Kit decides who can be invited — BUILT, BLOCKED ON ONE PROOF (2026-10-10)
 
 The invitation machinery below (§8h) worked out who is eligible from the
