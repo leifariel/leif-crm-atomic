@@ -405,7 +405,51 @@ const getDataProviderWithCustomMethods = () => {
       }
       return data as Record<string, unknown>;
     },
-    // The account's tag catalog, so Leif chooses a real tag by name instead of
+    // Who could actually be invited off a waitlist, Kit's answer included.
+    // Server-side because only the Edge Function holds the Kit credential,
+    // and a READ: it writes a snapshot of what Kit said and nothing else.
+    async waitlistPreflight(input: {
+      offerId: Identifier;
+      cohortId: Identifier | null;
+      requested: number;
+      entryIds?: Identifier[] | null;
+    }) {
+      const { data, error } = await getSupabaseClient().functions.invoke<
+        Record<string, unknown>
+      >("kit_sync", {
+        method: "POST",
+        body: {
+          action: "waitlist_preflight",
+          offerId: input.offerId,
+          cohortId: input.cohortId,
+          requested: input.requested,
+          entryIds: input.entryIds ?? null,
+        },
+      });
+      if (error || !data) {
+        console.error("kit_sync.waitlist_preflight.error", error);
+        throw new Error("Could not check who can be invited");
+      }
+      return data;
+    },
+    // Inviting exactly the people in a snapshot Leif confirmed — never a
+    // list re-derived afterwards, which could quietly contain somebody she
+    // never saw.
+    async inviteFromPreflight(input: {
+      preflightId: Identifier;
+      label: string | null;
+    }) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "invite_from_preflight",
+        { p_preflight_id: input.preflightId, p_label: input.label },
+      );
+      if (error) {
+        console.error("invite_from_preflight.error", error);
+        throw new Error("Could not queue those invitations");
+      }
+      return data as Record<string, unknown>;
+    },
+    // The account’s tag catalog, so Leif chooses a real tag by name instead of
     // copying a number out of Kit. Owner-only, server-side, and a read.
     async kitTags() {
       const { data, error } = await getSupabaseClient().functions.invoke<{

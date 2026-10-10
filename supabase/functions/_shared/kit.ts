@@ -76,7 +76,31 @@ const subscriberIdOf = (body: unknown): string | null => {
   return id == null ? null : String(id);
 };
 
+/**
+ * A Kit subscriber's current state, exactly as Kit words it.
+ *
+ * Kit v4 reports active, inactive, bounced, complained and cancelled.
+ * Anything else it ever adds arrives here verbatim and is treated as unsafe
+ * by waitlistKitState.ts, which is the only correct default for a word
+ * nobody has reasoned about.
+ */
+export type KitSubscriberState = string;
+
+export type KitSubscriber = {
+  subscriberId: string;
+  state: KitSubscriberState;
+};
+
 export type KitClient = {
+  /**
+   * The subscriber Kit currently holds for this exact address, or null.
+   *
+   * A READ, deliberately separate from upsertSubscriber: Kit v4's
+   * POST /subscribers updates an existing subscriber's fields but does not
+   * change its state, so it can neither tell us what the state is nor be
+   * used to alter it. Consent is a question, not a side effect.
+   */
+  findSubscriber: (email: string) => Promise<KitResult<KitSubscriber | null>>;
   upsertSubscriber: (
     email: string,
   ) => Promise<KitResult<{ subscriberId: string }>>;
@@ -185,6 +209,41 @@ export const createKitClient = (
   };
 
   return {
+    // Exact-address lookup across every state, because the states that
+    // matter most here are the ones a default listing hides.
+    findSubscriber: async (email) => {
+      const result = await get(
+        "/subscribers?email_address=" +
+          encodeURIComponent(email) +
+          "&status=all&per_page=2",
+      );
+      if (!result.ok) return result;
+      const body = result.value as {
+        subscribers?: Array<{
+          id?: unknown;
+          email_address?: unknown;
+          state?: unknown;
+        }>;
+      } | null;
+      // Kit matches the address exactly, and the comparison is made here
+      // too: acting on somebody else's subscriber because a filter was
+      // looser than expected is the one mistake worth being paranoid about.
+      const match = (body?.subscribers ?? []).find(
+        (row) =>
+          String(row?.email_address ?? "")
+            .trim()
+            .toLowerCase() === email.trim().toLowerCase(),
+      );
+      if (!match || match.id == null) return { ok: true, value: null };
+      return {
+        ok: true,
+        value: {
+          subscriberId: String(match.id),
+          state: String(match.state ?? "unknown"),
+        },
+      };
+    },
+
     listTags: () => collectTags("/tags"),
 
     createTag: async (name) => {

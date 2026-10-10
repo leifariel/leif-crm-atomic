@@ -20,10 +20,10 @@ import { humanizeCohortName } from "../cohorts/humanizeCohortName";
 import { formatISODateString } from "../deals/dealUtils";
 import type { KitTagMapping } from "../types";
 import {
-  inviteOldestWaiting,
-  waitlistInvitationCandidates,
-  type InvitationCandidate,
+  inviteFromPreflight,
+  runWaitlistPreflight,
   type InvitationExclusionReason,
+  type PreflightResult,
 } from "./waitlistInvitationActions";
 
 // The confirmation before a batch of invitations goes out.
@@ -40,6 +40,17 @@ import {
 // The one exception is a hand-picked selection, where the people ARE the
 // instruction — and even then the server re-checks every one of them.
 
+// Kit's own words, said the way Leif would say them.
+export const KIT_STATE_LABELS: Record<string, string> = {
+  "kit-cancelled": "unsubscribed in Kit",
+  "kit-complained": "marked an email as spam",
+  "kit-bounced": "their address bounces",
+  "kit-inactive": "not active in Kit",
+  "kit-unreachable": "Kit could not be reached",
+  "kit-unconfirmed": "Kit did not confirm them",
+  "beyond-the-number-asked-for": "beyond the number asked for",
+};
+
 export const EXCLUSION_LABELS: Record<InvitationExclusionReason, string> = {
   "already-invited": "already invited",
   "invitation-in-flight": "an invitation is already on its way",
@@ -54,6 +65,17 @@ export const EXCLUSION_LABELS: Record<InvitationExclusionReason, string> = {
 export type InviteMode =
   | { kind: "oldest"; count: number }
   | { kind: "selected"; entryIds: Identifier[] };
+
+const reasonLabel = (reason: string | null): string => {
+  if (!reason) return "";
+  if (reason in KIT_STATE_LABELS) return KIT_STATE_LABELS[reason]!;
+  if (reason in EXCLUSION_LABELS) {
+    return EXCLUSION_LABELS[reason as InvitationExclusionReason];
+  }
+  // An unknown word is shown as it is. Guessing at a friendly phrasing for
+  // a reason nobody has reasoned about would be inventing meaning.
+  return reason;
+};
 
 export const InviteToApplyDialog = ({
   open,
@@ -79,9 +101,8 @@ export const InviteToApplyDialog = ({
   const notify = useNotify();
   const refresh = useRefresh();
   const [busy, setBusy] = useState(false);
-  const [candidates, setCandidates] = useState<InvitationCandidate[] | null>(
-    null,
-  );
+  const [preflight, setPreflight] = useState<PreflightResult | null>(null);
+  const [failed, setFailed] = useState(false);
 
   // The programme's own tag for an invitation. Named in the confirmation
   // because it is the thing that actually reaches the person — Leif hangs
@@ -101,45 +122,46 @@ export const InviteToApplyDialog = ({
       row.event === "waitlist_invited",
   );
 
+  // THE PREFLIGHT IS THE LIST. It asks the database who is eligible and
+  // then asks KIT whether each of those people can actually be sent
+  // anything — cancelled, complained, bounced and inactive are all people
+  // who have told Kit to stop. Discovering that after Leif confirms "25"
+  // is how she invites twenty-two believing she invited twenty-five.
   useEffect(() => {
     if (!open) {
-      setCandidates(null);
+      setPreflight(null);
+      setFailed(false);
       return;
     }
     let live = true;
-    void waitlistInvitationCandidates(dataProvider, { offerId, cohortId })
-      .then((rows) => {
-        if (live) setCandidates(rows);
+    setFailed(false);
+    void runWaitlistPreflight(dataProvider, {
+      offerId,
+      cohortId,
+      requested: mode.kind === "oldest" ? mode.count : mode.entryIds.length,
+      entryIds: mode.kind === "selected" ? mode.entryIds : null,
+    })
+      .then((result) => {
+        if (live) setPreflight(result);
       })
       .catch(() => {
-        if (live) setCandidates([]);
+        if (live) setFailed(true);
       });
     return () => {
       live = false;
     };
-  }, [open, dataProvider, offerId, cohortId]);
+  }, [open, dataProvider, offerId, cohortId, mode]);
 
-  const eligible = (candidates ?? []).filter((row) => row.eligible);
-  const asked =
-    mode.kind === "oldest"
-      ? eligible.slice(0, mode.count)
-      : (candidates ?? []).filter((row) =>
-          mode.entryIds.some(
-            (id) => String(id) === String(row.waitlistEntryId),
-          ),
-        );
-  const askedEligible = asked.filter((row) => row.eligible);
-  const askedExcluded = asked.filter((row) => !row.eligible);
-  // For the oldest-N path, everybody passed over on the way down the list.
-  const passedOver =
-    mode.kind === "oldest"
-      ? (candidates ?? []).filter(
-          (row) =>
-            !row.eligible &&
-            askedEligible.length > 0 &&
-            row.joinedAt <= askedEligible[askedEligible.length - 1]!.joinedAt,
-        )
-      : askedExcluded;
+  const askedEligible = (preflight?.rows ?? [])
+    .filter((row) => row.finalEligible)
+    .sort((a, b) => (a.finalRank ?? 0) - (b.finalRank ?? 0));
+  // Everybody passed over on the way down to that last person — database
+  // reasons and Kit reasons together, because to Leif they are one list.
+  const passedOver = (preflight?.rows ?? []).filter(
+    (row) =>
+      !row.finalEligible &&
+      row.exclusionReason !== "beyond-the-number-asked-for",
+  );
 
   const oldestJoined = askedEligible[0]?.joinedAt ?? null;
   const newestJoined =
@@ -148,14 +170,13 @@ export const InviteToApplyDialog = ({
     value ? formatISODateString(value.split("T")[0]!) : "—";
 
   const handleConfirm = async () => {
+    if (preflight == null) return;
     setBusy(true);
     try {
-      const result = await inviteOldestWaiting(dataProvider, {
-        offerId,
-        cohortId,
-        // How many, not which — see the note at the top of this file.
-        limit: mode.kind === "oldest" ? mode.count : null,
-        entryIds: mode.kind === "selected" ? mode.entryIds : null,
+      // Exactly the people in the snapshot above — never a list worked out
+      // again afterwards, which could contain somebody Leif never saw.
+      const result = await inviteFromPreflight(dataProvider, {
+        preflightId: preflight.preflightId,
         label:
           mode.kind === "oldest"
             ? `Oldest ${mode.count} waiting`
@@ -270,7 +291,24 @@ export const InviteToApplyDialog = ({
             </div>
           </div>
 
-          {candidates != null && askedEligible.length < 1 && (
+          {preflight != null && preflight.shortBy > 0 && (
+            <p className="text-sm text-muted-foreground">
+              {translate("resources.waitlist_entries.invite.short_by", {
+                _: "%{count} fewer than asked for — there are not that many people Kit will deliver to.",
+                count: preflight.shortBy,
+              })}
+            </p>
+          )}
+
+          {failed && (
+            <p className="text-sm text-destructive">
+              {translate("resources.waitlist_entries.invite.preflight_failed", {
+                _: "Could not check who can be invited. Nothing was sent.",
+              })}
+            </p>
+          )}
+
+          {preflight != null && askedEligible.length < 1 && (
             <p className="text-sm text-muted-foreground">
               {translate("resources.waitlist_entries.invite.none_eligible", {
                 _: "Nobody here can be invited right now.",
@@ -291,11 +329,8 @@ export const InviteToApplyDialog = ({
               </span>
               <ul className="text-xs text-muted-foreground">
                 {passedOver.slice(0, 6).map((row) => (
-                  <li key={row.waitlistEntryId}>
-                    {row.name} —{" "}
-                    {row.exclusionReason
-                      ? EXCLUSION_LABELS[row.exclusionReason]
-                      : ""}
+                  <li key={String(row.waitlistEntryId)}>
+                    {row.name} — {reasonLabel(row.exclusionReason)}
                   </li>
                 ))}
                 {passedOver.length > 6 && (
@@ -329,7 +364,12 @@ export const InviteToApplyDialog = ({
           <Button
             type="button"
             onClick={handleConfirm}
-            disabled={busy || askedEligible.length === 0 || mapping == null}
+            disabled={
+              busy ||
+              preflight == null ||
+              askedEligible.length === 0 ||
+              mapping == null
+            }
           >
             {translate("resources.waitlist_entries.invite.confirm", {
               _: "Invite %{count}",

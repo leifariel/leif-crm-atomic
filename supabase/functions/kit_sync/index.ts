@@ -5,6 +5,7 @@ import { createErrorResponse } from "../_shared/utils.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 import { createKitClient } from "../_shared/kit.ts";
 import { processKitSyncOperations } from "./kitSyncProcessor.ts";
+import { runWaitlistPreflight } from "./waitlistPreflight.ts";
 
 // The only thing in this system that holds the Kit credential.
 //
@@ -27,6 +28,10 @@ import { processKitSyncOperations } from "./kitSyncProcessor.ts";
 
 type RequestBody = {
   action?: string;
+  offerId?: number | string;
+  cohortId?: number | string | null;
+  requested?: number | string;
+  entryIds?: Array<number | string>;
   applicationId?: number | string;
   contactId?: number | string;
   kitTagId?: number | string;
@@ -44,6 +49,9 @@ const ownerOnly = new Set([
   "create_tag",
   "contact_tags",
   "manual_tag",
+  // Asking Kit about people is the owner looking at her own list; a
+  // schedule has nobody in front of it and no batch to plan.
+  "waitlist_preflight",
 ]);
 
 const jsonResponse = (body: unknown, status = 200) =>
@@ -125,6 +133,10 @@ Deno.serve(async (req: Request) =>
 
     const authorization = req.headers.get("Authorization") ?? "";
     let isOwner = false;
+    // Who asked, when a person did. Recorded on a preflight so an audit can
+    // say whose list it was; never used to decide what is allowed, which is
+    // isOwner's job.
+    let ownerEmail: string | null = null;
     if (authorization.startsWith("Bearer ")) {
       const { data, error } = await supabaseAdmin.auth.getUser(
         authorization.slice("Bearer ".length),
@@ -133,6 +145,7 @@ Deno.serve(async (req: Request) =>
         return createErrorResponse(401, "Unauthorized");
       }
       isOwner = true;
+      ownerEmail = data.user.email ?? null;
     }
 
     if (!isOwner) {
@@ -248,6 +261,89 @@ Deno.serve(async (req: Request) =>
         const summary = await runProcessor();
         if (summary === null) return notConfigured();
         return jsonResponse({ requested, ...summary });
+      }
+
+      // Who could actually be invited off a waitlist, Kit's answer
+      // included. A READ: it asks Kit about each candidate in turn, writes
+      // down what Kit said, and stops when it has as many safe people as
+      // were asked for. It tags nobody, enqueues nothing, and moves no
+      // waitlist place — the snapshot it leaves is what Leif confirms, and
+      // invite_from_preflight() is what acts on it.
+      if (body.action === "waitlist_preflight") {
+        if (body.offerId == null || body.requested == null) {
+          return createErrorResponse(
+            400,
+            "offerId and requested are required.",
+          );
+        }
+        const apiKey = Deno.env.get("KIT_API_KEY");
+        if (!apiKey) return notConfigured();
+        const offerId = Number(body.offerId);
+        const cohortId = body.cohortId == null ? null : Number(body.cohortId);
+        const requested = Number(body.requested);
+        if (!Number.isFinite(requested) || requested < 1 || requested > 500) {
+          return createErrorResponse(400, "requested must be 1 to 500.");
+        }
+
+        const result = await runWaitlistPreflight({
+          kit: createKitClient(apiKey),
+          offerId,
+          cohortId,
+          requested,
+          entryIds: Array.isArray(body.entryIds)
+            ? body.entryIds.map((id) => Number(id))
+            : null,
+          createdBy: ownerEmail,
+          db: {
+            candidates: async (offer, cohort) => {
+              const { data, error } = await supabaseAdmin.rpc(
+                "waitlist_invitation_candidates",
+                { p_offer_id: offer, p_cohort_id: cohort },
+              );
+              if (error) throw new Error(error.message);
+              return data ?? [];
+            },
+            saveSnapshot: async (input) => {
+              const { data: preflight, error } = await supabaseAdmin
+                .from("waitlist_invitation_preflights")
+                .insert({
+                  offer_id: input.offerId,
+                  cohort_id: input.cohortId,
+                  requested: input.requested,
+                  resolved: input.resolved,
+                  created_by: input.createdBy,
+                })
+                .select("id")
+                .single();
+              if (error) throw new Error(error.message);
+              if (input.rows.length > 0) {
+                const { error: rowsError } = await supabaseAdmin
+                  .from("waitlist_invitation_preflight_candidates")
+                  .insert(
+                    input.rows.map((row) => ({
+                      preflight_id: preflight.id,
+                      waitlist_entry_id: row.waitlistEntryId,
+                      contact_id: row.contactId,
+                      contact_name: row.name,
+                      email: row.email,
+                      joined_at: row.joinedAt,
+                      db_eligible: row.dbEligible,
+                      db_exclusion_reason: row.dbExclusionReason,
+                      kit_subscriber_id: row.kitSubscriberId,
+                      kit_state: row.kitState,
+                      kit_checked_at: row.kitCheckedAt,
+                      final_eligible: row.finalEligible,
+                      exclusion_reason: row.exclusionReason,
+                      final_rank: row.finalRank,
+                    })),
+                  );
+                if (rowsError) throw new Error(rowsError.message);
+              }
+              return { preflightId: preflight.id as number };
+            },
+          },
+        });
+        return jsonResponse(result);
       }
 
       if (body.action === "retry") {

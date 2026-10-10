@@ -422,3 +422,217 @@ export const inviteMirror = async (
     skipped,
   };
 };
+
+// ---------------------------------------------------------------------------
+// The preflight, mirrored
+// ---------------------------------------------------------------------------
+// There is no Kit behind the demo provider, so the mirror resolves every
+// database-eligible candidate as Kit-safe and says so: `kit_state: null`
+// means "nobody asked Kit", which is the truth here and is visibly
+// different from `active`. Production asks the Edge Function, which holds
+// the only Kit credential in the system.
+
+export const waitlistPreflightMirror = async (
+  dataProvider: DataProvider,
+  {
+    offerId,
+    cohortId,
+    requested,
+    entryIds = null,
+  }: {
+    offerId: Identifier;
+    cohortId: Identifier | null;
+    requested: number;
+    entryIds?: Identifier[] | null;
+  },
+): Promise<Record<string, unknown>> => {
+  const everyone = await candidatesMirror(dataProvider, { offerId, cohortId });
+  const candidates =
+    entryIds == null
+      ? everyone
+      : everyone.filter((row) =>
+          entryIds.some((id) => String(id) === String(row.waitlist_entry_id)),
+        );
+
+  let rank = 0;
+  const rows = candidates.map((row) => {
+    const safe = row.eligible === true;
+    const finalRank = safe && rank < requested ? ++rank : null;
+    return {
+      waitlist_entry_id: row.waitlist_entry_id,
+      contact_id: row.contact_id,
+      contact_name: row.contact_name,
+      email: row.email,
+      joined_at: row.joined_at,
+      db_eligible: safe,
+      db_exclusion_reason: row.exclusion_reason,
+      kit_subscriber_id: null,
+      kit_state: null,
+      kit_checked_at: null,
+      final_eligible: safe && finalRank != null,
+      exclusion_reason: safe
+        ? finalRank == null
+          ? "beyond-the-number-asked-for"
+          : null
+        : row.exclusion_reason,
+      final_rank: finalRank,
+    };
+  });
+
+  const { data: preflight } = await dataProvider.create(
+    "waitlist_invitation_preflights",
+    {
+      data: {
+        offer_id: offerId,
+        cohort_id: cohortId,
+        requested,
+        resolved: rank,
+        status: "open",
+      } as never,
+    },
+  );
+  for (const row of rows) {
+    await dataProvider.create("waitlist_invitation_preflight_candidates", {
+      data: { preflight_id: preflight.id, ...row } as never,
+    });
+  }
+
+  return {
+    preflightId: preflight.id,
+    requested,
+    resolved: rank,
+    shortBy: Math.max(0, requested - rank),
+    rows,
+  };
+};
+
+export const inviteFromPreflightMirror = async (
+  dataProvider: DataProvider,
+  { preflightId, label }: { preflightId: Identifier; label: string | null },
+): Promise<Record<string, unknown>> => {
+  const { data: preflight } = await dataProvider.getOne(
+    "waitlist_invitation_preflights",
+    { id: preflightId },
+  );
+  const rows = (
+    await all<RaRecord & Record<string, unknown>>(
+      dataProvider,
+      "waitlist_invitation_preflight_candidates",
+    )
+  )
+    .filter(
+      (row) =>
+        String(row.preflight_id) === String(preflightId) &&
+        row.final_eligible === true,
+    )
+    .sort((a, b) => Number(a.final_rank) - Number(b.final_rank));
+
+  return await inviteMirror(dataProvider, {
+    offerId: preflight.offer_id as Identifier,
+    cohortId: (preflight.cohort_id as Identifier | null) ?? null,
+    limit: null,
+    entryIds: rows.map((row) => row.waitlist_entry_id as Identifier),
+    label,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// What Leif is actually shown
+// ---------------------------------------------------------------------------
+
+export type PreflightRow = {
+  waitlistEntryId: Identifier;
+  contactId: Identifier;
+  name: string;
+  email: string | null;
+  joinedAt: string;
+  dbEligible: boolean;
+  /** What Kit holds them as, or null when Kit was never asked. */
+  kitState: string | null;
+  finalEligible: boolean;
+  exclusionReason: string | null;
+  finalRank: number | null;
+};
+
+export type PreflightResult = {
+  preflightId: Identifier;
+  requested: number;
+  resolved: number;
+  /** How many short of the number asked for, said rather than counted. */
+  shortBy: number;
+  rows: PreflightRow[];
+};
+
+const shapeRow = (raw: Record<string, unknown>): PreflightRow => ({
+  waitlistEntryId: raw.waitlist_entry_id as Identifier,
+  contactId: raw.contact_id as Identifier,
+  name: String(raw.contact_name ?? "").trim(),
+  email: (raw.email as string | null) ?? null,
+  joinedAt: String(raw.joined_at ?? ""),
+  dbEligible: raw.db_eligible === true,
+  kitState: (raw.kit_state as string | null) ?? null,
+  finalEligible: raw.final_eligible === true,
+  exclusionReason: (raw.exclusion_reason as string | null) ?? null,
+  finalRank: raw.final_rank == null ? null : Number(raw.final_rank),
+});
+
+/**
+ * Ask who could actually be invited — the database AND Kit.
+ *
+ * A read that leaves a snapshot behind. Nothing is tagged, nothing is
+ * queued, and nobody's waitlist place moves.
+ */
+export const runWaitlistPreflight = async (
+  dataProvider: DataProvider,
+  input: {
+    offerId: Identifier;
+    cohortId: Identifier | null;
+    requested: number;
+    entryIds?: Identifier[] | null;
+  },
+): Promise<PreflightResult> => {
+  const provider = dataProvider as DataProvider & {
+    waitlistPreflight?: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+  };
+  const raw =
+    typeof provider.waitlistPreflight === "function"
+      ? await provider.waitlistPreflight({
+          offerId: input.offerId,
+          cohortId: input.cohortId,
+          requested: input.requested,
+          entryIds: input.entryIds ?? null,
+        })
+      : await waitlistPreflightMirror(dataProvider, {
+          offerId: input.offerId,
+          cohortId: input.cohortId,
+          requested: input.requested,
+          entryIds: input.entryIds ?? null,
+        });
+
+  return {
+    preflightId: (raw.preflightId ?? raw.preflight_id) as Identifier,
+    requested: Number(raw.requested ?? input.requested),
+    resolved: Number(raw.resolved ?? 0),
+    shortBy: Number(raw.shortBy ?? 0),
+    rows: ((raw.rows as Record<string, unknown>[]) ?? []).map(shapeRow),
+  };
+};
+
+/** Invite exactly the people in a snapshot, never a list re-derived after. */
+export const inviteFromPreflight = async (
+  dataProvider: DataProvider,
+  input: { preflightId: Identifier; label: string | null },
+): Promise<InviteResult> => {
+  const provider = dataProvider as DataProvider & {
+    inviteFromPreflight?: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+  };
+  const raw =
+    typeof provider.inviteFromPreflight === "function"
+      ? await provider.inviteFromPreflight(input)
+      : await inviteFromPreflightMirror(dataProvider, input);
+  return shapeResult(raw);
+};

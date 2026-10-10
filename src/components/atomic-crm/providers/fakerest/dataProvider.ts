@@ -1,6 +1,8 @@
 import {
   candidatesMirror,
+  inviteFromPreflightMirror,
   inviteMirror,
+  waitlistPreflightMirror,
 } from "../../waitlist/waitlistInvitationActions";
 import {
   withLifecycleCallbacks,
@@ -924,6 +926,10 @@ export const createDataProvider = ({
       kitTagName: string;
       applicationId?: Identifier | null;
     }) => addKitTagMirror(dataProvider, input),
+    waitlistPreflight: async (input: never) =>
+      await waitlistPreflightMirror(dataProvider, input),
+    inviteFromPreflight: async (input: never) =>
+      await inviteFromPreflightMirror(dataProvider, input),
     waitlistInvitationCandidates: async (input: never) =>
       await candidatesMirror(dataProvider, input),
     inviteOldestWaiting: async (input: never) =>

@@ -18,12 +18,17 @@
 //   the limit of what is worth keeping.
 
 import type { KitClient } from "../_shared/kit.ts";
+import { resolveKitState } from "../_shared/waitlistKitState.ts";
 
 export type KitSyncOperation = {
   id: number;
-  application_id: number;
+  application_id: number | null;
   contact_id: number;
-  kind: "applicant" | "decision";
+  kind: "applicant" | "decision" | "cohort" | "manual" | "waitlist_invited";
+  // Which of the three subjects this operation belongs to. A waitlist
+  // invitation is the one that asks Kit about the person before tagging
+  // them — see the loop below.
+  origin?: string;
   email: string;
   kit_tag_id: number;
   kit_tag_name: string;
@@ -42,6 +47,19 @@ const TRANSIENT: ReadonlySet<string> = new Set([
   "provider_unavailable",
   "network",
 ]);
+
+// An invitation is a consequential email, so the person's CURRENT Kit state
+// decides whether it may be sent — not the state the preflight saw, which
+// may be hours old. Somebody who cancelled, complained, bounced or went
+// inactive in between is NOT tagged, NOT marked invited, and does NOT lose
+// their place: the operation fails with the exact state, and Leif decides
+// whether to replace them.
+//
+// Deliberately only for invitations. An applicant tag is the receipt for
+// something the person just did, and a decision tag records a decision Leif
+// made; neither is a marketing send, and gating them on consent state would
+// silently stop recording facts.
+const NEEDS_STATE_CHECK = "waitlist_invitation";
 
 // Five attempts at five minutes apart is a little over twenty minutes of Kit
 // being unreachable before an applicant becomes Leif's problem — comfortably
@@ -139,17 +157,40 @@ export const processKitSyncOperations = async ({
 
   for (const operation of operations) {
     try {
-      // Subscriber first, always. It is what gives the tag call somebody to
-      // attach to, and it is the only thing that returns the id the success
-      // row has to carry.
-      const subscriber = await kit.upsertSubscriber(operation.email);
-      if (!subscriber.ok) {
-        await recordFailure(
-          operation,
-          subscriber.failureClass,
-          subscriber.reason,
-        );
-        continue;
+      // THE CONSENT GATE, for invitations only and immediately before the
+      // consequential call. resolveKitState reads the person's current
+      // state and, when Kit has never heard of them, creates them through
+      // the same canonical upsert every other path uses — then confirms
+      // what came back is genuinely sendable.
+      let subscriberId: string;
+      if (operation.origin === NEEDS_STATE_CHECK) {
+        const verdict = await resolveKitState(kit, operation.email, {
+          allowCreate: true,
+        });
+        if (!verdict.safe) {
+          await recordFailure(
+            operation,
+            verdict.failureClass ?? "unsafe_state",
+            verdict.detail ??
+              `Kit will not deliver to this address (${verdict.reason})`,
+          );
+          continue;
+        }
+        subscriberId = verdict.subscriberId;
+      } else {
+        // Subscriber first, always. It is what gives the tag call somebody
+        // to attach to, and it is the only thing that returns the id the
+        // success row has to carry.
+        const subscriber = await kit.upsertSubscriber(operation.email);
+        if (!subscriber.ok) {
+          await recordFailure(
+            operation,
+            subscriber.failureClass,
+            subscriber.reason,
+          );
+          continue;
+        }
+        subscriberId = subscriber.value.subscriberId;
       }
 
       const tagged = await kit.addTag(operation.kit_tag_id, operation.email);
@@ -174,7 +215,7 @@ export const processKitSyncOperations = async ({
         const identity = await db.rpc("record_external_identity", {
           p_provider: "kit",
           p_provider_account_id: null,
-          p_external_user_id: subscriber.value.subscriberId,
+          p_external_user_id: subscriberId,
           p_display_identifier: operation.email,
           p_metadata: {},
           p_email: operation.email,
@@ -184,7 +225,7 @@ export const processKitSyncOperations = async ({
         summary.identityProblems += 1;
       }
 
-      await db.markSucceeded(operation.id, subscriber.value.subscriberId);
+      await db.markSucceeded(operation.id, subscriberId);
       summary.succeeded += 1;
     } catch (error) {
       // An unexpected throw is still this one person's problem, not the

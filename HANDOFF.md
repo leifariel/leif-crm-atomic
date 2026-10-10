@@ -4105,6 +4105,109 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8i. Kit decides who can be invited — BUILT, BLOCKED ON ONE PROOF (2026-10-10)
+
+The invitation machinery below (§8h) worked out who is eligible from the
+CRM's side. It could not know whether KIT would deliver to them, and a
+person who cancelled, complained, bounced or went inactive is somebody who
+has told Kit to stop. Migration `20261010140000`, deterministic, **160
+total**.
+
+### What Kit v4 actually does, and what follows
+
+The client is **v4** (`https://api.kit.com/v4`, `X-Kit-Api-Key`).
+`POST /v4/subscribers` is an upsert: for somebody Kit already knows it
+updates their fields and **does not change their state**. So it can neither
+report consent nor grant it, and it was never a consent check — it only
+looked like one. The state is now READ with
+`GET /v4/subscribers?email_address=…&status=all`.
+
+| Kit state | Invitation |
+|---|---|
+| active | sent |
+| cancelled / complained / bounced / inactive | **not sent**, reason `kit-<state>` |
+| never heard of them | created through the existing canonical upsert, then **confirmed active** before tagging |
+| anything else Kit ever adds | **not sent** — unknown words fail closed |
+
+Nobody is reactivated, and nobody is deleted and re-added to get around a
+state. `_shared/waitlistKitState.ts` is the only place this is decided.
+
+### "The oldest 25" means after BOTH checks
+
+A preflight walks the database's chronological list and asks Kit about each
+candidate — four lookups at a time, which resolves thirty people in seconds
+and stays far below Kit's rate limit — until it has as many SAFE people as
+were asked for. **Somebody Kit will not deliver to does not consume one of
+the places.** The walk simply continues.
+
+It is a READ that leaves a snapshot: `waitlist_invitation_preflights` and
+`waitlist_invitation_preflight_candidates` record, per person, what the
+database said, what Kit said, when Kit was asked, and the final verdict with
+its reason. It tags nobody, queues nothing, and moves no waitlist place.
+Only `service_role` can write one, so a snapshot the browser could forge
+does not exist.
+
+**That snapshot is what Leif confirms, and what gets invited.** Not a list
+re-derived at click time: `invite_from_preflight()` walks the named people
+in rank order, re-checks the DATABASE half for each (Kit is re-checked at
+delivery), and reports anybody who changed as
+`changed-since-preflight` — **never substituting the next person down**,
+who she never saw. A snapshot is spent once.
+
+`invite_oldest_waiting()` is no longer executable by `authenticated`. It
+answers the database half correctly and is still proved, but a browser able
+to call it would be a route to a batch with the consent check skipped. The
+only door from the CRM goes through a preflight.
+
+### At delivery, Kit is asked again
+
+A preflight is minutes or hours old. Immediately before the consequential
+tag, the worker resolves the person's CURRENT state; if it has gone unsafe
+the operation fails with `unsafe_state` and the exact reason, **no tag is
+sent, no invitation is marked sent, and the person keeps their place.** Not
+requeued either — retrying does not change somebody's mind about
+unsubscribing.
+
+The gate is deliberately only for invitations. An applicant tag is the
+receipt for something the person just did and a decision tag records a
+decision Leif made; neither is a marketing send, and gating them would stop
+recording facts.
+
+### Proof
+
+`kitSyncProcessor.test.ts` — nine tests: cancelled, complained, bounced and
+inactive each tagging nobody and failing with their exact state; an unknown
+state failing closed; active tagging without touching the subscription; an
+unknown address created through the canonical path and **confirmed** before
+tagging; a newly created subscriber in an unsendable state refused; Kit
+being unreachable retrying rather than failing; and an applicant receipt
+still recorded for somebody Kit holds as cancelled.
+
+The unsafe states are stubbed there rather than created in Kit: making a
+genuinely cancelled subscriber in Leif's account to watch the gate work
+would contaminate it with a person who does not exist.
+
+`e2e/waitlistInvitationPreflight.spec.ts` — six tests against real
+Postgres: a snapshot tagging nobody and moving nobody; two unreachable
+people not consuming places and the two after them becoming the batch;
+somebody who applied between preview and click reported rather than
+replaced; a snapshot spent once; **the browser unable to call the
+Kit-skipping path at all**; and the same person in both final sets
+surfaced.
+
+### WHAT IS NOT PROVED, AND WHY SYSTEM GREEN IS NO
+
+**No real Kit call has been made.** `KIT_API_KEY` exists only in the
+production Edge Function's environment — not in any `.env` here, not in the
+clean room, not in the workflows. There is no credential this session can
+use, and inventing one or pointing the clean room at production Kit are
+both worse than saying so.
+
+So the active path — a real subscriber-state read and a real tag, read back
+independently from Kit — is **unproven**, and SYSTEM GREEN is **NO** until
+it runs. That is one controlled test subscriber, a tag with no automation
+attached, through the real worker.
+
 ## 8h. Waitlist batch invitations — BUILT, NOT YET RUN (2026-10-10)
 
 Leif invites twenty-five people off the Living Example waitlist and thirty

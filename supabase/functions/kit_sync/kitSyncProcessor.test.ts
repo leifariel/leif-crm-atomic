@@ -59,6 +59,10 @@ const buildDb = (claimed: KitSyncOperation[]) => {
 };
 
 const kitThat = (over: Partial<KitClient> = {}): KitClient => ({
+  findSubscriber: vi.fn().mockResolvedValue({
+    ok: true,
+    value: { subscriberId: "42", state: "active" },
+  }),
   upsertSubscriber: vi
     .fn()
     .mockResolvedValue({ ok: true, value: { subscriberId: "42" } }),
@@ -419,5 +423,155 @@ describe("claiming", () => {
     await expect(
       processKitSyncOperations({ db, kit: kitThat() }),
     ).rejects.toThrow(/connection lost/);
+  });
+});
+
+// The consent gate, which only invitations pass through.
+//
+// Kit v4's POST /subscribers updates an existing subscriber's fields and
+// does NOT change their state, so it can neither report consent nor grant
+// it. The state is read with GET /v4/subscribers, and anybody Kit holds as
+// cancelled, complained, bounced or inactive is somebody who has told Kit
+// to stop.
+//
+// The unsafe states are stubbed here rather than created in Kit: making a
+// genuinely cancelled subscriber in Leif's real account to watch the gate
+// work would contaminate the account with a person who does not exist. The
+// ACTIVE path is the one that has to be proved against real Kit.
+describe("an invitation asks Kit whether it may be sent", () => {
+  const invitation = (over: Partial<KitSyncOperation> = {}) =>
+    operation({
+      kind: "waitlist_invited",
+      origin: "waitlist_invitation",
+      application_id: null,
+      kit_tag_name: "LE_Waitlist_Invited",
+      ...over,
+    });
+
+  const kitHolding = (state: string): KitClient =>
+    kitThat({
+      findSubscriber: vi.fn().mockResolvedValue({
+        ok: true,
+        value: { subscriberId: "sub-9", state },
+      }),
+    });
+
+  for (const state of ["cancelled", "complained", "bounced", "inactive"]) {
+    it(`never tags somebody Kit holds as ${state}`, async () => {
+      const { db, succeeded, failed } = buildDb([invitation()]);
+      const kit = kitHolding(state);
+
+      const summary = await processKitSyncOperations({ db, kit });
+
+      // No tag call at all, and no subscriber written: the person is left
+      // exactly as Kit has them.
+      expect(kit.addTag).not.toHaveBeenCalled();
+      expect(kit.upsertSubscriber).not.toHaveBeenCalled();
+      expect(succeeded).toHaveLength(0);
+      // Failed with the exact state, and NOT requeued — nothing about
+      // retrying changes somebody's mind about unsubscribing.
+      expect(failed).toHaveLength(1);
+      const [, failureClass, reason, requeue] = failed[0]!;
+      expect(failureClass).toBe("unsafe_state");
+      expect(reason).toContain(`kit-${state}`);
+      expect(requeue).toBe(false);
+      expect(summary.failed).toBe(1);
+      expect(summary.requeued).toBe(0);
+    });
+  }
+
+  it("treats a state nobody has reasoned about as unsafe", async () => {
+    const { db, failed } = buildDb([invitation()]);
+    const kit = kitHolding("quarantined");
+
+    await processKitSyncOperations({ db, kit });
+
+    expect(kit.addTag).not.toHaveBeenCalled();
+    expect(failed[0]![1]).toBe("unsafe_state");
+    expect(failed[0]![2]).toContain("kit-quarantined");
+  });
+
+  it("tags somebody Kit holds as active, without touching their subscription", async () => {
+    const { db, succeeded } = buildDb([invitation()]);
+    const kit = kitHolding("active");
+
+    await processKitSyncOperations({ db, kit });
+
+    expect(kit.addTag).toHaveBeenCalledWith(24082722, "ada@example.com");
+    // Already a subscriber in good standing: nothing is created, and
+    // nothing about their subscription is written.
+    expect(kit.upsertSubscriber).not.toHaveBeenCalled();
+    expect(succeeded).toEqual([[1, "sub-9"]]);
+  });
+
+  it("creates somebody Kit has never heard of, then confirms before tagging", async () => {
+    const { db, succeeded } = buildDb([invitation()]);
+    const findSubscriber = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, value: null })
+      .mockResolvedValueOnce({
+        ok: true,
+        value: { subscriberId: "sub-new", state: "active" },
+      });
+    const kit = kitThat({ findSubscriber });
+
+    await processKitSyncOperations({ db, kit });
+
+    // The canonical creation path, not a second one.
+    expect(kit.upsertSubscriber).toHaveBeenCalledWith("ada@example.com");
+    // And confirmed afterwards rather than assumed.
+    expect(findSubscriber).toHaveBeenCalledTimes(2);
+    expect(succeeded).toEqual([[1, "sub-new"]]);
+  });
+
+  it("refuses to tag a new subscriber Kit will not send to", async () => {
+    const { db, succeeded, failed } = buildDb([invitation()]);
+    const kit = kitThat({
+      findSubscriber: vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, value: null })
+        .mockResolvedValueOnce({
+          ok: true,
+          value: { subscriberId: "sub-new", state: "inactive" },
+        }),
+    });
+
+    await processKitSyncOperations({ db, kit });
+
+    expect(kit.addTag).not.toHaveBeenCalled();
+    expect(succeeded).toHaveLength(0);
+    expect(failed[0]![2]).toContain("kit-inactive");
+  });
+
+  it("retries when Kit itself could not be reached", async () => {
+    // Not a consent answer: Kit never gave one. The next pass is the fix.
+    const { db, failed } = buildDb([invitation()]);
+    const kit = kitThat({
+      findSubscriber: vi.fn().mockResolvedValue({
+        ok: false,
+        failureClass: "provider_unavailable",
+        reason: "Kit responded 503",
+      }),
+    });
+
+    await processKitSyncOperations({ db, kit });
+
+    expect(kit.addTag).not.toHaveBeenCalled();
+    const [, failureClass, , requeue] = failed[0]!;
+    expect(failureClass).toBe("provider_unavailable");
+    expect(requeue).toBe(true);
+  });
+
+  it("leaves an applicant receipt alone — it is not a marketing send", async () => {
+    // A tag that records something the person just did must keep being
+    // recorded, whatever their subscription state.
+    const { db, succeeded } = buildDb([operation()]);
+    const kit = kitHolding("cancelled");
+
+    await processKitSyncOperations({ db, kit });
+
+    expect(kit.findSubscriber).not.toHaveBeenCalled();
+    expect(kit.addTag).toHaveBeenCalled();
+    expect(succeeded).toHaveLength(1);
   });
 });
