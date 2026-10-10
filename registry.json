@@ -818,6 +818,14 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/programs/StartingLaterSection.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/programs/SlotPersonCard.tsx",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/programs/ProgramsPage.tsx",
           "type": "registry:component"
         },
@@ -827,10 +835,6 @@
         },
         {
           "path": "src/components/atomic-crm/programs/NewProgramDialog.tsx",
-          "type": "registry:component"
-        },
-        {
-          "path": "src/components/atomic-crm/programs/NeedsStartWeekSection.tsx",
           "type": "registry:component"
         },
         {

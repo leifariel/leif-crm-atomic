@@ -139,6 +139,19 @@ describe("a group programme is as configurable as a 1:1 one", () => {
     expect(text).not.toContain("Program start");
   });
 
+  it("lists its rounds above its waiting list", async () => {
+    // The same order a round's own page uses, and the order Leif asked
+    // for: what is running, then who is waiting for it. The waiting list
+    // sat first here purely because it was added first.
+    const { screen } = await mountAt("/programs/group/2");
+
+    await expect
+      .element(screen.getByRole("heading", { name: /^Cohorts · / }))
+      .toBeVisible();
+    const text = body();
+    expect(text.indexOf("Cohorts")).toBeLessThan(text.indexOf("Waitlist"));
+  });
+
   it("lets the Kit tag be chosen from the real catalogue rather than typed", async () => {
     const { screen, dataProvider } = await mountAt("/offers/2");
 

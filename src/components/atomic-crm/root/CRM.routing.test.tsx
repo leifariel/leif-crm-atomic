@@ -248,7 +248,10 @@ describe("GYU Cohort person links", () => {
       contact_id: 1,
       offer_id: 2,
       cohort_id: 1,
-      stage: "call_booked",
+      // Decision, because that is what People Deciding means: the one
+      // definition in deals/peopleDeciding.ts, which the Pipeline and the
+      // Dashboard also use. Call Booked is in the pipeline and is not it.
+      stage: "decision",
       outcome: null,
       amount: 1400,
       sales_id: 0,
@@ -262,7 +265,7 @@ describe("GYU Cohort person links", () => {
     );
 
     await expect
-      .element(screen.getByRole("heading", { name: "People Deciding" }))
+      .element(screen.getByRole("heading", { name: /^People Deciding/ }))
       .toBeInTheDocument();
     await screen.getByRole("link", { name: "Ada Lovelace" }).click();
 

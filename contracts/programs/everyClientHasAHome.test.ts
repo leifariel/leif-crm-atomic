@@ -15,6 +15,14 @@ import { describe, expect, test } from "vitest";
 // The arithmetic was right and the page had lost a client. So the rule is
 // not "the numbers must be correct" — it is that a phase and a home arrive
 // together.
+//
+// The home moved once since. Two client sections for "agreed and not
+// started" was one heading more than the question deserved, so committed
+// and unscheduled share Starting Later — and the contract moved with it
+// rather than being dropped. What it now insists on is stronger, because
+// the three-row preview gave the old failure a new way to happen: the
+// person who needs something must come FIRST in that list, or they are
+// behind "N more" and lost again.
 
 const read = (path: string) => readFileSync(path, "utf8");
 
@@ -29,8 +37,9 @@ const PAGE = read(
   "src/components/atomic-crm/programs/IndividualProgramPage.tsx",
 );
 const SECTION = read(
-  "src/components/atomic-crm/programs/NeedsStartWeekSection.tsx",
+  "src/components/atomic-crm/programs/StartingLaterSection.tsx",
 );
+const ROW = read("src/components/atomic-crm/programs/SlotPersonCard.tsx");
 const CAPACITY = read(
   "src/components/atomic-crm/capacity/individualCapacity.ts",
 );
@@ -38,14 +47,28 @@ const OPENINGS = read(
   "src/components/atomic-crm/programs/UpcomingOpeningsSection.tsx",
 );
 
-describe("the three client phases, three client sections", () => {
-  test("the page renders a section per non-released phase", () => {
+describe("the three client phases, and a home for each", () => {
+  test("the page hands every non-released phase to a section", () => {
     const body = code(PAGE);
     expect(body).toMatch(/items=\{capacity\.occupied\}/);
-    expect(body).toMatch(/items=\{capacity\.committed\}/);
-    expect(body).toMatch(
-      /<NeedsStartWeekSection clients=\{capacity\.unscheduled\}/,
+    expect(body).toMatch(/committed=\{capacity\.committed\}/);
+    expect(body).toMatch(/unscheduled=\{capacity\.unscheduled\}/);
+  });
+
+  test("and the one with a question comes first inside it", () => {
+    // Not cosmetic. The preview shows three rows, so an unscheduled client
+    // sorted after six committed ones is behind "N more" — which is the
+    // Todd failure again, wearing a disclosure control.
+    expect(code(SECTION)).toMatch(
+      /const clients = \[\.\.\.unscheduled, \.\.\.committed\]/,
     );
+  });
+
+  test("and says what they need, with the control that answers it", () => {
+    const body = code(SECTION);
+    expect(body).toMatch(/needs_start_week_badge/);
+    expect(body).toMatch(/set_start_week/);
+    expect(body).toMatch(/starting_later_needs_week/);
   });
 
   test("and the capacity model still only has those three", () => {
@@ -60,16 +83,18 @@ describe("the three client phases, three client sections", () => {
     );
   });
 
-  test("the unscheduled section sits with the client sections, not under the forecast", () => {
+  test("they sit with the client sections, not under the forecast", () => {
     const body = code(PAGE);
-    const needs = body.indexOf("NeedsStartWeekSection clients");
+    const later = body.indexOf("<StartingLaterSection");
     const current = body.indexOf("items={capacity.occupied}");
-    // -1 from both sides would make the two comparisons below pass without
-    // proving anything, so the anchor has to be found first.
-    expect(current).toBeGreaterThan(-1);
     const openings = body.indexOf("<UpcomingOpeningsSection");
-    expect(needs).toBeGreaterThan(current);
-    expect(needs).toBeLessThan(openings);
+    // -1 on both sides would make the comparisons below pass without
+    // proving anything, so each anchor has to be found first.
+    expect(current).toBeGreaterThan(-1);
+    expect(later).toBeGreaterThan(-1);
+    expect(openings).toBeGreaterThan(-1);
+    expect(later).toBeGreaterThan(current);
+    expect(later).toBeLessThan(openings);
   });
 });
 
@@ -94,16 +119,13 @@ describe("the row is actionable, and there is still one start-week editor", () =
     // onboarding or sessions. rowLinkTo, not to — the whole row is the
     // target, and `to` keeps its own meaning for callers that only want
     // the name linked.
-    const body = code(SECTION);
-    expect(body).toMatch(
+    // One row component for every client phase now, which is why there is
+    // one place to assert this.
+    expect(code(ROW)).toMatch(
       /rowLinkTo=\{`\/enrollments\/\$\{client\.enrollmentId\}\/show`\}/,
     );
-    expect(body).not.toMatch(/\/contacts\//);
-    // And the same destination from the two dated sections.
-    expect(code(PAGE)).toMatch(
-      /rowLinkTo=\{`\/enrollments\/\$\{client\.enrollmentId\}\/show`\}/,
-    );
-    expect(code(PAGE)).not.toMatch(/\/contacts\//);
+    expect(code(ROW)).not.toMatch(/\/contacts\//);
+    expect(code(SECTION)).not.toMatch(/\/contacts\//);
   });
 
   test("and why, so it is not quietly turned back into a footnote", () => {

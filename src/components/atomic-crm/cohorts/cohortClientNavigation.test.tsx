@@ -103,7 +103,9 @@ const buildCrm = () => {
           offer_id: 2,
           cohort_id: COHORT_ID,
           name: "Still Deciding",
-          stage: "application_received",
+          // Decision — the canonical stage this section is built from.
+          // Application Received is in the pipeline and is not deciding.
+          stage: "decision",
           offer_name_snapshot: "Growing Yourself Up",
           offer_price_snapshot: 1400,
           amount: 1400,

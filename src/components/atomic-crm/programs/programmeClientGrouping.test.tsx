@@ -24,7 +24,13 @@ import type { Deal, Enrollment, Offer } from "../types";
 // openings forecast, with no row to click and no way through to set his
 // start week. The arithmetic was correct and the page had lost a client.
 //
-// Three phases, three sections, and nobody in between.
+// Three phases, and a home for each. Committed and unscheduled now share
+// Starting Later — one question about one of these people did not deserve
+// two headings — so what this file holds the page to is that the person
+// with the open question is VISIBLE, FIRST, and still has the button that
+// answers it. First matters more than it sounds: the section shows three
+// rows and hides the rest, so sorting an unscheduled client after six
+// committed ones would lose them again behind "N more".
 
 const NOW = new Date("2026-09-21T12:00:00Z");
 
@@ -170,8 +176,8 @@ const sectionOf = (body: string, name: string): string | null => {
   const headings = [
     "Current Clients",
     "Starting Later",
-    "Needs Start Week",
     "Upcoming Openings",
+    "People Deciding",
     "Waitlist",
   ];
   const at = body.indexOf(name);
@@ -209,7 +215,7 @@ describe("where a client row goes", () => {
     const { element } = buildCrm();
     const screen = await render(element);
     await expect
-      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .element(screen.getByRole("heading", { name: /^Starting Later/ }))
       .toBeVisible();
 
     await expect
@@ -222,7 +228,7 @@ describe("where a client row goes", () => {
     const { element } = buildCrm();
     const screen = await render(element);
     await expect
-      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .element(screen.getByRole("heading", { name: /^Starting Later/ }))
       .toBeVisible();
 
     await expect
@@ -230,12 +236,12 @@ describe("where a client row goes", () => {
       .toHaveAttribute("href", `${CANONICAL(2)}`);
   });
 
-  it("opens the client profile from Needs Start Week", async () => {
+  it("opens the client profile from a client who has no week yet", async () => {
     await page.viewport(1280, 1400);
     const { element } = buildCrm();
     const screen = await render(element);
     await expect
-      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .element(screen.getByRole("heading", { name: /^Starting Later/ }))
       .toBeVisible();
 
     await expect
@@ -248,7 +254,7 @@ describe("where a client row goes", () => {
     const { element } = buildCrm();
     const screen = await render(element);
     await expect
-      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .element(screen.getByRole("heading", { name: /^Starting Later/ }))
       .toBeVisible();
 
     const links = rowLinks(screen);
@@ -267,7 +273,7 @@ describe("where a client row goes", () => {
     const { element } = buildCrm();
     const screen = await render(element);
     await expect
-      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .element(screen.getByRole("heading", { name: /^Starting Later/ }))
       .toBeVisible();
 
     const before = window.location.hash;
@@ -294,25 +300,27 @@ describe("the programme page's client sections", () => {
     vi.useRealTimers();
   });
 
-  it("gives a client with no start week their own section, not a footnote", async () => {
+  it("gives a client with no start week a row, not a footnote", async () => {
     await page.viewport(1280, 1400);
     const { element } = buildCrm();
     const screen = await render(element);
 
     await expect
-      .element(screen.getByRole("heading", { name: "Current Clients" }))
+      .element(screen.getByRole("heading", { name: /^Current Clients/ }))
       .toBeVisible();
 
     // The regression: before this repair the only mention of them was one
     // sentence under the openings forecast.
-    await expect
-      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
-      .toBeVisible();
-
     const body = screen.container.textContent ?? "";
-    expect(sectionOf(body, "Unscheduled Commitment")).toBe("Needs Start Week");
+    expect(sectionOf(body, "Unscheduled Commitment")).toBe("Starting Later");
     expect(sectionOf(body, "Nadia Okoro")).toBe("Current Clients");
     expect(sectionOf(body, "Pete Bassett")).toBe("Starting Later");
+
+    // And they come first inside it, where the collapsed preview can
+    // always reach them.
+    expect(body.indexOf("Unscheduled Commitment")).toBeLessThan(
+      body.indexOf("Pete Bassett"),
+    );
   });
 
   it("puts that section with the other client sections, above the forecast", async () => {
@@ -321,24 +329,24 @@ describe("the programme page's client sections", () => {
     const { element } = buildCrm();
     const screen = await render(element);
     await expect
-      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .element(screen.getByRole("heading", { name: /^Starting Later/ }))
       .toBeVisible();
 
     const body = screen.container.textContent ?? "";
-    expect(body.indexOf("Needs Start Week")).toBeGreaterThan(
+    expect(body.indexOf("Starting Later")).toBeGreaterThan(
       body.indexOf("Current Clients"),
     );
-    expect(body.indexOf("Needs Start Week")).toBeLessThan(
+    expect(body.indexOf("Starting Later")).toBeLessThan(
       body.indexOf("Upcoming Openings"),
     );
   });
 
-  it("names each person exactly once across the three sections", async () => {
+  it("names each person exactly once across the client sections", async () => {
     await page.viewport(1280, 1400);
     const { element } = buildCrm();
     const screen = await render(element);
     await expect
-      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .element(screen.getByRole("heading", { name: /^Starting Later/ }))
       .toBeVisible();
 
     const body = screen.container.textContent ?? "";
@@ -356,11 +364,16 @@ describe("the programme page's client sections", () => {
     const { element } = buildCrm();
     const screen = await render(element);
     await expect
-      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .element(screen.getByRole("heading", { name: /^Starting Later/ }))
       .toBeVisible();
 
     await expect
       .element(screen.getByText("Start week not set").first())
+      .toBeVisible();
+    // Flagged at a glance, so it reads as an open question rather than a
+    // row that happens to be missing a date.
+    await expect
+      .element(screen.getByText("Needs start week").first())
       .toBeVisible();
     // Actionable from here, not only from somewhere else.
     await expect
@@ -373,7 +386,7 @@ describe("the programme page's client sections", () => {
     const { element } = buildCrm();
     const screen = await render(element);
     await expect
-      .element(screen.getByRole("heading", { name: "Needs Start Week" }))
+      .element(screen.getByRole("heading", { name: /^Starting Later/ }))
       .toBeVisible();
 
     const body = screen.container.textContent ?? "";

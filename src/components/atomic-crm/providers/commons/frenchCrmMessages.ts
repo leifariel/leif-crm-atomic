@@ -1015,6 +1015,9 @@ export const frenchCrmMessages = {
       opening_starts: "%{names} déjà prévus au démarrage",
       openings_missing_start_week:
         "%{count} client n'a pas encore de semaine de début, la disponibilité future peut donc changer. |||| %{count} clients n'ont pas encore de semaine de début, la disponibilité future peut donc changer.",
+      starting_later_needs_week:
+        "%{count} de ces personnes doit encore recevoir une semaine de depart. |||| %{count} de ces personnes doivent encore recevoir une semaine de depart.",
+      needs_start_week_badge: "Semaine de depart manquante",
       needs_start_week: "Semaine de début à définir",
       projection_needs_start_week:
         "Indisponible tant qu'une semaine de début n'est pas définie",

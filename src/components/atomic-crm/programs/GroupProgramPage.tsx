@@ -59,14 +59,6 @@ export const GroupProgramPage = () => {
         </div>
       </div>
 
-      <WaitlistSection
-        entries={generalWaitlist}
-        offerId={offer.id}
-        offerName={offer.name}
-        cohortId={null}
-        action={<AddToWaitlistButton offerId={offer.id} cohortId={null} />}
-      />
-
       <Section
         title={translate("crm.programs.cohorts_section", { _: "Cohorts" })}
         count={cohorts.length}
@@ -94,6 +86,14 @@ export const GroupProgramPage = () => {
           />
         )}
       </Section>
+
+      <WaitlistSection
+        entries={generalWaitlist}
+        offerId={offer.id}
+        offerName={offer.name}
+        cohortId={null}
+        action={<AddToWaitlistButton offerId={offer.id} cohortId={null} />}
+      />
     </div>
   );
 };

@@ -7,6 +7,7 @@ import {
 } from "../capacity/individualCapacity";
 import { useSessionWeeks } from "../capacity/useSessionWeeks";
 import { contactDisplayName } from "../contacts/contactDisplayName";
+import { isPersonDeciding } from "../deals/peopleDeciding";
 import type {
   ClientSessionCadenceIssue,
   Contact,
@@ -14,6 +15,13 @@ import type {
   Enrollment,
   Offer,
 } from "../types";
+
+export type ProgramDecidingPerson = {
+  dealId: Identifier;
+  contactId: Identifier;
+  name: string;
+  stage: string;
+};
 
 // Backs the Living Example / any 1:1 Offer's program page: real Offer/
 // Deal/Enrollment/Contact data only, no hard-coded numbers or names.
@@ -95,6 +103,7 @@ export const useIndividualProgramData = (offerId?: Identifier) => {
       ifAllRescheduled: null,
       futureOpenings: null,
       lastSyncedAt: null,
+      peopleDeciding: [] as ProgramDecidingPerson[],
     };
   }
 
@@ -147,6 +156,23 @@ export const useIndividualProgramData = (offerId?: Identifier) => {
     true,
   );
 
+  // The same population the Pipeline's Decision column and the Dashboard
+  // show, for this programme: deals/peopleDeciding.ts is the one definition
+  // of Decision in this app, and this page asks it rather than inventing a
+  // second one. An Opportunity at Interested, Application Received,
+  // Approved or Call Booked is in the pipeline and is NOT deciding.
+  const peopleDeciding: ProgramDecidingPerson[] = (deals ?? [])
+    .filter(isPersonDeciding)
+    .map((deal) => ({
+      dealId: deal.id,
+      contactId: deal.contact_id,
+      name:
+        contactDisplayName(contactById.get(String(deal.contact_id)) ?? null) ??
+        "",
+      stage: deal.stage,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
   return {
     isPending: false,
     offer,
@@ -154,5 +180,6 @@ export const useIndividualProgramData = (offerId?: Identifier) => {
     ifAllRescheduled,
     futureOpenings: computeFutureOpenings(capacity),
     lastSyncedAt,
+    peopleDeciding,
   };
 };

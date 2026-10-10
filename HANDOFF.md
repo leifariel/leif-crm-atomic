@@ -4105,13 +4105,123 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8g. Programme configuration UX — A/B/C DEPLOYED, D BUILT (2026-10-09)
+## 8g. Programme configuration UX — A–D DEPLOYED, E BUILT (2026-10-09)
 
-Four bounded jobs. **A, B and C are deployed** at `c263968f` — migration
-`20261009120000`, deterministic, **158 total**, `📡 Push supabase
-migrations` green and the only red step the known `📡 Deploy GitHub pages`
-noise. **D (list density) is built and not yet pushed.** The slice is not
-accepted until all four are verified in production by Leif.
+Five bounded jobs. **A, B, C deployed at `c263968f`; D (density) deployed
+at `b78c33ed`** — migration `20261009120000`, deterministic, **158 total**,
+`📡 Push supabase migrations` green both times and the only red step the
+known `📡 Deploy GitHub pages` noise. **E (the IA correction below) is built
+and not yet pushed, and carries NO migration.** The slice is not accepted
+until Leif has verified the lot in production.
+
+### E. An approved application is not a decision
+
+Leif found this on the deployed page, which is the only place it could have
+been found: a GYU round listed people whose APPLICATIONS she had just
+approved under **People Deciding**, while the Pipeline and the Dashboard both
+said they were at Approved and had been asked nothing.
+
+**Root cause — a second definition of Decision.** The round's page derived
+that section from `classifyCohortOpportunity`'s `in_sales` bucket, which is
+every live Opportunity that is not yet Won: Interested, Application Received,
+Approved and Call Booked included. That function is right for what it was
+written for — capacity, "is this Opportunity still being sold for this round"
+— and `useCohortCapacity` still asks it. It was never an answer to "who is
+deciding".
+
+**The canonical authority already existed**, and this is the second time the
+same bug has been fixed: `deals/peopleDeciding.ts` — `isPersonDeciding`, a
+live Opportunity at the Decision stage — was written when the Dashboard and
+the Pipeline disagreed in production (the Pipeline showed 8 people deciding,
+the Dashboard said nobody). The round's page is now the third caller rather
+than a third definition.
+
+| | Old authority | New authority |
+|---|---|---|
+| Round's People Deciding | `classifyCohortOpportunity` → `in_sales` | `isPersonDeciding` |
+| 1:1 programme's People Deciding | *did not exist* | `isPersonDeciding` |
+| Round capacity | `classifyCohortOpportunity` | unchanged |
+
+**Applications stays the application record**, with each one's truthful
+status. An approved applicant does not leave it when their Opportunity
+reaches Decision — history is not moved, it is added to.
+
+### Section order, as product IA
+
+**A round (group):** Enrolled Clients · n → People Deciding · n →
+Applications · n → Waitlist · n → Cohort Details. Already this order; now
+asserted. The heading stayed **Enrolled Clients** rather than "Clients" —
+the accepted copy, and it says which clients.
+
+**A group programme:** Cohorts · n → Waitlist · n. The waiting list was first
+only because it was written first.
+
+**A 1:1 programme:** Current Clients · n → Starting Later · n → Upcoming
+Openings · n → **People Deciding · n** (new here) → Waitlist · n.
+
+### Needs Start Week, folded rather than deleted
+
+Audited before touching. `unscheduled` and `committed` are genuinely
+different capacity phases — one has a start week, one does not — and neither
+occupies a slot today. The distinction is real; a whole second heading for it
+was not. They now share **Starting Later**, and the difference is carried by
+the row: "Start week not set", a **Needs start week** badge, and the same
+**Set start week** button opening the same `ClientEditModal`. A line above
+the list counts them.
+
+**The order inside that section is a safety property, not a preference.**
+With a three-row preview, an unscheduled client sorted after six committed
+ones would sit behind "N more" — the Todd Jacobsen failure again, wearing a
+disclosure control. Clients needing a week come first, and
+`contracts/programs/everyClientHasAHome.test.ts` holds them there.
+
+Capacity is untouched: `capacity.unscheduled` still exists, still consumes
+no dated slot, and the openings forecast still carries its count-only caveat.
+
+### Density: 8 → 3, and Openings joins in
+
+One shared authority, `PREVIEW_LIMIT` in `misc/PreviewList.tsx`. Eight was
+tried and Leif's answer after using it was that five sections of eight is
+forty rows before the thing she scrolled for.
+
+The Waitlist's local SEARCH keeps its own threshold of 8 — a list long
+enough to need searching is a different question from one long enough to need
+collapsing, and tying them together would have put a search box on a
+four-person waitlist.
+
+**Upcoming Openings** was deliberately left uncollapsed last round because its
+months are bounded. Leif asked for it anyway, and she is right that bounded is
+not the same as short: the month cards now collapse like every other list,
+while the "Right now" summary and the caveats stay. No capacity arithmetic or
+opening semantics were touched.
+
+### Proof
+
+`cohorts/peopleDecidingIsPipelineTruth.test.tsx` — the exact production bug.
+Six people on one round: an approved application with the Opportunity still at
+Approved, an approved application at Decision, an application received, a
+Decision-stage Opportunity in ANOTHER round, a Decision that was then lost,
+and a second live decider. **Against the deployed implementation it fails with
+`People Deciding · 4` containing "Approved Applicant"** — the production
+symptom, exactly.
+
+`programs/programmePageIA.test.tsx` — the 1:1 page's order, and the same
+Decision authority proving that approved / call booked / application received
+are not deciding, plus the honest empty state.
+
+`IndividualProgramPage.capacity.test.tsx` — the openings forecast collapsing
+to three month cards and opening again.
+
+`programmeClientGrouping.test.tsx` and
+`contracts/programs/everyClientHasAHome.test.ts` — the merged section:
+nobody duplicated, nobody routed at a Contact page, the unscheduled client
+first, flagged, and actionable, above the forecast.
+
+`e2e/startWeekGoldenJourney.spec.ts` — the whole start-week journey against
+real Postgres, now asking two questions where it used to ask one: which
+section the person is in, and whether their row is still asking.
+
+
 
 ### B. A round's Edit says which object it edits
 

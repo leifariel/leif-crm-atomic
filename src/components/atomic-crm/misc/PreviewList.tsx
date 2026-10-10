@@ -23,14 +23,16 @@ import { useStore, useTranslate } from "ra-core";
 /**
  * How many rows a collapsed section shows.
  *
- * Eight, taken from the Waitlist's own accepted value: tall enough that
- * most sections never collapse at all (a 1:1 programme holds twelve
- * clients, a round's Enrolled Clients list is usually smaller), short
- * enough that a 50-person list no longer owns the page. One number for
- * every section on purpose — a per-section limit makes the page's rhythm
- * depend on which section you are looking at.
+ * Three. Eight was tried first, taken from the Waitlist's own value, and
+ * Leif's answer after using it was that the page is still too tall: five
+ * sections of eight is forty rows before the thing she scrolled for. At
+ * three, a section is a headline with a sample — "there are twenty, here
+ * are the first three" — and the whole page fits.
+ *
+ * One number for every section on purpose. A per-section limit makes the
+ * page's rhythm depend on which section you happen to be looking at.
  */
-export const PREVIEW_LIMIT = 8;
+export const PREVIEW_LIMIT = 3;
 
 export const PreviewList = <T,>({
   storeKey,

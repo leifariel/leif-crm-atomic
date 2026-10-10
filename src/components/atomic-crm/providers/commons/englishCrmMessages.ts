@@ -1044,6 +1044,9 @@ export const englishCrmMessages = {
       // problem.
       openings_missing_start_week:
         "%{count} client still needs a start week, so future availability may change. |||| %{count} clients still need a start week, so future availability may change.",
+      starting_later_needs_week:
+        "%{count} of these still needs a start week. |||| %{count} of these still need a start week.",
+      needs_start_week_badge: "Needs start week",
       needs_start_week: "Needs Start Week",
       projection_needs_start_week: "Not available until a start week is set",
       projection_calendar_too_short:

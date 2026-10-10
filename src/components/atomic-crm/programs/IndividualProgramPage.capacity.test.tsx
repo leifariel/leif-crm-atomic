@@ -309,13 +309,25 @@ const withDiagnostics = async (
   }
 };
 
-// Current Clients holds twelve people and collapses at the shared preview
-// limit (misc/PreviewList), so a test that reads the WHOLE list has to open
-// it the way Leif does. Asserted through the real control rather than by
+// Every section on this page collapses at the shared preview limit
+// (misc/PreviewList), so a test that reads the WHOLE page has to open them
+// the way Leif does. Asserted through the real controls rather than by
 // rendering everything: the collapse is the behaviour now, and a test that
 // quietly bypassed it would stop describing the page.
 const showEveryClient = async (screen: Awaited<ReturnType<typeof render>>) => {
-  await screen.getByRole("button", { name: /^\d+ more$/ }).click();
+  // Every disclosure currently in the DOM, clicked in one pass. The clicks
+  // are synchronous and React batches the state updates, so all of them
+  // land before anything re-renders — clicking one at a time and
+  // re-querying would just hit the same stale button, because the DOM has
+  // not changed yet. The outer loop then picks up any control that only
+  // appeared once something above it opened.
+  for (let pass = 0; pass < 6; pass += 1) {
+    const more = screen
+      .getByRole("button", { name: /^\d+ more$/ })
+      .elements() as HTMLButtonElement[];
+    if (more.length === 0) return;
+    for (const button of more) button.click();
+  }
 };
 
 describe("Living Example program page — capacity Leif can plan around", () => {
@@ -569,6 +581,42 @@ describe("Living Example program page — capacity Leif can plan around", () => 
         ]),
       ),
     ).toBe(true);
+  });
+
+  it("collapses the month-by-month forecast like every other section", async () => {
+    // Leif asked for this one too: it is bounded by the clients' own
+    // finish weeks rather than unbounded, but five month cards between
+    // the summary and the next section is still five month cards.
+    const { element } = buildTestCrm();
+    const screen = await render(element);
+
+    await expect
+      .element(
+        screen.getByRole("heading", { name: /^Upcoming Openings · \d+$/ }),
+      )
+      .toBeVisible();
+    const monthCards = () =>
+      [
+        ...screen.container.ownerDocument.querySelectorAll(
+          "button, [role=button]",
+        ),
+      ]
+        .map((element) => element.textContent ?? "")
+        .filter((text) =>
+          /^(January|February|March|April|May|June|July|August|September|October|November|December) \d{4}/.test(
+            text,
+          ),
+        );
+
+    expect(monthCards().length).toBe(3);
+    await screen
+      .getByRole("button", { name: /^\d+ more$/ })
+      .last()
+      .click();
+    expect(monthCards().length).toBeGreaterThan(3);
+    // And it closes again.
+    await screen.getByRole("button", { name: "Show less" }).last().click();
+    expect(monthCards().length).toBe(3);
   });
 
   it("never prints the openings answer where a count belongs", async () => {

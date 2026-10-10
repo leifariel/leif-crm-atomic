@@ -19,6 +19,7 @@ import {
 import type { SlotHolder } from "../capacity/slotHolder";
 import { SyncCalendarButton } from "../capacity/SyncCalendarButton";
 import { weekCapacities } from "../capacity/weekCapacity";
+import { PreviewList } from "../misc/PreviewList";
 import { Section } from "../misc/ProgramLayout";
 
 // When Leif could safely commit another client.
@@ -46,12 +47,16 @@ const names = (holders: SlotHolder[]) =>
   holders.map((holder) => holder.name).join(", ");
 
 export const UpcomingOpeningsSection = ({
+  offerId,
   capacity,
   ifAllRescheduled,
   futureOpenings,
   lastSyncedAt,
   now,
 }: {
+  // Identity for the remembered expansion, same as every other section.
+  // Optional so a test that renders this section alone still works.
+  offerId?: string | number;
   capacity: IndividualCapacity;
   // The same practice with every unresolved week counted as a reschedule.
   // Optional so a caller that has not computed it simply gets no
@@ -104,6 +109,10 @@ export const UpcomingOpeningsSection = ({
       title={translate("crm.programs.upcoming_openings", {
         _: "Upcoming Openings",
       })}
+      // The months, counted. The summary box and the caveats below are not
+      // a list and are always shown — what collapses is the month-by-month
+      // forecast, which is the part that grows.
+      count={months.length}
       // Every date below comes from Year Tracking, so the control that
       // refreshes it belongs here rather than somewhere else on the page.
       action={
@@ -194,15 +203,21 @@ export const UpcomingOpeningsSection = ({
           })}
         </p>
       ) : (
-        <div className="flex flex-col gap-2">
-          {months.map((month) => (
-            <MonthCard
-              key={month.month}
-              month={month}
-              onOpen={() => setOpenMonth(month)}
-            />
-          ))}
-        </div>
+        <PreviewList
+          storeKey={`offer.${offerId ?? "unknown"}.openings`}
+          items={months}
+          renderRows={(visible) => (
+            <div className="flex flex-col gap-2">
+              {visible.map((month) => (
+                <MonthCard
+                  key={month.month}
+                  month={month}
+                  onOpen={() => setOpenMonth(month)}
+                />
+              ))}
+            </div>
+          )}
+        />
       )}
 
       {missingStartWeek.length > 0 && (

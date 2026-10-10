@@ -2,6 +2,7 @@ import { useGetList, useGetMany, type Identifier } from "ra-core";
 
 import type { Application, Contact, Deal, Enrollment } from "../types";
 import { NON_APPROVED_TERMINAL_APPLICATION_STATUSES } from "../applications/applicationConstants";
+import { isPersonDeciding } from "../deals/peopleDeciding";
 import { classifyCohortOpportunity } from "./cohortCapacity";
 
 const ACTIVE_ENROLLMENT_STATUSES: ReadonlySet<Enrollment["status"]> = new Set([
@@ -42,10 +43,32 @@ export type CohortApplicationRow = {
 };
 
 // Backs the Cohort detail page's "Enrolled Clients" / "People Deciding" /
-// "Applications" sections (Runtime + Visual Consistency slice, §3):
-// real Deal/Enrollment/Application/Contact data grouped by meaning, reusing
-// the existing, tested classifyCohortOpportunity rules for the
-// enrolled/deciding split rather than reinterpreting them.
+// "Applications" sections: real Deal/Enrollment/Application/Contact data
+// grouped by meaning, reusing the existing tested authorities rather than
+// reinterpreting them.
+//
+// TWO DIFFERENT QUESTIONS, TWO DIFFERENT AUTHORITIES, and conflating them
+// was a real bug Leif found in production:
+//
+//   who occupies a seat          classifyCohortOpportunity -> "enrolled"
+//   who is DECIDING              deals/peopleDeciding.ts -> isPersonDeciding
+//
+// "People Deciding" used to be classifyCohortOpportunity's "in_sales"
+// bucket, which is every live Opportunity that is not yet Won — Interested,
+// Application Received, Approved and Call Booked included. So an applicant
+// whose application Leif had just APPROVED appeared under "People Deciding"
+// on the round's page, while the Pipeline and the Dashboard both said they
+// were at Approved and not deciding anything yet.
+//
+// There is exactly one definition of Decision in this app and it already
+// existed: isPersonDeciding — a live Opportunity at the Decision stage.
+// The Pipeline's Decision column and the Dashboard's People Deciding both
+// use it, after the same two-definitions bug was fixed between THEM. This
+// page is now the third caller rather than a third definition.
+//
+// classifyCohortOpportunity keeps its job: it answers capacity ("is this
+// Opportunity still being sold for this round"), which genuinely does
+// include everyone pre-Won, and useCohortCapacity still asks it.
 export const useCohortPageData = (cohortId?: Identifier) => {
   const { data: deals, isPending: dealsPending } = useGetList<Deal>(
     "deals",
@@ -172,6 +195,19 @@ export const useCohortPageData = (cohortId?: Identifier) => {
 
   for (const deal of deals) {
     const enrollment = enrollmentByOpportunity.get(String(deal.id));
+    // Decision is the sales pipeline's answer, never the application's.
+    // An approved application stays in Applications, with its truthful
+    // status, until the Opportunity itself reaches Decision.
+    if (isPersonDeciding(deal)) {
+      peopleDeciding.push({
+        dealId: deal.id,
+        contactId: deal.contact_id,
+        name: nameForContact(deal.contact_id),
+        stage: deal.stage,
+      });
+      continue;
+    }
+
     const group = classifyCohortOpportunity({
       stage: deal.stage,
       outcome: deal.outcome,
@@ -192,13 +228,6 @@ export const useCohortPageData = (cohortId?: Identifier) => {
         contactId: deal.contact_id,
         name: nameForContact(deal.contact_id),
         status: enrollment.status,
-      });
-    } else if (group === "in_sales") {
-      peopleDeciding.push({
-        dealId: deal.id,
-        contactId: deal.contact_id,
-        name: nameForContact(deal.contact_id),
-        stage: deal.stage,
       });
     }
   }

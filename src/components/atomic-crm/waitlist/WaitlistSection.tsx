@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 import { Section } from "../misc/ProgramLayout";
-import { PREVIEW_LIMIT, PreviewList } from "../misc/PreviewList";
+import { PreviewList } from "../misc/PreviewList";
 import { formatTimestampString } from "../deals/dealUtils";
 import type { WaitlistEntryRow } from "./useWaitlistEntries";
 import {
@@ -44,6 +44,12 @@ import { isImportProvenance } from "./isImportProvenance";
 // WaitlistEntryRow.email comment on why not Instagram handle) bypasses the
 // collapse for its matches; only shown once the list is actually long
 // enough that the collapse (and thus a search) matters.
+// A waitlist long enough to need searching is a different question from a
+// waitlist long enough to need collapsing, and they do not share a number.
+// The collapse is PREVIEW_LIMIT (3); the search appears only once finding
+// one person by eye is genuinely hard, which is where it has always been.
+const SEARCH_THRESHOLD = 8;
+
 export const WaitlistSection = ({
   entries,
   offerId,
@@ -180,7 +186,7 @@ export const WaitlistSection = ({
         </p>
       ) : (
         <div className="flex flex-col gap-2">
-          {entries.length > PREVIEW_LIMIT && (
+          {entries.length > SEARCH_THRESHOLD && (
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input

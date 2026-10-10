@@ -43,10 +43,10 @@ const AT = "2026-01-01T00:00:00.000Z";
 
 // Chosen so every section hides a DIFFERENT number of rows, which is what
 // makes each disclosure control identifiable by its own name.
-const ENROLLED = 11; // "3 more"
-const DECIDING = 3; // short enough to never collapse
-const APPLICATIONS = 20; // "12 more"
-const WAITING = 12; // "4 more"
+const ENROLLED = 11; // "8 more"
+const DECIDING = 3; // exactly the preview limit, so it never collapses
+const APPLICATIONS = 20; // "17 more"
+const WAITING = 12; // "9 more"
 
 const GYU: Offer = {
   id: 2,
@@ -140,8 +140,10 @@ const buildCrm = () => {
         ...range(ENROLLED).map((i) =>
           deal(ENROLLED_BASE + i, ENROLLED_BASE + i, "won"),
         ),
+        // Decision stage: People Deciding is the Pipeline's Decision
+        // column, scoped to this round (see peopleDecidingIsPipelineTruth).
         ...range(DECIDING).map((i) =>
-          deal(DECIDING_BASE + i, DECIDING_BASE + i, "application_received"),
+          deal(DECIDING_BASE + i, DECIDING_BASE + i, "decision"),
         ),
       ],
       enrollments: range(ENROLLED).map(
@@ -261,25 +263,25 @@ describe("a long section on a round's page", () => {
   it("shows the preview rows only, and says how many it is holding back", async () => {
     const { screen } = await openPage();
 
-    // Twenty applications, eight rows. This is the assertion that fails if
-    // anybody restores unbounded rendering.
+    // Twenty applications, three rows. This is the assertion that fails
+    // if anybody restores unbounded rendering.
     expect(rowsLinkingTo(screen, "/applications/")).toHaveLength(PREVIEW_LIMIT);
     expect(rowsLinkingTo(screen, "/enrollments/")).toHaveLength(PREVIEW_LIMIT);
     await expect
-      .element(screen.getByRole("button", { name: "12 more" }))
+      .element(screen.getByRole("button", { name: "17 more" }))
       .toBeVisible();
     await expect
-      .element(screen.getByRole("button", { name: "3 more" }))
+      .element(screen.getByRole("button", { name: "8 more" }))
       .toBeVisible();
     await expect
-      .element(screen.getByRole("button", { name: "4 more" }))
+      .element(screen.getByRole("button", { name: "9 more" }))
       .toBeVisible();
   });
 
   it("opens in place when Leif asks for the rest", async () => {
     const { screen } = await openPage();
 
-    await screen.getByRole("button", { name: "12 more" }).click();
+    await screen.getByRole("button", { name: "17 more" }).click();
 
     expect(rowsLinkingTo(screen, "/applications/")).toHaveLength(APPLICATIONS);
     // Still the same page, with its heading and the sections below it.
@@ -297,26 +299,26 @@ describe("a long section on a round's page", () => {
   it("closes again, so the page can be made short", async () => {
     const { screen } = await openPage();
 
-    await screen.getByRole("button", { name: "12 more" }).click();
+    await screen.getByRole("button", { name: "17 more" }).click();
     await screen.getByRole("button", { name: "Show less" }).click();
 
     expect(rowsLinkingTo(screen, "/applications/")).toHaveLength(PREVIEW_LIMIT);
     await expect
-      .element(screen.getByRole("button", { name: "12 more" }))
+      .element(screen.getByRole("button", { name: "17 more" }))
       .toBeVisible();
   });
 
   it("opens one section without opening the others", async () => {
     const { screen } = await openPage();
 
-    await screen.getByRole("button", { name: "12 more" }).click();
+    await screen.getByRole("button", { name: "17 more" }).click();
 
     expect(rowsLinkingTo(screen, "/applications/")).toHaveLength(APPLICATIONS);
-    // Enrolled Clients is untouched: eight of eleven, still offering its
-    // own three.
+    // Enrolled Clients is untouched: three of eleven, still offering its
+    // own eight.
     expect(rowsLinkingTo(screen, "/enrollments/")).toHaveLength(PREVIEW_LIMIT);
     await expect
-      .element(screen.getByRole("button", { name: "3 more" }))
+      .element(screen.getByRole("button", { name: "8 more" }))
       .toBeVisible();
   });
 
@@ -328,7 +330,7 @@ describe("a long section on a round's page", () => {
     const { screen, store } = await openPage(
       localStorageStore(undefined, PERSISTENT_KEY),
     );
-    await screen.getByRole("button", { name: "12 more" }).click();
+    await screen.getByRole("button", { name: "17 more" }).click();
     expect(rowsLinkingTo(screen, "/applications/")).toHaveLength(APPLICATIONS);
     screen.unmount();
 

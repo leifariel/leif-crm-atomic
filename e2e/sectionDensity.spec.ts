@@ -31,7 +31,7 @@ const WAITING = 14;
 // Written out rather than imported: this spec is a statement about what the
 // built bundle does, and importing the constant would let a change to it
 // silently rewrite the expectation.
-const PREVIEW = 8;
+const PREVIEW = 3;
 
 const db = () =>
   createClient(SUPABASE_URL, process.env.SERVICE_ROLE_KEY!, {
@@ -40,21 +40,56 @@ const db = () =>
 
 const range = (count: number) => Array.from({ length: count }, (_, i) => i);
 
+const ok = (
+  step: string,
+  { error }: { error: { message?: string } | null },
+) => {
+  expect(error?.message ?? null, `seeding ${step}`).toBeNull();
+};
+
+/**
+ * Insert in small batches, checking every one.
+ *
+ * Contacts carry real triggers, and thirty-four of them in a single
+ * statement intermittently hit PostgREST's statement timeout on a loaded
+ * clean room. The seed then failed silently, the page rendered empty, and
+ * the test reported that a heading was missing — true, useless, and
+ * indistinguishable from a real regression. A broken premise says it is
+ * broken now.
+ */
+const insertAll = async (
+  step: string,
+  table: string,
+  rows: Record<string, unknown>[],
+) => {
+  for (let at = 0; at < rows.length; at += 8) {
+    const batch = rows.slice(at, at + 8);
+    const { error } = await db().from(table).insert(batch);
+    expect(
+      error?.message ?? null,
+      `seeding ${step} (rows ${at + 1}-${at + batch.length})`,
+    ).toBeNull();
+  }
+};
+
 const seed = async () => {
   const client = db();
   await client.from("cohorts").delete().eq("id", COHORT);
-  await client.from("cohorts").insert({
-    id: COHORT,
-    offer_id: GYU,
-    name: "Growing Yourself Up — Density Round",
-    status: "applications_open",
-    applications_open_at: "2026-01-01",
-    applications_close_at: "2027-12-31",
-    program_start_at: "2027-03-01",
-    program_end_at: "2027-04-26",
-  });
+  ok(
+    "the round",
+    await client.from("cohorts").insert({
+      id: COHORT,
+      offer_id: GYU,
+      name: "Growing Yourself Up — Density Round",
+      status: "applications_open",
+      applications_open_at: "2026-01-01",
+      applications_close_at: "2027-12-31",
+      program_start_at: "2027-03-01",
+      program_end_at: "2027-04-26",
+    }),
+  );
 
-  await client.from("contacts").insert([
+  await insertAll("its people", "contacts", [
     ...range(APPLICATIONS).map((i) => ({
       id: APPLICANT_BASE + i,
       first_name: "Applied",
@@ -69,7 +104,9 @@ const seed = async () => {
     })),
   ]);
 
-  await client.from("applications").insert(
+  await insertAll(
+    "its applications",
+    "applications",
     range(APPLICATIONS).map((i) => ({
       id: APPLICATION_BASE + i,
       contact_id: APPLICANT_BASE + i,
@@ -83,7 +120,9 @@ const seed = async () => {
     })),
   );
 
-  await client.from("waitlist_entries").insert(
+  await insertAll(
+    "its waitlist",
+    "waitlist_entries",
     range(WAITING).map((i) => ({
       id: WAITING_BASE + i,
       contact_id: WAITING_BASE + i,
