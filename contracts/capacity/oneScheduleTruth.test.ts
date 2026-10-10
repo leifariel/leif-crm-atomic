@@ -24,7 +24,13 @@ const statementsOf = (path: string) =>
 
 const MIGRATION =
   "supabase/migrations/20260921150000_a_session_schedule_is_derived.sql";
-const SYNC_INDEX = "supabase/functions/sync_year_planning_calendar/index.ts";
+// index.ts is thin on purpose — it only calls Deno.serve, so that
+// Deno.serve is not what a test has to import. What the sync DOES lives in
+// runSync.ts and who may ask lives in handleRequest.ts, and these read
+// whichever file now carries the behaviour rather than a path.
+const SYNC_RUN = "supabase/functions/sync_year_planning_calendar/runSync.ts";
+const SYNC_HANDLER =
+  "supabase/functions/sync_year_planning_calendar/handleRequest.ts";
 const REBUILD_PASS =
   "supabase/functions/sync_year_planning_calendar/rebuildEnrollmentExpectedSessions.ts";
 
@@ -38,10 +44,10 @@ describe("one schedule truth", () => {
   });
 
   test("a calendar sync rebuilds the schedule rather than appending to it", () => {
-    const index = read(SYNC_INDEX);
-    expect(index).toMatch(/rebuildEnrollmentExpectedSessions/);
+    const sync = read(SYNC_RUN);
+    expect(sync).toMatch(/rebuildEnrollmentExpectedSessions/);
     // The pass this replaced is gone, not merely unused.
-    expect(index).not.toMatch(/assignEnrollmentExpectedSessions/);
+    expect(sync).not.toMatch(/assignEnrollmentExpectedSessions/);
     expect(() =>
       read(
         "supabase/functions/sync_year_planning_calendar/assignEnrollmentExpectedSessions.ts",
@@ -98,9 +104,9 @@ describe("one schedule truth", () => {
   test("the browser never holds the cron secret", () => {
     // Two callers, two proofs. A JWT for Leif, the shared secret for
     // pg_net, and neither can stand in for the other.
-    const index = read(SYNC_INDEX);
-    expect(index).toMatch(/supabaseAdmin\.auth\.getUser/);
-    expect(index).toMatch(/CRON_INVOKE_SECRET/);
+    const handler = read(SYNC_HANDLER);
+    expect(handler).toMatch(/supabaseAdmin\.auth\.getUser/);
+    expect(handler).toMatch(/CRON_INVOKE_SECRET/);
 
     const client = read(
       "src/components/atomic-crm/capacity/syncYearTracking.ts",

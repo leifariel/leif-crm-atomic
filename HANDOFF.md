@@ -4118,6 +4118,143 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8m. A grant does not revoke PUBLIC — SCHEMA DRIFT + ONE REAL EXPOSURE (2026-10-10)
+
+### What this slice was for, and the correction it owes
+
+The brief was: `supabase/schemas/` still described the obsolete **seven**-argument
+`enqueue_kit_operation` while production has the eight-argument one, so a future
+`db diff` could recreate the obsolete overload with `proacl = NULL` — EXECUTE TO
+PUBLIC.
+
+**The drift was real. That mechanism is not,** and the warning was mine to
+correct. `supabase db diff` does **not** read `supabase/schemas/`:
+`config.toml` sets no `schema_paths`, and the CLI's declarative mode is opt-in.
+§8b-apps-accepted already records this — *"`supabase/schemas/` is authoring and
+reference material, and this CLI does not even read it"* — along with the fact
+that the declaration has drifted far wider than this one function (4 stale
+function bodies, RLS discrepancies, **7 functions that would end up
+PUBLIC-executable from the declaration alone**, 44 missing role grants) and a
+recorded backlog item, **DECLARATIVE SCHEMA PARITY GUARD**, to fix it properly.
+
+So: no `db diff` can recreate that overload, and no migration creates it either.
+The chain is coherent — `20260929120000` created the 7-arg version and revoked
+the 7-arg signature (correct at the time), `20261010120000` **dropped** it and
+created the 8-arg one, `20261010160000` restored the revokes the drop had wiped.
+What was wrong was only the *declaration*, which several contract tests read as
+authority. It now names the 8-arg signature and nothing else.
+
+### The exposure the new guard found
+
+Writing the class-level guard turned up something the brief did not anticipate.
+
+**`record_sales_call_reinstated(bigint)` was executable by `anon` in
+production.** It is SECURITY DEFINER and it WRITES: sets a Sales Call back to
+`booked`, clears `cancelled_at`, records a `reinstated` event, can advance the
+Opportunity. Its production ACL was
+
+    {=X/postgres,postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+
+and that leading `=X/postgres` is a grant to **PUBLIC**. Confirmed, not
+theorised: an unauthenticated POST to `/rest/v1/rpc/record_sales_call_reinstated`
+returned **HTTP 200** and ran as the function's owner, bypassing RLS. (Proved
+against a clean room carrying the identical ACL, with an id that cannot match,
+so nothing was written.)
+
+**How it happened, and the shape repeats.** A new function has `proacl = NULL`,
+which means EXECUTE TO PUBLIC. `20260918155000` then said
+
+    grant execute on function public.record_sales_call_reinstated(bigint)
+      to authenticated, service_role;
+
+and that **first GRANT materialises the ACL, baking the implicit PUBLIC grant in
+as an explicit one.** Granting a role access does not take access away from
+anyone. Every other protected function in `06_grants.sql` revokes from `public`
+**first**; this one never got that line. Migration `20261010200000` adds it —
+`anon` now gets `42501 permission denied`, while `authenticated` and
+`service_role` keep the EXECUTE they were meant to have. The only caller,
+`acuity_webhook/acuityReconcile.ts`, runs as `service_role`.
+
+### The guard, by class rather than by name
+
+`contracts/security/protectedFunctionGrants.json` pins two sets, read from the
+real database by `scripts/protectedFunctionGrants.mjs` and asserted by
+`e2e/protectedFunctionGrants.spec.ts`:
+
+- **internalOnly** — SECURITY DEFINER, callable, and executable by none of
+  anon/authenticated/service_role. A function that loses its revokes **drops
+  out** of this set, which is the regression.
+- **publicExecutable** — SECURITY DEFINER, callable, and executable by PUBLIC
+  **by either route**: `proacl IS NULL`, or an explicit `GRANT TO PUBLIC`.
+  Checking only the first missed `record_sales_call_reinstated` entirely — that
+  correction is what found it. Not asserted empty: `is_admin()` is there on
+  purpose, read by RLS policies and reporting only on its caller.
+- **unresolvedGrantTargets** — every signature `06_grants.sql` names, resolved
+  against the database. A revoke naming a signature nothing answers to is not an
+  error in Postgres; it simply does nothing, which is precisely how a seven-
+  argument revoke went on guarding an eight-argument function. It reads the
+  DECLARATION, not migrations — a historical migration may legitimately name a
+  signature that has since been dropped.
+
+Scoped deliberately: 50 of 105 public functions have a NULL ACL, mostly trigger
+functions, so asserting that broadly would be noise. SECURITY DEFINER **and**
+callable is the combination that matters, and browser-callable RPCs appear in
+neither set because they hold explicit grants.
+
+### Two production/clean-room divergences found, NOT changed
+
+Reported rather than repaired, because their provenance is environment
+configuration rather than the migration chain:
+
+- `get_user_id_by_email(text)` and `materialize_application_responses(bigint)`
+  have `service_role` EXECUTE in a clean room and **not** in production. No
+  migration ever grants them to `service_role`; the clean room gets it from
+  `ALTER DEFAULT PRIVILEGES` at creation time, which production (where these
+  were created earlier) did not have. `06_grants.sql` declares the grant for
+  `get_user_id_by_email`, so the declaration and production disagree.
+  **Live impact, narrow:** `supabase/functions/users/index.ts` calls
+  `get_user_id_by_email` as `service_role` on the recovery path that fires when
+  an auth account already exists — in production that path returns a 500.
+- `is_admin()` has `proacl = NULL` in production and an explicit ACL in a clean
+  room. Effective access is identical; only the representation differs.
+
+### The cadence preflight no longer carries a second rule
+
+`supabase/preflight/cadence_link_preflight.sql` read its own copy of the
+by_week/by_span candidate reasoning, because the view shipped with the repair
+and did not exist when the preflight was first needed. It now selects from
+`public.client_session_enrollment_candidates`. Verified against production
+afterwards: 5 unlinked, all `no-candidate`, ids **7, 29, 64, 238, 249**, zero
+ambiguous — the same truth, one rule.
+
+### Sync Calendar says what went wrong
+
+Separate commit, observability only, no calendar or cadence semantics touched.
+
+Leif's first Sync Calendar click on 2026-10-10 did nothing and said nothing.
+The cron path wrapped `runSync()` in `try/catch` and logged; **the browser path
+awaited it bare**, so a throw became an unlogged 500 and a rejected token
+answered `"Unauthorized"` with no server-side record. Nothing said which had
+happened, and it is *still* only inferred.
+
+Both paths are deliberate now. A stale session says **"Your session has expired.
+Sign in again and retry."** A sync failure says what failed and that **running it
+again is safe** — and deliberately does **not** claim nothing changed, because
+the four stages are four sets of writes rather than one transaction, so earlier
+stages stay applied. Every stage finds-or-creates by a unique index, which is
+why retrying is genuinely safe.
+
+The browser could not show any of it: on a non-2xx, supabase-js throws
+`FunctionsHttpError` whose `message` is the generic *"Edge Function returned a
+non-2xx status code"*, and the real body sits on `context`, which nothing read.
+`syncYearTracking.ts` reads it now.
+
+`index.ts` is thin — `runSync.ts` and `handleRequest.ts` hold the work and the
+dispatch, the same shape `acuity_webhook` uses, because `Deno.serve` at module
+scope cannot be reached from a test.
+
+---
+
 ## 8l. A missing link is not an absent session — PRODUCTION ACCEPTED 2026-10-10
 
 ### PRODUCTION ACCEPTED 2026-10-10 at `803477a8`
