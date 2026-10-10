@@ -101,9 +101,19 @@ export type KitClient = {
    * used to alter it. Consent is a question, not a side effect.
    */
   findSubscriber: (email: string) => Promise<KitResult<KitSubscriber | null>>;
+  /**
+   * Make sure Kit has this person, and say what state they came back in.
+   *
+   * The state matters because the creation response IS Kit's own statement
+   * about the object it just made — and asking again immediately does not
+   * work: Kit's address lookup is eventually consistent, so a subscriber
+   * created a moment ago is briefly not findable by email. The first real
+   * run of this discovered exactly that, refused to tag a person Kit had
+   * just accepted, and was right to fail closed rather than guess.
+   */
   upsertSubscriber: (
     email: string,
-  ) => Promise<KitResult<{ subscriberId: string }>>;
+  ) => Promise<KitResult<{ subscriberId: string; state: string }>>;
   addTag: (
     tagId: number,
     email: string,
@@ -276,6 +286,10 @@ export const createKitClient = (
       const result = await request("/subscribers", { email_address: email });
       if (!result.ok) return result;
       const subscriberId = subscriberIdOf(result.value);
+      const state = String(
+        (result.value as { subscriber?: { state?: unknown } } | null)
+          ?.subscriber?.state ?? "",
+      );
       if (!subscriberId) {
         return {
           ok: false,
@@ -283,7 +297,7 @@ export const createKitClient = (
           reason: "Kit accepted the subscriber but returned no id",
         };
       }
-      return { ok: true, value: { subscriberId } };
+      return { ok: true, value: { subscriberId, state } };
     },
 
     // Adding a tag the person already carries is a no-op at Kit, so this is

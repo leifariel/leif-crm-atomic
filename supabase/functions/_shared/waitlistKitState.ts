@@ -103,9 +103,35 @@ export const resolveKitState = async (
     };
   }
 
-  // Confirm what was actually created rather than assuming it. A subscriber
-  // that comes back in a state Kit will not send to is a failure, not a
-  // success with a caveat.
+  // Confirm what was actually created rather than assuming it — from Kit's
+  // own answer about the object it just made, which is what the creation
+  // response is.
+  //
+  // NOT by asking again. Kit's address lookup is eventually consistent: a
+  // subscriber created a moment ago is briefly not findable by email, and
+  // the first real run of this path refused to tag somebody Kit had just
+  // accepted because of it. Failing closed was right; needing a second read
+  // at all was the mistake.
+  if (created.value.state) {
+    if (created.value.state.trim().toLowerCase() !== SAFE_STATE) {
+      return {
+        safe: false,
+        reason: reasonForState(created.value.state),
+        state: created.value.state,
+        subscriberId: created.value.subscriberId,
+      };
+    }
+    return {
+      safe: true,
+      subscriberId: created.value.subscriberId,
+      state: created.value.state,
+      created: true,
+    };
+  }
+
+  // No state in the creation response — an older Kit, or a shape nobody has
+  // seen. Then the second read is the only evidence available, and its
+  // absence is still a refusal rather than a guess.
   const confirmed = await kit.findSubscriber(email);
   if (!confirmed.ok || !confirmed.value) {
     return {

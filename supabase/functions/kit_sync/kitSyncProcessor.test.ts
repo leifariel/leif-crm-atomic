@@ -63,12 +63,14 @@ const kitThat = (over: Partial<KitClient> = {}): KitClient => ({
     ok: true,
     value: { subscriberId: "42", state: "active" },
   }),
-  upsertSubscriber: vi
-    .fn()
-    .mockResolvedValue({ ok: true, value: { subscriberId: "42" } }),
-  addTag: vi
-    .fn()
-    .mockResolvedValue({ ok: true, value: { subscriberId: "42" } }),
+  upsertSubscriber: vi.fn().mockResolvedValue({
+    ok: true,
+    value: { subscriberId: "42", state: "active" },
+  }),
+  addTag: vi.fn().mockResolvedValue({
+    ok: true,
+    value: { subscriberId: "42", state: "active" },
+  }),
   ...over,
 });
 
@@ -504,36 +506,40 @@ describe("an invitation asks Kit whether it may be sent", () => {
     expect(succeeded).toEqual([[1, "sub-9"]]);
   });
 
-  it("creates somebody Kit has never heard of, then confirms before tagging", async () => {
+  it("creates somebody Kit has never heard of, and confirms from the creation", async () => {
+    // Kit's address lookup is eventually consistent: a subscriber created a
+    // moment ago is briefly not findable by email. The first real run of
+    // this path asked again and got nothing back, so it refused to tag
+    // somebody Kit had just accepted. The creation response carries the
+    // state, and that is Kit's own word about the object it just made.
     const { db, succeeded } = buildDb([invitation()]);
-    const findSubscriber = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, value: null })
-      .mockResolvedValueOnce({
+    const findSubscriber = vi.fn().mockResolvedValue({ ok: true, value: null });
+    const kit = kitThat({
+      findSubscriber,
+      upsertSubscriber: vi.fn().mockResolvedValue({
         ok: true,
         value: { subscriberId: "sub-new", state: "active" },
-      });
-    const kit = kitThat({ findSubscriber });
+      }),
+    });
 
     await processKitSyncOperations({ db, kit });
 
     // The canonical creation path, not a second one.
     expect(kit.upsertSubscriber).toHaveBeenCalledWith("ada@example.com");
-    // And confirmed afterwards rather than assumed.
-    expect(findSubscriber).toHaveBeenCalledTimes(2);
+    // Looked up once; the second read is not required and would not have
+    // answered anyway.
+    expect(findSubscriber).toHaveBeenCalledTimes(1);
     expect(succeeded).toEqual([[1, "sub-new"]]);
   });
 
   it("refuses to tag a new subscriber Kit will not send to", async () => {
     const { db, succeeded, failed } = buildDb([invitation()]);
     const kit = kitThat({
-      findSubscriber: vi
-        .fn()
-        .mockResolvedValueOnce({ ok: true, value: null })
-        .mockResolvedValueOnce({
-          ok: true,
-          value: { subscriberId: "sub-new", state: "inactive" },
-        }),
+      findSubscriber: vi.fn().mockResolvedValue({ ok: true, value: null }),
+      upsertSubscriber: vi.fn().mockResolvedValue({
+        ok: true,
+        value: { subscriberId: "sub-new", state: "inactive" },
+      }),
     });
 
     await processKitSyncOperations({ db, kit });
@@ -541,6 +547,24 @@ describe("an invitation asks Kit whether it may be sent", () => {
     expect(kit.addTag).not.toHaveBeenCalled();
     expect(succeeded).toHaveLength(0);
     expect(failed[0]![2]).toContain("kit-inactive");
+  });
+
+  it("still refuses when a creation says nothing about the state", async () => {
+    // An older Kit, or a shape nobody has seen. Then the second read is the
+    // only evidence there is, and its absence is a refusal, not a guess.
+    const { db, succeeded, failed } = buildDb([invitation()]);
+    const kit = kitThat({
+      findSubscriber: vi.fn().mockResolvedValue({ ok: true, value: null }),
+      upsertSubscriber: vi
+        .fn()
+        .mockResolvedValue({ ok: true, value: { subscriberId: "sub-new" } }),
+    });
+
+    await processKitSyncOperations({ db, kit });
+
+    expect(kit.addTag).not.toHaveBeenCalled();
+    expect(succeeded).toHaveLength(0);
+    expect(failed[0]![2]).toContain("kit-unconfirmed");
   });
 
   it("retries when Kit itself could not be reached", async () => {

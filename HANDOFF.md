@@ -4195,18 +4195,49 @@ replaced; a snapshot spent once; **the browser unable to call the
 Kit-skipping path at all**; and the same person in both final sets
 surfaced.
 
-### WHAT IS NOT PROVED, AND WHY SYSTEM GREEN IS NO
+### Proved against real Kit
 
-**No real Kit call has been made.** `KIT_API_KEY` exists only in the
-production Edge Function's environment — not in any `.env` here, not in the
-clean room, not in the workflows. There is no credential this session can
-use, and inventing one or pointing the clean room at production Kit are
-both worse than saying so.
+One controlled subscriber, one tag with no automation attached
+(`CRM_Test_NoAutomation`, 24493699), real Postgres, the real preflight
+authority and the real worker:
 
-So the active path — a real subscriber-state read and a real tag, read back
-independently from Kit — is **unproven**, and SYSTEM GREEN is **NO** until
-it runs. That is one controlled test subscriber, a tag with no automation
-attached, through the real worker.
+| Step | Result |
+|---|---|
+| live `status=all` lookup on the exact address | `active`, recorded on the snapshot |
+| outbox | one pending operation carrying the test tag |
+| waitlist place before the worker | **still waiting** |
+| worker | claimed 1, succeeded 1 |
+| Kit readback, independent | the test tag present, **no `*_Waitlist_Invited` tag applied** |
+| Postgres readback, independent | operation succeeded with the subscriber id Kit returned, invitation `sent` via `kit_tag`, place `invited` |
+| retry | worker claimed 0 · preflight said `already-invited` · invite said `nobody-eligible` · still one operation, one invitation, one tag |
+
+Cleaned up afterwards: the test tag removed from the controlled subscriber
+(HTTP 204, none remaining), every probe row gone, the credential file
+deleted. `LE_Waitlist_Invited` and `GYU_Waitlist_Invited` have nobody
+tagged.
+
+### A real bug the proof found, and one mistake it made
+
+**Kit's address lookup is eventually consistent.** The first run created the
+subscriber and then could not find it a moment later, so the confirm step
+failed closed and refused to tag somebody Kit had just accepted. Failing
+closed was right; needing a second read at all was the mistake.
+`POST /v4/subscribers` returns the state with the id, and that response is
+Kit's own word about the object it just made — so creation now confirms from
+it, and the second read survives only as a fallback for a response that
+carries no state.
+
+**The first run also claimed three operations, not one.** Two clean-room
+FIXTURE applications were sitting pending in the outbox, and the worker —
+correctly, because that is its job — carried them out against real Kit,
+creating two `@example.com` subscribers and applying `MiniDD_Applicant`
+and `GYU-Applicant`. The addresses are undeliverable by definition
+(RFC 2606) so nobody received anything, and both subscribers were untagged
+and unsubscribed within minutes; they now hold no tags and cannot be mailed.
+The proof empties the queue first and refuses to continue unless the worker
+claims exactly one operation. **A real-provider proof must own the whole
+queue it runs against** — reaching anything it did not create is the
+proof's fault, not the worker's.
 
 ## 8h. Waitlist batch invitations — BUILT, NOT YET RUN (2026-10-10)
 

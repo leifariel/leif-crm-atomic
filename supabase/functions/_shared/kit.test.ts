@@ -22,12 +22,21 @@ const notOk = (status: number, body: unknown = {}) => ({
 
 describe("the Kit v4 request shape", () => {
   it("upserts a subscriber by email, authenticated with the v4 header", async () => {
-    const fetchSpy = vi.fn().mockResolvedValue(ok({ subscriber: { id: 42 } }));
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(ok({ subscriber: { id: 42, state: "active" } }));
     const kit = createKitClient(KEY, fetchSpy as unknown as typeof fetch);
 
     const result = await kit.upsertSubscriber("ada@example.com");
 
-    expect(result).toEqual({ ok: true, value: { subscriberId: "42" } });
+    // The STATE comes back with the id. It is Kit's own word about the
+    // subscriber it just created, and the only confirmation available —
+    // asking again immediately does not work, because Kit's address lookup
+    // is eventually consistent.
+    expect(result).toEqual({
+      ok: true,
+      value: { subscriberId: "42", state: "active" },
+    });
     const [url, init] = fetchSpy.mock.calls[0];
     expect(url).toBe("https://api.kit.com/v4/subscribers");
     expect(init.method).toBe("POST");
