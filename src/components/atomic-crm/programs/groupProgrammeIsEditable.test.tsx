@@ -139,17 +139,19 @@ describe("a group programme is as configurable as a 1:1 one", () => {
     expect(text).not.toContain("Program start");
   });
 
-  it("lists its rounds above its waiting list", async () => {
-    // The same order a round's own page uses, and the order Leif asked
-    // for: what is running, then who is waiting for it. The waiting list
-    // sat first here purely because it was added first.
+  it("answers the programme before it offers its rounds", async () => {
+    // Clients, who is deciding, the applications behind them, who is
+    // waiting — then the rounds, which are navigation rather than an
+    // operational list. See programs/groupProgrammePeople.test.tsx for
+    // what each section means.
     const { screen } = await mountAt("/programs/group/2");
 
     await expect
       .element(screen.getByRole("heading", { name: /^Cohorts · / }))
       .toBeVisible();
     const text = body();
-    expect(text.indexOf("Cohorts")).toBeLessThan(text.indexOf("Waitlist"));
+    expect(text.indexOf("Clients")).toBeLessThan(text.indexOf("Cohorts"));
+    expect(text.indexOf("Waitlist")).toBeLessThan(text.indexOf("Cohorts"));
   });
 
   it("lets the Kit tag be chosen from the real catalogue rather than typed", async () => {

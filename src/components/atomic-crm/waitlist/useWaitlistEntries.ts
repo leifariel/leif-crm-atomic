@@ -6,6 +6,10 @@ import { ACTIVE_WAITLIST_STATUSES } from "./waitlistConstants";
 export type WaitlistEntryRow = {
   entryId: Identifier;
   contactId: Identifier;
+  // The round this place is for, or null for "wants the programme, no
+  // round in mind". Carried so a PROGRAMME-WIDE list can say which round
+  // each person is waiting on; a round's own list already knows.
+  cohortId: Identifier | null;
   name: string;
   // Every email on file, joined — used only for local search matching
   // (WaitlistSection.tsx, human-acceptance repair pass §1), never
@@ -36,12 +40,21 @@ export type WaitlistEntryRow = {
 // use this without an extra Offer fetch. Never pass `undefined` for
 // cohortId — pass `null` explicitly, so an offer-level and a
 // cohort-specific query can never be confused with each other.
+//
+// `acrossCohorts` is the PROGRAMME-WIDE third case, for a group
+// programme's own page: every active entry for the Offer, whether it names
+// a round or not. It is deliberately a separate flag rather than a looser
+// meaning for `cohortId: null` — "wants GYU generally" and "everyone
+// waiting for GYU" are different answers, and the strictness above exists
+// because confusing them once already showed the wrong people a waitlist.
 export const useWaitlistEntries = ({
   offerId,
   cohortId,
+  acrossCohorts = false,
 }: {
   offerId?: Identifier;
   cohortId: Identifier | null;
+  acrossCohorts?: boolean;
 }) => {
   const { data: entries, isPending: entriesPending } =
     useGetList<WaitlistEntry>(
@@ -50,7 +63,9 @@ export const useWaitlistEntries = ({
         filter:
           cohortId != null
             ? { cohort_id: cohortId }
-            : { offer_id: offerId, "cohort_id@is": null },
+            : acrossCohorts
+              ? { offer_id: offerId }
+              : { offer_id: offerId, "cohort_id@is": null },
         pagination: { page: 1, perPage: 1000 },
         sort: { field: "joined_at", order: "ASC" },
       },
@@ -114,6 +129,7 @@ export const useWaitlistEntries = ({
     .map((entry) => ({
       entryId: entry.id,
       contactId: entry.contact_id,
+      cohortId: entry.cohort_id ?? null,
       name: nameFor(entry.contact_id),
       email: emailFor(entry.contact_id),
       status: entry.status,

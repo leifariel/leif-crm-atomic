@@ -4153,8 +4153,32 @@ Applications · n → Waitlist · n → Cohort Details. Already this order; now
 asserted. The heading stayed **Enrolled Clients** rather than "Clients" —
 the accepted copy, and it says which clients.
 
-**A group programme:** Cohorts · n → Waitlist · n. The waiting list was first
-only because it was written first.
+**A group programme (its own page):** Clients · n → People Deciding · n →
+Applications · n → Waitlist · n → Cohorts · n. It used to be Waitlist then
+Cohorts — which left the PROGRAMME unanswerable. "Who is in Growing Yourself
+Up", "who is deciding about it", "who has applied" are questions about the
+programme, and every one of them had to be asked of each round in turn. The
+page now reads like a round's page, one scope up, with the rounds last
+because they are navigation rather than an operational list.
+
+**Programme-wide, never one round's data widened** (`useGroupProgrammePeople`):
+
+| Section | Authority | Scope guard |
+|---|---|---|
+| Clients | `classifyCohortOpportunity` → `enrolled` + an active Enrollment | `deals.offer_id`; at most one Enrollment per Opportunity, so one row each |
+| People Deciding | `isPersonDeciding` | `deals.offer_id` — a Living Example decider cannot appear |
+| Applications | the application record, with its own status | two sources merged and **deduplicated by id**, because `applications.offer_id` is nullable and a legacy application says which programme it is for only through the round it intended |
+| Waitlist | `useWaitlistEntries` with `acrossCohorts` | every active entry for the Offer, round-named or not |
+
+`acrossCohorts` is a third, explicit case on the existing hook rather than a
+looser meaning for `cohortId: null`: "wants GYU generally" and "everyone
+waiting for GYU" are different answers, and that hook is strict because
+confusing them once already showed the wrong people a waitlist.
+
+Every row that can be ambiguous carries its round, with the programme's own
+name stripped back out of it by the existing `humanizeCohortName` — "Spring
+2027" under a heading that already says Growing Yourself Up. A waitlist entry
+with no round in mind does not acquire one.
 
 **A 1:1 programme:** Current Clients · n → Starting Later · n → Upcoming
 Openings · n → **People Deciding · n** (new here) → Waitlist · n.
@@ -4216,6 +4240,18 @@ to three month cards and opening again.
 `contracts/programs/everyClientHasAHome.test.ts` — the merged section:
 nobody duplicated, nobody routed at a Contact page, the unscheduled client
 first, flagged, and actionable, above the forecast.
+
+`programs/groupProgrammePeople.test.tsx` — the programme page over two
+rounds: both rounds' clients with correct round labels; only the Decision-
+stage GYU Opportunity deciding, with the approved-but-not-Decision applicant
+and **a live Decision-stage Living Example Opportunity** both absent; every
+application kept with its truthful status, including one from somebody who
+never entered the pipeline; the waiting list programme-wide with no
+duplicates; the order; the collapse; and — from the other side — **the
+round's page still showing only that round's people.**
+
+**Sensitivity:** removing the `offer_id` filter from the programme's deals
+query fails it with `People Deciding · 2` containing "Example Decider".
 
 `e2e/startWeekGoldenJourney.spec.ts` — the whole start-week journey against
 real Postgres, now asking two questions where it used to ask one: which

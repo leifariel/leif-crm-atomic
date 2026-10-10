@@ -69,6 +69,9 @@ export const WaitlistSection = ({
   // asked together. It states and never acts: no invitation, no move, no
   // email follows from reading it.
   availability = null,
+  // Programme-wide lists only: which round each person is waiting on.
+  // A round's own list leaves this unset, because the page already says.
+  cohortLabelFor,
 }: {
   entries: WaitlistEntryRow[];
   // Optional so a caller that has not been given batch-invite context yet
@@ -80,6 +83,7 @@ export const WaitlistSection = ({
   enableBulkInvite?: boolean;
   action?: ReactNode;
   availability?: string | null;
+  cohortLabelFor?: (cohortId: Identifier | null) => string | null;
 }) => {
   const translate = useTranslate();
   const [search, setSearch] = useState("");
@@ -253,8 +257,11 @@ export const WaitlistSection = ({
                             {entry.name}
                           </Link>
                           <span className="text-xs text-muted-foreground truncate">
-                            {metaFor(entry, (key, fallback) =>
-                              translate(key, { _: fallback }),
+                            {metaFor(
+                              entry,
+                              (key, fallback) =>
+                                translate(key, { _: fallback }),
+                              cohortLabelFor?.(entry.cohortId) ?? null,
                             )}
                           </span>
                         </div>
@@ -287,12 +294,16 @@ export const WaitlistSection = ({
 const metaFor = (
   entry: WaitlistEntryRow,
   translate: (key: string, fallback: string) => string,
+  cohortLabel: string | null,
 ) => {
   const joinedLabel = translate(
     "resources.waitlist_entries.fields.joined_at",
     "Joined",
   );
-  const parts = [`${joinedLabel} ${formatTimestampString(entry.joinedAt)}`];
+  // The round first, when there is one and the list spans several: it is
+  // the thing that distinguishes two otherwise identical rows.
+  const parts = cohortLabel ? [cohortLabel] : [];
+  parts.push(`${joinedLabel} ${formatTimestampString(entry.joinedAt)}`);
   if (entry.desiredTiming) parts.push(entry.desiredTiming);
   // Import provenance stays STORED on the row — it is the audit trail for
   // how a historical membership's joined_at was derived, and deleting it

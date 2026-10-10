@@ -166,8 +166,19 @@ describe("Living Example page — Waitlist section", () => {
   });
 });
 
-describe("Group Program page (GYU general) — Waitlist section", () => {
-  it("shows only offer-level entries — a cohort-specific entry never leaks in", async () => {
+describe("Group Program page — Waitlist section", () => {
+  // This page used to show offer-level entries ONLY, and a cohort-specific
+  // entry was treated as a leak. Leif's answer after using it: the
+  // programme's page is where she asks "who is waiting for Growing
+  // Yourself Up", and somebody waiting for its September round is waiting
+  // for Growing Yourself Up. So it aggregates, and each row says which
+  // round it is for.
+  //
+  // The strictness it replaced has not been loosened anywhere else: a
+  // ROUND's page still shows only its own (the describe below), and the
+  // hook still refuses to confuse the two — the programme-wide scope is a
+  // third, explicit case rather than a looser reading of "no cohort".
+  it("shows everyone waiting for the programme, and says which round", async () => {
     await page.viewport(1280, 900);
     const contacts = [
       buildContact({ id: 1, first_name: "Dana", last_name: "Cole" }),
@@ -197,11 +208,51 @@ describe("Group Program page (GYU general) — Waitlist section", () => {
     const screen = await render(element);
 
     await expect
+      .element(screen.getByRole("heading", { name: "Waitlist · 2" }))
+      .toBeInTheDocument();
+    await expect.element(screen.getByText("Dana Cole")).toBeInTheDocument();
+    await expect.element(screen.getByText("Nadia Osei")).toBeInTheDocument();
+    // Once each — one waitlist row is one place, however it is reached.
+    const body = screen.container.ownerDocument.body.textContent ?? "";
+    expect(body.split("Nadia Osei").length - 1).toBe(1);
+  });
+
+  it("never shows another programme's waiting list", async () => {
+    await page.viewport(1280, 900);
+    const contacts = [
+      buildContact({ id: 1, first_name: "Dana", last_name: "Cole" }),
+      buildContact({ id: 2, first_name: "Owen", last_name: "Blake" }),
+    ];
+    const entries = [
+      entry({
+        id: 1,
+        contact_id: 1,
+        offer_id: 2,
+        cohort_id: null,
+        status: "waiting",
+      }),
+      // The Living Example's, which this page must never widen into.
+      entry({
+        id: 2,
+        contact_id: 2,
+        offer_id: 1,
+        cohort_id: null,
+        status: "waiting",
+      }),
+    ];
+
+    const { element } = buildTestCrm(["/programs/group/2"], {
+      contacts,
+      waitlist_entries: entries,
+    });
+    const screen = await render(element);
+
+    await expect
       .element(screen.getByRole("heading", { name: "Waitlist · 1" }))
       .toBeInTheDocument();
     await expect.element(screen.getByText("Dana Cole")).toBeInTheDocument();
     await expect
-      .element(screen.getByText("Nadia Osei"))
+      .element(screen.getByText("Owen Blake"))
       .not.toBeInTheDocument();
   });
 });

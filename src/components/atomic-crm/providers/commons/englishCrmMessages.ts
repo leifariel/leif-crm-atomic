@@ -1091,6 +1091,7 @@ export const englishCrmMessages = {
         "It is linked to %{links}. Deleting it would take that with it, so archive it instead — everything stays, it just leaves your active programs.",
       delete_refused_by_database:
         "%{name} could not be deleted: something still references it.",
+      programme_clients: "Clients",
       cohorts_section: "Cohorts",
       cohort_details: "Cohort Details",
     },

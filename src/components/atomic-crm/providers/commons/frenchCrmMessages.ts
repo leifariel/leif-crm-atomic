@@ -1065,6 +1065,7 @@ export const frenchCrmMessages = {
         "Il est lié à %{links}. Le supprimer emporterait tout cela ; archivez-le plutôt — rien n'est perdu, il quitte simplement vos programmes actifs.",
       delete_refused_by_database:
         "%{name} n'a pas pu être supprimé : quelque chose y fait encore référence.",
+      programme_clients: "Clients",
       cohorts_section: "Cohortes",
       cohort_details: "Détails de la cohorte",
     },
