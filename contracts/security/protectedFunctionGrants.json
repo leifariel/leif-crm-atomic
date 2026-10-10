@@ -1,0 +1,27 @@
+{
+  "$comment": [
+    "The two function-privilege classes this repository will not let drift.",
+    "",
+    "internalOnly: SECURITY DEFINER, callable as an RPC, and executable by NONE of anon, authenticated or service_role. Only the database itself may call these. A function that loses its revokes DROPS OUT of this list, which is the regression we are guarding: adding a parameter means DROP and CREATE, and a created function starts with proacl NULL, which in Postgres means EXECUTE TO PUBLIC. enqueue_kit_operation lost its revokes exactly that way on 2026-10-10.",
+    "",
+    "publicExecutable: SECURITY DEFINER, callable, and proacl IS NULL. Anyone may call these and they run as their owner. Deliberately not asserted empty: is_admin() is read by RLS policies and must be callable by whoever the policy is evaluated for, and it only ever reports on the caller.",
+    "",
+    "Browser-callable RPCs appear in neither list: they hold explicit grants, so they are not internal-only and not NULL-ACL.",
+    "",
+    "Regenerate with: node scripts/protectedFunctionGrants.mjs --e2e --write"
+  ],
+  "internalOnly": [
+    "accept_sale(p_deal_id bigint)",
+    "apply_enrollment_onboarding_projection(p_enrollment_id bigint, p_from_offer_id bigint, p_to_offer_id bigint)",
+    "enqueue_kit_application_sync(p_application_id bigint, p_kind text, p_event text)",
+    "enqueue_kit_cohort_tag(p_application_id bigint)",
+    "enqueue_kit_operation(p_contact_id bigint, p_application_id bigint, p_kind text, p_origin text, p_kit_tag_id bigint, p_kit_tag_name text, p_requested_by text, p_waitlist_invitation_id bigint)",
+    "ensure_sale_enrollment(p_deal_id bigint)",
+    "merge_contacts_safely(p_source bigint, p_destination bigint, p_actor text, p_evidence text, p_acknowledged_conflicts text[])",
+    "reconcile_application_review_tasks()",
+    "reconcile_sales_call_tasks()",
+    "seed_enrollment_onboarding(p_enrollment_id bigint, p_due_at timestamp with time zone)"
+  ],
+  "publicExecutable": ["is_admin()"],
+  "unresolvedGrantTargets": []
+}

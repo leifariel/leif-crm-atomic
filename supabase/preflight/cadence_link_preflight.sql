@@ -6,17 +6,15 @@
 -- and every verdict is computed from stored facts rather than from
 -- whichever code is live.
 --
--- WHY THE RULE IS WRITTEN OUT HERE instead of selecting from the view
--- public.client_session_enrollment_candidates: the view ships WITH the
--- repair, so it does not exist yet when this runs as a PREflight. The
--- predicate below is that same rule, copied deliberately and temporarily.
+-- THE LINK RULE IS NOT REPEATED HERE. Sections 2, 3 and 6 read
+-- public.client_session_enrollment_candidates, which is the one authority on
+-- which Enrollment an unlinked session belongs to. This file formats and
+-- reports; it decides nothing.
 --
--- THE VIEW IS AUTHORITATIVE. The two were compared on a real Postgres
--- carrying one session of each classification — deterministic,
--- no-candidate and ambiguous — and agreed on every row and every proposed
--- enrollment_id. Once the repair is deployed this copy should be deleted
--- and sections 2 and 3 should read the view directly, so there is only
--- ever one rule to keep true.
+-- It did carry a copy for one slice, because the view shipped with the repair
+-- and did not exist when the preflight was first needed. The two were
+-- compared on real Postgres over one session of each classification and
+-- agreed on every row; the copy was then deleted rather than left to drift.
 --
 -- Sections:
 --   1  the four named clients, in full
@@ -46,75 +44,23 @@ real_sessions as (
     from client_sessions cs
    where cs.status <> 'cancelled' and cs.no_show_at is null
 ),
--- ---------- THE LINK RULE (mirrors the view) ------------------------
-unlinked as (
-  select cs.id as session_id, cs.contact_id, cs.offer_id, cs.scheduled_at,
-         cs.source, cs.status, cs.no_show_at, cs.created_at,
-         (cs.scheduled_at at time zone 'America/Denver')::date as denver_day
-    from client_sessions cs
-   where cs.enrollment_id is null
-),
-candidate_enrollments as (
-  select u.session_id, e.id as enrollment_id, e.start_date, e.end_date
-    from unlinked u
-    join deals d on d.contact_id = u.contact_id and d.offer_id = u.offer_id
-    join enrollments e on e.opportunity_id = d.id
-),
--- TIER 1: the session's Denver day is one of that Enrollment's expected days.
-by_week as (
-  select c.session_id, c.enrollment_id
-    from candidate_enrollments c
-    join unlinked u on u.session_id = c.session_id
-    join enrollment_expected_sessions s
-      on s.enrollment_id = c.enrollment_id
-     and s.retired_at is null
-     and u.denver_day >= s.window_start
-     and u.denver_day <  s.window_end
-   group by c.session_id, c.enrollment_id
-),
--- TIER 2, only when no expected week contains the day: the Enrollment was
--- running then. Status is deliberately not required to be 'active'.
-by_span as (
-  select c.session_id, c.enrollment_id
-    from candidate_enrollments c
-    join unlinked u on u.session_id = c.session_id
-   where c.start_date is not null
-     and u.denver_day >= c.start_date
-     and (c.end_date is null or u.denver_day <= c.end_date)
-   group by c.session_id, c.enrollment_id
-),
-tiered as (
-  select u.session_id,
-         case when exists (select 1 from by_week w where w.session_id = u.session_id)
-              then 'expected-week' else 'enrollment-span' end as tier
-    from unlinked u
-),
-link_rule as (
-  select u.session_id, u.contact_id, u.offer_id, u.scheduled_at, u.source,
-         u.denver_day, u.created_at, t.tier,
-         case when t.tier = 'expected-week'
-              then (select count(*) from by_week w where w.session_id = u.session_id)
-              else (select count(*) from by_span p where p.session_id = u.session_id)
-         end as candidate_count,
-         case when t.tier = 'expected-week'
-              then (select min(w.enrollment_id) from by_week w where w.session_id = u.session_id)
-              else (select min(p.enrollment_id) from by_span p where p.session_id = u.session_id)
-         end as first_candidate,
-         case when t.tier = 'expected-week'
-              then (select string_agg(w.enrollment_id::text, ',' order by w.enrollment_id)
-                      from by_week w where w.session_id = u.session_id)
-              else (select string_agg(p.enrollment_id::text, ',' order by p.enrollment_id)
-                      from by_span p where p.session_id = u.session_id)
-         end as candidate_ids
-    from unlinked u join tiered t on t.session_id = u.session_id
-),
+-- ---------- THE LINK RULE: READ, NEVER RE-DERIVED -------------------
+--
+-- public.client_session_enrollment_candidates IS the authority on which
+-- Enrollment an unlinked session belongs to (migration 20261010190000).
+--
+-- This file used to carry its own copy of that reasoning — the by_week and
+-- by_span tiers written out again — because the view shipped WITH the repair
+-- and did not exist yet when the preflight was first needed. It exists now,
+-- so the copy is gone: one rule, read in one place. Everything below only
+-- FORMATS and reports what the view already decided, and a question about
+-- candidate ownership has exactly one answer again.
 classified as (
-  select l.*,
-         case when candidate_count = 1 then first_candidate end as proposed_enrollment_id,
-         case when candidate_count = 1 then 'deterministic'
-              when candidate_count = 0 then 'no-candidate'
-              else 'ambiguous' end as classification
-    from link_rule l
+  select session_id, contact_id, offer_id, scheduled_at, source, denver_day,
+         tier, candidate_count,
+         candidate_enrollment_ids as candidate_ids,
+         proposed_enrollment_id, classification
+    from public.client_session_enrollment_candidates
 ),
 -- ---------- THE FOUR ------------------------------------------------
 enr as (

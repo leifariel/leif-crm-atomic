@@ -1,0 +1,43 @@
+-- A GRANT DOES NOT REVOKE PUBLIC.
+--
+-- `record_sales_call_reinstated(bigint)` is SECURITY DEFINER and it WRITES:
+-- it sets a Sales Call back to `booked`, clears `cancelled_at`, records a
+-- `reinstated` event and can advance the Opportunity. In production its ACL
+-- is
+--
+--   {=X/postgres,postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+--
+-- and that leading `=X/postgres` is a grant to PUBLIC. `anon` therefore held
+-- EXECUTE, which PostgREST exposes: an unauthenticated POST to
+-- /rest/v1/rpc/record_sales_call_reinstated returned 200 and ran as the
+-- function's owner, bypassing RLS entirely. Confirmed against a clean room
+-- carrying the identical ACL, with an id that cannot match so nothing was
+-- written.
+--
+-- HOW IT HAPPENED, and it is worth knowing because the shape repeats. A newly
+-- created function has `proacl = NULL`, which in Postgres means EXECUTE TO
+-- PUBLIC. 20260918155000 then said
+--
+--   grant execute on function public.record_sales_call_reinstated(bigint)
+--     to authenticated, service_role;
+--
+-- and that first GRANT MATERIALISES the ACL — baking the implicit PUBLIC
+-- grant in as an explicit one rather than replacing it. Granting a role
+-- access does not take access away from anyone. Every other protected
+-- function in 06_grants.sql revokes from `public` FIRST for exactly this
+-- reason; this one was never given that line.
+--
+-- The only caller is acuity_webhook/acuityReconcile.ts, which runs as
+-- `service_role`. `authenticated` keeps the EXECUTE 20260918155000 meant to
+-- give it. Nothing legitimate loses anything here.
+--
+-- contracts/security/protectedFunctionGrants.json pins this class now, and
+-- e2e/protectedFunctionGrants.spec.ts fails if a SECURITY DEFINER function
+-- becomes PUBLIC-executable again — by either route, a NULL ACL or an
+-- explicit grant to PUBLIC.
+--
+-- Deterministic and replay-safe: a revoke of a privilege that is already
+-- absent is a no-op, so this replays into an empty database without
+-- asserting anything about production's rows.
+revoke all on function public.record_sales_call_reinstated(bigint) from public;
+revoke all on function public.record_sales_call_reinstated(bigint) from anon;

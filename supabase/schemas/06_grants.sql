@@ -893,10 +893,18 @@ grant execute on function public.request_kit_manual_tag(bigint, bigint, text, bi
 
 -- The insert primitives stay internal. Not even service_role: on their own
 -- they would create a tag operation with nothing to justify one.
-revoke all on function public.enqueue_kit_operation(bigint, bigint, text, text, bigint, text, text) from public;
-revoke all on function public.enqueue_kit_operation(bigint, bigint, text, text, bigint, text, text) from anon;
-revoke all on function public.enqueue_kit_operation(bigint, bigint, text, text, bigint, text, text) from authenticated;
-revoke all on function public.enqueue_kit_operation(bigint, bigint, text, text, bigint, text, text) from service_role;
+--
+-- The SIGNATURE here has to be the deployed one, exactly. A revoke names one
+-- overload; naming a signature that does not exist revokes nothing and leaves
+-- the real function on whatever ACL it was created with. Dropping and
+-- recreating this function to add a parameter already cost it its revokes
+-- once (restored by 20261010160000), and a created function defaults to
+-- EXECUTE TO PUBLIC. contracts/security/protectedFunctionGrants.test.ts
+-- holds this to that posture by class rather than by name.
+revoke all on function public.enqueue_kit_operation(bigint, bigint, text, text, bigint, text, text, bigint) from public;
+revoke all on function public.enqueue_kit_operation(bigint, bigint, text, text, bigint, text, text, bigint) from anon;
+revoke all on function public.enqueue_kit_operation(bigint, bigint, text, text, bigint, text, text, bigint) from authenticated;
+revoke all on function public.enqueue_kit_operation(bigint, bigint, text, text, bigint, text, text, bigint) from service_role;
 revoke all on function public.enqueue_kit_cohort_tag(bigint) from public;
 revoke all on function public.enqueue_kit_cohort_tag(bigint) from anon;
 revoke all on function public.enqueue_kit_cohort_tag(bigint) from authenticated;
@@ -924,3 +932,13 @@ revoke all on public.client_session_enrollment_candidates from public;
 revoke all on public.client_session_enrollment_candidates from anon;
 revoke all on public.client_session_enrollment_candidates from authenticated;
 grant select on public.client_session_enrollment_candidates to service_role;
+
+-- The Sales Call reinstatement authority. SECURITY DEFINER and it WRITES, so
+-- the unauthenticated surface is the one that matters: a GRANT materialises
+-- the ACL and keeps the implicit PUBLIC grant rather than replacing it, which
+-- is how anon came to hold EXECUTE in production (20261010200000 took it
+-- away). Revoke from public FIRST, then grant — the order is the whole point.
+revoke all on function public.record_sales_call_reinstated(bigint) from public;
+revoke all on function public.record_sales_call_reinstated(bigint) from anon;
+grant execute on function public.record_sales_call_reinstated(bigint) to authenticated;
+grant execute on function public.record_sales_call_reinstated(bigint) to service_role;

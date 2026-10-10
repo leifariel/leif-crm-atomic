@@ -3979,6 +3979,13 @@ $$;
 --
 -- Returns the operation id, or null when there is nothing to do — an unusable
 -- email, or a request that already exists.
+-- The waitlist invitation this operation belongs to, when it belongs to one.
+-- Added by 20261010120000; the declarative source described the earlier
+-- SEVEN-argument shape for a while after that, which is a drift worth naming:
+-- a db diff reading the old signature would have CREATED it alongside the real
+-- one, and a newly created function starts with proacl NULL — which in
+-- Postgres means EXECUTE TO PUBLIC. 06_grants.sql revokes the exact signature
+-- below for that reason.
 create or replace function public.enqueue_kit_operation(
   p_contact_id bigint,
   p_application_id bigint,
@@ -3986,7 +3993,8 @@ create or replace function public.enqueue_kit_operation(
   p_origin text,
   p_kit_tag_id bigint,
   p_kit_tag_name text,
-  p_requested_by text default null
+  p_requested_by text default null,
+  p_waitlist_invitation_id bigint default null
 ) returns bigint
 language plpgsql
 security definer
@@ -4013,11 +4021,11 @@ begin
 
   insert into kit_sync_operations
     (application_id, contact_id, kind, origin, email, kit_tag_id, kit_tag_name,
-     requested_by)
+     requested_by, waitlist_invitation_id)
   values
     (p_application_id, p_contact_id, p_kind, p_origin, v_email, p_kit_tag_id,
      coalesce(nullif(btrim(p_kit_tag_name), ''), 'tag ' || p_kit_tag_id),
-     p_requested_by)
+     p_requested_by, p_waitlist_invitation_id)
   on conflict do nothing
   returning id into v_id;
 
