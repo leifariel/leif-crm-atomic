@@ -13,6 +13,7 @@ import {
   createCrmDb,
   createTestAuthProvider,
 } from "@/test/StoryWrapper";
+import { dialogReadyForTyping, typeInto } from "@/test/dialogInteraction";
 import type { Contact, Offer, WaitlistEntry } from "../types";
 
 // Editing one waitlist row.
@@ -108,7 +109,14 @@ const misspelled = buildContact({
 const openEditDialog = async (screen: Awaited<ReturnType<typeof render>>) => {
   await screen.getByRole("button", { name: "Waitlist entry actions" }).click();
   await screen.getByRole("menuitem", { name: "Edit" }).click();
-  await expect.element(screen.getByRole("dialog")).toBeVisible();
+  await dialogReadyForTyping(screen);
+  // AND WAIT FOR THE FORM TO BE THE RECORD'S. Its defaults come from the
+  // Contact, which arrives after the dialog mounts — react-hook-form
+  // re-seeds when it does, and anything typed in between is wiped. The
+  // misspelling this fixture exists for is the proof the seeding landed.
+  await expect
+    .element(screen.getByLabelText(/^Email/))
+    .toHaveValue("jhon@example.com");
 };
 
 describe("editing a waitlist row", () => {
@@ -181,8 +189,8 @@ describe("editing a waitlist row", () => {
     const screen = await render(element);
 
     await openEditDialog(screen);
-    await screen.getByLabelText(/^First name/).fill("John");
-    await screen.getByLabelText(/^Last name/).fill("Smith");
+    await typeInto(screen.getByLabelText(/^First name/), "John");
+    await typeInto(screen.getByLabelText(/^Last name/), "Smith");
     await screen.getByRole("button", { name: /^save$/i }).click();
 
     await expect
@@ -206,7 +214,7 @@ describe("editing a waitlist row", () => {
     const screen = await render(element);
 
     await openEditDialog(screen);
-    await screen.getByLabelText(/^Email/).fill("john@example.com");
+    await typeInto(screen.getByLabelText(/^Email/), "john@example.com");
     await screen.getByRole("button", { name: /^save$/i }).click();
 
     await expect
@@ -224,9 +232,10 @@ describe("editing a waitlist row", () => {
     const screen = await render(element);
 
     await openEditDialog(screen);
-    await screen.getByLabelText(/^Desired timing/).fill("Spring");
-    await screen.getByLabelText(/^Notes/).fill("Met at the workshop");
-    await screen.getByLabelText(/^Priority/).fill("2");
+    await typeInto(screen.getByLabelText(/^Desired timing/), "Spring");
+    await typeInto(screen.getByLabelText(/^Notes/), "Met at the workshop");
+    // A number input holds a number.
+    await typeInto(screen.getByLabelText(/^Priority/), "2", 2);
     await screen.getByRole("button", { name: /^save$/i }).click();
 
     await expect
@@ -271,7 +280,7 @@ describe("editing a waitlist row", () => {
     const screen = await render(element);
 
     await openEditDialog(screen);
-    await screen.getByLabelText(/^Email/).fill("sarah.jones@example.com");
+    await typeInto(screen.getByLabelText(/^Email/), "sarah.jones@example.com");
     await screen.getByRole("button", { name: /^save$/i }).click();
 
     await expect
@@ -295,7 +304,7 @@ describe("editing a waitlist row", () => {
     const screen = await render(element);
 
     await openEditDialog(screen);
-    await screen.getByLabelText(/^Email/).fill("");
+    await typeInto(screen.getByLabelText(/^Email/), "");
     await screen.getByRole("button", { name: /^save$/i }).click();
 
     await expect
@@ -314,8 +323,8 @@ describe("editing a waitlist row", () => {
     const screen = await render(element);
 
     await openEditDialog(screen);
-    await screen.getByLabelText(/^First name/).fill("Discarded");
-    await screen.getByLabelText(/^Desired timing/).fill("Discarded too");
+    await typeInto(screen.getByLabelText(/^First name/), "Discarded");
+    await typeInto(screen.getByLabelText(/^Desired timing/), "Discarded too");
     await page.getByRole("button", { name: "Close" }).click();
 
     await expect.element(screen.getByRole("dialog")).not.toBeInTheDocument();
@@ -334,8 +343,8 @@ describe("editing a waitlist row", () => {
     const screen = await render(element);
 
     await openEditDialog(screen);
-    await screen.getByLabelText(/^First name/).fill("John");
-    await screen.getByLabelText(/^Last name/).fill("Smith");
+    await typeInto(screen.getByLabelText(/^First name/), "John");
+    await typeInto(screen.getByLabelText(/^Last name/), "Smith");
     await screen.getByRole("button", { name: /^save$/i }).click();
 
     await expect.element(screen.getByRole("dialog")).not.toBeInTheDocument();

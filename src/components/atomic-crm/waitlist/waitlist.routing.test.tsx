@@ -13,6 +13,7 @@ import {
   createCrmDb,
   createTestAuthProvider,
 } from "@/test/StoryWrapper";
+import { dialogReadyForTyping, typeInto } from "@/test/dialogInteraction";
 import type { Cohort, ContactNote, Offer, WaitlistEntry } from "../types";
 import type { Db } from "@/components/atomic-crm/providers/fakerest/dataGenerator/types";
 
@@ -366,6 +367,7 @@ describe("ContactShow — adding to a waitlist still needs an email", () => {
     const screen = await render(element);
 
     await screen.getByRole("button", { name: "Add to Waitlist" }).click();
+    await dialogReadyForTyping(screen);
     await screen.getByLabelText("Program").click();
     await screen.getByText("The Living Example").click();
 
@@ -386,7 +388,7 @@ describe("ContactShow — adding to a waitlist still needs an email", () => {
     });
     expect(blocked).toBe(0);
 
-    await screen.getByLabelText(/^Email/).fill("reachable@example.com");
+    await typeInto(screen.getByLabelText(/^Email/), "reachable@example.com");
     await screen.getByRole("button", { name: /^save$/i }).click();
 
     await expect
@@ -433,7 +435,8 @@ describe("Add to Waitlist — Do Not Engage guard", () => {
     const screen = await render(element);
 
     await screen.getByRole("button", { name: "Add to Waitlist" }).click();
-    await screen.getByLabelText("Email").fill("willis.byrne@example.com");
+    await dialogReadyForTyping(screen);
+    await typeInto(screen.getByLabelText("Email"), "willis.byrne@example.com");
     // Tab out of the field, which is what triggers the lookup.
     await screen.getByLabelText("Name").click();
 
@@ -616,8 +619,9 @@ describe("Add to Waitlist — email first", () => {
     const screen = await render(element);
 
     await screen.getByRole("button", { name: "Add to Waitlist" }).click();
-    await screen.getByLabelText("Email").fill("brand.new@example.com");
-    await screen.getByLabelText("Name").fill("Brand New Person");
+    await dialogReadyForTyping(screen);
+    await typeInto(screen.getByLabelText("Email"), "brand.new@example.com");
+    await typeInto(screen.getByLabelText("Name"), "Brand New Person");
     await screen.getByRole("button", { name: "Add to waitlist" }).click();
 
     await expect.poll(() => entryCount(dataProvider)).toBe(1);
@@ -656,7 +660,8 @@ describe("Add to Waitlist — email first", () => {
     const screen = await render(element);
 
     await screen.getByRole("button", { name: "Add to Waitlist" }).click();
-    await screen.getByLabelText("Name").fill("No Address Person");
+    await dialogReadyForTyping(screen);
+    await typeInto(screen.getByLabelText("Name"), "No Address Person");
     await screen.getByRole("button", { name: "Add to waitlist" }).click();
 
     await expect
@@ -685,7 +690,8 @@ describe("Add to Waitlist — email first", () => {
     const screen = await render(element);
 
     await screen.getByRole("button", { name: "Add to Waitlist" }).click();
-    await screen.getByLabelText("Email").fill("nameless@example.com");
+    await dialogReadyForTyping(screen);
+    await typeInto(screen.getByLabelText("Email"), "nameless@example.com");
     await screen.getByRole("button", { name: "Add to waitlist" }).click();
 
     await expect
@@ -712,9 +718,17 @@ describe("Add to Waitlist — email first", () => {
     const screen = await render(element);
 
     await screen.getByRole("button", { name: "Add to Waitlist" }).click();
+    await dialogReadyForTyping(screen);
     // Different case and surrounding space: the match is on the
     // NORMALIZED address, which is what makes it identity.
-    await screen.getByLabelText("Email").fill("  terra.israd@example.com ");
+    // Typed with stray spaces on purpose — the app has to trim it. The
+    // email input strips them from its own value before React ever sees
+    // them, which is the browser being helpful, not the app being tested.
+    await typeInto(
+      screen.getByLabelText("Email"),
+      "  terra.israd@example.com ",
+      "terra.israd@example.com",
+    );
     await screen.getByLabelText("Name").click();
 
     await expect
@@ -756,7 +770,8 @@ describe("Add to Waitlist — email first", () => {
     const screen = await render(element);
 
     await screen.getByRole("button", { name: "Add to Waitlist" }).click();
-    await screen.getByLabelText("Email").fill("terra.israd@example.com");
+    await dialogReadyForTyping(screen);
+    await typeInto(screen.getByLabelText("Email"), "terra.israd@example.com");
     await screen.getByLabelText("Name").click();
 
     await expect
@@ -787,10 +802,11 @@ describe("Add to Waitlist — email first", () => {
     const screen = await render(element);
 
     await screen.getByRole("button", { name: "Add to Waitlist" }).click();
+    await dialogReadyForTyping(screen);
     // A DIFFERENT address, so this is a different person as far as the CRM
     // can honestly tell.
-    await screen.getByLabelText("Email").fill("terra.israd.2@example.com");
-    await screen.getByLabelText("Name").fill("Terra Israd");
+    await typeInto(screen.getByLabelText("Email"), "terra.israd.2@example.com");
+    await typeInto(screen.getByLabelText("Name"), "Terra Israd");
     await screen.getByLabelText("Email").click();
 
     await expect
@@ -817,12 +833,14 @@ describe("Add to Waitlist — email first", () => {
     const screen = await render(element);
 
     await screen.getByRole("button", { name: "Add to Waitlist" }).click();
-    await screen.getByLabelText("Email").fill("first.person@example.com");
-    await screen.getByLabelText("Name").fill("First Person");
+    await dialogReadyForTyping(screen);
+    await typeInto(screen.getByLabelText("Email"), "first.person@example.com");
+    await typeInto(screen.getByLabelText("Name"), "First Person");
     await screen.getByRole("button", { name: "Add to waitlist" }).click();
     await expect.poll(() => entryCount(dataProvider)).toBe(1);
 
     await screen.getByRole("button", { name: "Add to Waitlist" }).click();
+    await dialogReadyForTyping(screen);
     await expect.element(screen.getByLabelText("Email")).toHaveValue("");
     await expect.element(screen.getByLabelText("Name")).toHaveValue("");
   });
