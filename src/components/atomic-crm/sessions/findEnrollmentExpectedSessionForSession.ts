@@ -1,6 +1,7 @@
 import type { DataProvider, Identifier } from "ra-core";
 
 import type { EnrollmentExpectedSession } from "../types";
+import { dayFallsInSlotWeek, crmCalendarDate } from "./sessionFallsInSlotWeek";
 
 // Client + Session Operations Service Period model: the shared lookup
 // behind markClientSessionNoShow.ts/reverseClientSessionNoShow.ts —
@@ -28,12 +29,9 @@ export const findEnrollmentExpectedSessionForSession = async (
     },
   );
 
-  const scheduledTime = new Date(scheduledAt).getTime();
-  return (
-    slots.find(
-      (slot) =>
-        scheduledTime >= new Date(slot.window_start).getTime() &&
-        scheduledTime < new Date(slot.window_end).getTime(),
-    ) ?? null
-  );
+  // The CRM's own calendar day, compared against the week's days. It used
+  // to build UTC midnights out of Denver dates, which put a late-afternoon
+  // session in the wrong week — or no week at all.
+  const day = crmCalendarDate(scheduledAt);
+  return slots.find((slot) => dayFallsInSlotWeek(day, slot)) ?? null;
 };

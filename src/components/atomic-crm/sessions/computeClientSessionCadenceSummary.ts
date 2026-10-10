@@ -3,6 +3,10 @@ import type {
   ClientSessionCadenceIssue,
   EnrollmentExpectedSession,
 } from "../types";
+import {
+  crmDayAtOrAfter,
+  sessionFallsInSlotWeek,
+} from "./sessionFallsInSlotWeek";
 
 export type ExpectedWeekStatus =
   | "fulfilled"
@@ -69,17 +73,9 @@ export type ClientSessionCadenceSummary = {
   attentionItems: ExpectedWeekSummary[];
 };
 
-const isFulfilling = (
-  session: ClientSession,
-  slot: Pick<EnrollmentExpectedSession, "window_start" | "window_end">,
-) => {
-  if (session.status === "cancelled" || session.no_show_at) return false;
-  const scheduledAt = new Date(session.scheduled_at);
-  return (
-    scheduledAt >= new Date(slot.window_start) &&
-    scheduledAt < new Date(slot.window_end)
-  );
-};
+// One authority, in the CRM's own calendar days — see
+// sessionFallsInSlotWeek.ts for what every copy of this used to get wrong.
+const isFulfilling = sessionFallsInSlotWeek;
 
 // An appointment that happened outside every planned 1:1 week.
 //
@@ -122,7 +118,7 @@ const attachEvidence = (
       outside.find(
         (session) =>
           !claimed.has(String(session.id)) &&
-          new Date(session.scheduled_at) >= new Date(week.slot.window_start),
+          crmDayAtOrAfter(session.scheduled_at, week.slot.window_start),
       ) ?? null;
     if (evidence) claimed.add(String(evidence.id));
     return { ...week, evidence };
@@ -182,7 +178,10 @@ const computeSlotStatus = (
     };
   }
 
-  const slotHasClosed = new Date(slot.window_end) <= now;
+  // Closed once the CRM's own day has reached the exclusive end — not
+  // once UTC has, which is six hours early and closed a week while Leif
+  // still had an evening of it left.
+  const slotHasClosed = crmDayAtOrAfter(now, slot.window_end);
   return {
     slot,
     status: slotHasClosed ? "unresolved" : "pending",
@@ -233,7 +232,7 @@ export const computeClientSessionCadenceSummary = (
       );
       if (
         firstSlotOfPeriod &&
-        new Date(firstSlotOfPeriod.window_start) <= now
+        crmDayAtOrAfter(now, firstSlotOfPeriod.window_start)
       ) {
         currentServicePeriod = period;
       }

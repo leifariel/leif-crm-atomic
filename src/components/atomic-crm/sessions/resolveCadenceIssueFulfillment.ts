@@ -2,6 +2,7 @@ import type { DataProvider, Identifier } from "ra-core";
 
 import type { ClientSession, EnrollmentExpectedSession } from "../types";
 import { completeResolveCadenceIssueTask } from "./resolveCadenceIssueTask";
+import { sessionFallsInSlotWeek } from "./sessionFallsInSlotWeek";
 
 export type ResolveCadenceIssueFulfillmentResult =
   | { status: "resolved" }
@@ -12,17 +13,9 @@ export type ResolveCadenceIssueFulfillmentResult =
   // as ensureCadenceIssueOpen.ts's own "left-classified".
   | { status: "left-classified" };
 
-const isFulfilling = (
-  session: ClientSession,
-  slot: Pick<EnrollmentExpectedSession, "window_start" | "window_end">,
-) => {
-  if (session.status === "cancelled" || session.no_show_at) return false;
-  const scheduledAt = new Date(session.scheduled_at);
-  return (
-    scheduledAt >= new Date(slot.window_start) &&
-    scheduledAt < new Date(slot.window_end)
-  );
-};
+// One authority, in the CRM's own calendar days — see
+// sessionFallsInSlotWeek.ts for what this used to get wrong.
+const isFulfilling = sessionFallsInSlotWeek;
 
 // Client + Session Operations cadence correction (exception state-
 // machine fix): the other half of ensureCadenceIssueOpen.ts — called

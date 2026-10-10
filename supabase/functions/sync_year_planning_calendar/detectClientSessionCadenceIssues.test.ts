@@ -343,3 +343,218 @@ describe("a week that left the canonical schedule", () => {
     );
   });
 });
+
+// THE PRODUCTION FAILURE, reproduced.
+//
+// Leif's Dashboard told her four real clients had skipped the week of
+// Oct 4–7. All four had sat with her that week. The weeks come from a
+// Google Calendar all-day event — Oct 4 through Oct 7, stored as
+// window_start 2026-10-04 and window_end 2026-10-08 (exclusive) — and
+// the fulfilment check built UTC midnights out of those Denver dates:
+//
+//   scheduled_at >= "2026-10-04T00:00:00.000Z"
+//   scheduled_at <  "2026-10-08T00:00:00.000Z"
+//
+// which is Denver Oct 3 18:00 → Oct 7 18:00. Every session booked on the
+// last afternoon or evening of a week fell outside the window the CRM was
+// testing, and the CRM concluded nobody had booked.
+//
+// A week is a set of calendar days. These are the days.
+describe("the week of Oct 4–7, in the CRM's own timezone", () => {
+  const OCT_WEEK = {
+    id: 1,
+    enrollment_id: 100,
+    ordinal: 1,
+    window_start: "2026-10-04",
+    window_end: "2026-10-08",
+  };
+  const AFTER_THE_WEEK = new Date("2026-10-10T12:00:00.000Z");
+
+  const withSessionAt = (scheduledAt: string) =>
+    seedWith({
+      enrollment_expected_sessions: [OCT_WEEK],
+      client_sessions: [
+        {
+          id: 1,
+          enrollment_id: 100,
+          status: "booked",
+          scheduled_at: scheduledAt,
+          no_show_at: null,
+        },
+      ],
+    });
+
+  it("counts a session on the last evening of the week — the exact production failure", async () => {
+    // Wednesday 7 October, 6pm in Denver. In UTC that is already the 8th,
+    // and the old comparison lost it.
+    fakeDb.current = withSessionAt("2026-10-08T00:00:00.000Z");
+
+    const result = await detectClientSessionCadenceIssues(AFTER_THE_WEEK);
+
+    expect(result.issuesCreated).toBe(0);
+    expect(result.tasksCreated).toBe(0);
+    expect(fakeDb.current!.tables.tasks).toHaveLength(0);
+  });
+
+  it("counts a session late on the last night of the week", async () => {
+    // 7 October, 11pm Denver — 8 October 05:00 UTC.
+    fakeDb.current = withSessionAt("2026-10-08T05:00:00.000Z");
+
+    const result = await detectClientSessionCadenceIssues(AFTER_THE_WEEK);
+
+    expect(result.issuesCreated).toBe(0);
+  });
+
+  it("counts a session first thing on the first day of the week", async () => {
+    // 4 October, 00:30 Denver — 06:30 UTC the same day.
+    fakeDb.current = withSessionAt("2026-10-04T06:30:00.000Z");
+
+    const result = await detectClientSessionCadenceIssues(AFTER_THE_WEEK);
+
+    expect(result.issuesCreated).toBe(0);
+  });
+
+  it("does NOT count the evening before the week started", async () => {
+    // 3 October, 8pm Denver — 4 October 02:00 UTC. The old comparison
+    // counted this as inside the week, which is the same bug pointing the
+    // other way: a session in a week Leif had not opened yet silently
+    // answered for one she had.
+    fakeDb.current = withSessionAt("2026-10-04T02:00:00.000Z");
+
+    const result = await detectClientSessionCadenceIssues(AFTER_THE_WEEK);
+
+    expect(result.issuesCreated).toBe(1);
+    expect(fakeDb.current!.tables.tasks[0]!.text).toContain("Oct 4–7");
+  });
+
+  it("still raises the week when nobody booked anything", async () => {
+    fakeDb.current = seedWith({
+      enrollment_expected_sessions: [OCT_WEEK],
+    });
+
+    const result = await detectClientSessionCadenceIssues(AFTER_THE_WEEK);
+
+    expect(result.issuesCreated).toBe(1);
+    expect(result.tasksCreated).toBe(1);
+    expect(fakeDb.current!.tables.tasks[0]!.text).toContain(
+      "No session booked for week of Oct 4–7",
+    );
+  });
+});
+
+// AND IT CONVERGES.
+//
+// Creating the right task once is not enough. A booking that arrives after
+// the task did — a late Acuity sync, a session booked after the week
+// closed — must close the question, and so must a task that was wrong to
+// begin with. Leif must never be left tidying up a state the system can
+// prove is stale.
+describe("a question that answers itself", () => {
+  const WEEK = {
+    id: 1,
+    enrollment_id: 100,
+    ordinal: 1,
+    window_start: "2026-09-13",
+    window_end: "2026-09-17",
+  };
+
+  it("closes the open task when the booking turns up later", async () => {
+    fakeDb.current = seedWith({ enrollment_expected_sessions: [WEEK] });
+
+    const first = await detectClientSessionCadenceIssues(NOW);
+    expect(first.tasksCreated).toBe(1);
+    const taskId = fakeDb.current!.tables.tasks[0]!.id;
+
+    // The sync catches up and the session appears.
+    fakeDb.current!.tables.client_sessions.push({
+      id: 1,
+      enrollment_id: 100,
+      status: "booked",
+      scheduled_at: "2026-09-15T18:00:00.000Z",
+      no_show_at: null,
+    });
+
+    const second = await detectClientSessionCadenceIssues(NOW);
+
+    expect(second.issuesResolved).toBe(1);
+    expect(second.issuesCreated).toBe(0);
+    expect(second.tasksCreated).toBe(0);
+    // The issue is resolved, and the Task is DONE rather than deleted —
+    // having been asked is part of the history.
+    const issue = fakeDb.current!.tables.client_session_cadence_issues[0]!;
+    expect(issue.resolved_at).not.toBeNull();
+    expect(issue.classification ?? null).toBeNull();
+    const task = fakeDb.current!.tables.tasks.find((t) => t.id === taskId)!;
+    expect(task.done_date).not.toBeNull();
+    // The pair tasks_completion_agreement_check enforces, and the only
+    // completed status tasks_status_check allows. Asserted literally
+    // because a plausible-looking "done" is rejected by Postgres and the
+    // Task would silently stay open on the Dashboard.
+    expect(task.status).toBe("completed");
+    // One task, start to finish. Never a second.
+    expect(fakeDb.current!.tables.tasks).toHaveLength(1);
+    // And the history SAYS so, in the vocabulary the kind check allows:
+    // created, then resolved. Asserted because an invented kind is
+    // rejected by Postgres and the trail would silently be lost.
+    expect(
+      fakeDb.current!.tables.client_session_cadence_issue_events.map(
+        (event) => event.kind,
+      ),
+    ).toEqual(["created", "resolved"]);
+  });
+
+  it("never overwrites an answer Leif already gave", async () => {
+    // She classified the week herself — a known skip, say. A session
+    // appearing later does not get to overrule that.
+    fakeDb.current = seedWith({
+      enrollment_expected_sessions: [WEEK],
+      client_session_cadence_issues: [
+        {
+          id: 7,
+          enrollment_id: 100,
+          enrollment_expected_session_id: 1,
+          resolved_at: "2026-09-18T00:00:00.000Z",
+          classification: "known_skip",
+        },
+      ],
+      client_sessions: [
+        {
+          id: 1,
+          enrollment_id: 100,
+          status: "booked",
+          scheduled_at: "2026-09-15T18:00:00.000Z",
+          no_show_at: null,
+        },
+      ],
+    });
+
+    const result = await detectClientSessionCadenceIssues(NOW);
+
+    expect(result.issuesResolved).toBe(0);
+    const issue = fakeDb.current!.tables.client_session_cadence_issues[0]!;
+    expect(issue.classification).toBe("known_skip");
+    expect(issue.resolved_at).toBe("2026-09-18T00:00:00.000Z");
+  });
+
+  it("is convergent when run twice over", async () => {
+    fakeDb.current = seedWith({
+      enrollment_expected_sessions: [WEEK],
+      client_sessions: [
+        {
+          id: 1,
+          enrollment_id: 100,
+          status: "booked",
+          scheduled_at: "2026-09-15T18:00:00.000Z",
+          no_show_at: null,
+        },
+      ],
+    });
+
+    await detectClientSessionCadenceIssues(NOW);
+    const again = await detectClientSessionCadenceIssues(NOW);
+
+    expect(again.issuesCreated).toBe(0);
+    expect(again.issuesResolved).toBe(0);
+    expect(fakeDb.current!.tables.tasks).toHaveLength(0);
+  });
+});

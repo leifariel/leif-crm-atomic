@@ -19,7 +19,14 @@ and must not be touched, committed, pushed or deployed: the payment commit
 lives uncommitted in the main checkout's working tree (§8b-builder).
 
 **Application decision expansion is PRODUCTION ACCEPTED** (§8f), with all six
-Kit tags mapped. **The queue after it:** (1) programme configuration polish —
+Kit tags mapped.
+
+**A production bug is repaired and waiting to deploy (§8k).** Four clients were
+falsely told they had skipped the week of Oct 4–7; a week is now compared as
+calendar days in Denver, and the four tasks close themselves on the next
+calendar sync after deploy. Nothing to run by hand.
+
+**The queue after it:** (1) programme configuration polish —
 real payment-option configuration, "Edit cohort" naming, and waitlist
 quick-add scroll preservation; (2) sales-call workflow polish — passed-but-unlogged calls stay at the
 top reading "Call passed", a call-impressions / reminders field saved
@@ -4104,6 +4111,106 @@ parent record for every reference. For a deal that was a no-op; for any
 parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
+
+## 8k. False "no session booked" tasks — REPAIRED, AWAITING DEPLOY (2026-10-10)
+
+**The report.** Four clients — Denise Cormier, Ava Frotton, Jess Beauchamp and
+Gina McNamara — were each flagged "No session booked for week of Oct 4–7". Leif
+confirmed all four had their session that week. Four at once in one week is the
+signature of a shared cause, and it was one.
+
+**The cause, exactly.** `enrollment_expected_sessions.window_start` /
+`window_end` are **DATEs** (`"2026-10-04"`), because a Year Tracking week comes
+from a Google Calendar all-day event. Six places asked "did this session happen
+that week?" by comparing instants:
+
+```
+new Date(session.scheduled_at) >= new Date(slot.window_start)
+```
+
+`new Date("2026-10-04")` is midnight **UTC**, which is 6pm the previous day in
+Denver. So the window actually tested was **Denver Oct 3 18:00 → Oct 7 18:00**
+for a week whose real days are Oct 4–7. **Any session in the last six hours of
+a week's final day fell outside it** — and Leif's 1:1s are afternoons and
+evenings, which is why it hit four people in the same week rather than one.
+
+**The rule, now said once.** A week is a set of **calendar days in the CRM's own
+timezone**, and a session belongs to it when the day it happened on is one of
+them. No instant arithmetic, no offsets, nothing that moves when the clocks do —
+the same reasoning `sales_calls.scheduled_on` has used all along
+(`(scheduled_at at time zone 'America/Denver')::date`).
+
+**Where it lives.** `src/components/atomic-crm/sessions/sessionFallsInSlotWeek.ts`,
+mirrored at `supabase/functions/_shared/sessionFallsInSlotWeek.ts` because Edge
+Functions cannot import from `src/`. All six call sites route through it:
+`detectClientSessionCadenceIssues.ts` (the task generator),
+`resolveCadenceIssueFulfillment.ts`, `findNoShowSessionInSlot.ts`,
+`findEnrollmentExpectedSessionForSession.ts` and
+`computeClientSessionCadenceSummary.ts` (four comparisons in that last one).
+
+**`window_end` is EXCLUSIVE**, as Google Calendar means it: Oct 4 → Oct 8 covers
+Oct 4, 5, 6 and 7. `cadenceWeekLabel.ts` already warned about this in its own
+header and got it right; the comparison did not.
+
+**It converges — Leif never tidies up after it.** The detector now *resolves* a
+slot it finds fulfilled, instead of only declining to raise a new question:
+`resolveFulfilledSlot()` closes the issue, writes a `resolved` event and
+completes the Task (**never deletes it** — having been asked is part of the
+history, §4). So the four production tasks close **by themselves** on the next
+calendar sync after deploy; no manual SQL, and nothing to undo if the deploy is
+re-run. A **human classification is never overwritten** — if Leif has already
+answered a week, a session appearing later does not overrule her.
+
+**Two further defects the real-Postgres proof caught**, both invisible to the
+unit tests because the fake DB enforces no constraints:
+
+- the Task was completed with `status: "done"`, which `tasks_status_check`
+  **rejects** (`pending | waiting | completed | cancelled`), and
+  `tasks_completion_agreement_check` ties `done_date` to it. The Task would have
+  stayed open on the Dashboard with the write silently failing.
+- the history event used an invented `kind: "resolved_by_fulfillment"`, which
+  `client_session_cadence_issue_events_kind_check` rejects. The trail would have
+  been lost. It now writes `kind: "resolved"` — the same event the in-app path
+  (`resolveCadenceIssueFulfillment.ts`) writes. `note` stays empty: that column
+  holds Leif's own words.
+
+Both are now asserted literally in the unit test, because a plausible-looking
+value is exactly what slipped through.
+
+**Proof.** 16 unit tests on the detector, including the production week in
+Denver terms (a session at `2026-10-08T00:00:00Z` = Denver 7 Oct 18:00 must
+count; `2026-10-04T02:00:00Z` = Denver 3 Oct 20:00 must not). Restoring the old
+comparison fails exactly the three tests that describe the production symptom.
+
+`contracts/sessions/oneWeekAuthority.test.ts` is the **drift guard**: one table
+of vectors run through **both** copies, so neither can drift from the other or
+from the rule. It includes the 1 November 2026 DST week, where an offset-based
+answer changes and a calendar-day answer does not. Breaking one copy alone fails
+it.
+
+**SYSTEM GREEN** — the real detector against the real clean-room Postgres, not a
+stand-in: an active LE client with the Oct 4–8 week closed → detector raises the
+issue and the Task reading *"No session booked for week of Oct 4–7"* → the
+Acuity session is inserted at Denver 7 Oct 18:00 → the next detector pass
+resolves it (`issuesResolved 1`) → independent DB readback shows the Task
+`completed` with `done_date` set, the issue resolved with no classification, the
+history `created -> resolved`, and **one** Task start to finish → a third pass
+changes nothing. With the bug restored, the same proof fails with the Task still
+`pending` — the exact production symptom.
+
+**No email can be sent from this.** Audited: the cadence task type appears only
+in UI surfaces and the detector, and `sync_year_planning_calendar` has no send
+path. A false "skipped week" never reached a client.
+
+**Production verification.** `scratchpad/session-forensics.sql` is one complete
+read-only query that explains each of the four tasks — the sessions the CRM
+holds, the Denver day versus the UTC day, what the old rule said, and how many
+open questions the repair would close. **Run it before and after the deploy:**
+afterwards, the four should be gone and section 5 should report none remaining.
+A week with **no** imported session is a real question, not a false one, and
+stays open.
+
+---
 
 ## 8j. Two things the production preflight found (2026-10-10)
 

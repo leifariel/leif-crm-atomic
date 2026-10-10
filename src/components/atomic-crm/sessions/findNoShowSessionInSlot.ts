@@ -1,4 +1,5 @@
 import type { ClientSession, EnrollmentExpectedSession } from "../types";
+import { sessionScheduledInSlotWeek } from "./sessionFallsInSlotWeek";
 
 // Shared between ClientShow's own Attention row and
 // CadenceResolutionModal.tsx — a no-show'd session inside the slot gets
@@ -12,7 +13,5 @@ export const findNoShowSessionInSlot = (
 ) =>
   sessions.find(
     (session) =>
-      session.no_show_at &&
-      new Date(session.scheduled_at) >= new Date(slot.window_start) &&
-      new Date(session.scheduled_at) < new Date(slot.window_end),
+      session.no_show_at && sessionScheduledInSlotWeek(session, slot),
   ) ?? null;

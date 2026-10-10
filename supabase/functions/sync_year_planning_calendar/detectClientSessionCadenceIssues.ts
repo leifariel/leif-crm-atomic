@@ -1,11 +1,16 @@
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 import { formatCadenceWeekLabel } from "../_shared/cadenceWeekLabel.ts";
+import { sessionFallsInSlotWeek } from "../_shared/sessionFallsInSlotWeek.ts";
 
 const RESOLVE_CADENCE_TASK_TYPE = "resolve_client_session_cadence";
 
 export type DetectionResult = {
   issuesCreated: number;
   tasksCreated: number;
+  // Open questions closed because the week turned out to have a session
+  // after all. Normally zero; above zero when a booking arrived late, or
+  // when a false one is being cleared.
+  issuesResolved: number;
 };
 
 // Client + Session Operations cadence correction: the comparison pass
@@ -31,11 +36,70 @@ export type DetectionResult = {
 // classifies anything itself (known_skip/rescheduled/missed_ghosted are
 // exclusively Leif's own decision, made on the resolution page) —
 // "Atomic handles certainty, Leif handles ambiguity."
+/**
+ * A slot that has a qualifying session must carry no open question.
+ *
+ * Only an issue nobody has judged is touched: a real classification is
+ * Leif's answer about what happened, and a session showing up later never
+ * silently overwrites it — the same rule ensureCadenceIssueOpen.ts and
+ * resolveCadenceIssueFulfillment.ts already hold on the app side.
+ *
+ * The Task is COMPLETED rather than deleted, so the history of having been
+ * asked survives.
+ */
+const resolveFulfilledSlot = async (
+  enrollmentId: number,
+  slotId: number,
+): Promise<number> => {
+  const { data: issues } = await supabaseAdmin
+    .from("client_session_cadence_issues")
+    .select("id, resolved_at, classification")
+    .eq("enrollment_id", enrollmentId)
+    .eq("enrollment_expected_session_id", slotId);
+  const issue = issues?.[0];
+  if (!issue || issue.classification != null || issue.resolved_at != null) {
+    return 0;
+  }
+
+  const nowIso = new Date().toISOString();
+  await supabaseAdmin
+    .from("client_session_cadence_issues")
+    .update({ resolved_at: nowIso })
+    .eq("id", issue.id);
+  await supabaseAdmin.from("client_session_cadence_issue_events").insert({
+    cadence_issue_id: issue.id,
+    // The same event the in-app path writes when a late booking fulfils
+    // the week (resolveCadenceIssueFulfillment.ts). The history says
+    // "resolved" with no classification, which is exactly what happened:
+    // nobody judged it, a session turned up. The note column stays empty
+    // because it holds Leif's own words.
+    kind: "resolved",
+    occurred_at: nowIso,
+  });
+
+  const { data: tasks } = await supabaseAdmin
+    .from("tasks")
+    .select("id, done_date")
+    .eq("cadence_issue_id", issue.id);
+  for (const task of tasks ?? []) {
+    if (task.done_date) continue;
+    await supabaseAdmin
+      .from("tasks")
+      // A Task completes as done_date + "completed" — the pair
+      // tasks_completion_agreement_check insists on, and the one every
+      // other resolution path writes (resolveCadenceIssueTask.ts).
+      .update({ done_date: nowIso, status: "completed" })
+      .eq("id", task.id);
+  }
+  return 1;
+};
+
 export const detectClientSessionCadenceIssues = async (
   now: Date = new Date(),
 ): Promise<DetectionResult> => {
   let issuesCreated = 0;
   let tasksCreated = 0;
+  let issuesResolved = 0;
   const todayStr = now.toISOString().slice(0, 10);
 
   const { data: offers } = await supabaseAdmin
@@ -48,7 +112,9 @@ export const detectClientSessionCadenceIssues = async (
       )
       .map((offer) => offer.id),
   );
-  if (trackedOfferIds.size === 0) return { issuesCreated, tasksCreated };
+  if (trackedOfferIds.size === 0) {
+    return { issuesCreated, tasksCreated, issuesResolved };
+  }
 
   // The Dashboard's own Needs Attention bucket filters Tasks by
   // `sales_id: identity?.id` — a Task created with no sales_id never
@@ -103,14 +169,23 @@ export const detectClientSessionCadenceIssues = async (
       .eq("enrollment_id", enrollment.id);
 
     for (const slot of closedSlots) {
-      const fulfilled = (sessions ?? []).some(
-        (session) =>
-          session.status !== "cancelled" &&
-          !session.no_show_at &&
-          session.scheduled_at >= `${slot.window_start}T00:00:00.000Z` &&
-          session.scheduled_at < `${slot.window_end}T00:00:00.000Z`,
+      // One authority for "did this session happen that week", in the
+      // CRM's own calendar days. This comparison used to build UTC
+      // midnights out of Denver dates, which moved the whole window six
+      // hours early and lost every session booked on the last afternoon
+      // of a week — see _shared/sessionFallsInSlotWeek.ts.
+      const fulfilled = (sessions ?? []).some((session) =>
+        sessionFallsInSlotWeek(session, slot),
       );
-      if (fulfilled) continue;
+      if (fulfilled) {
+        // AND IT CONVERGES. A slot that is fulfilled must not be left
+        // carrying an open question: the booking may have arrived after
+        // the task did, or the task may have been wrong in the first
+        // place. Either way the honest state is resolved, and leaving it
+        // to Leif to tidy up by hand is leaving the CRM lying to her.
+        issuesResolved += await resolveFulfilledSlot(enrollment.id, slot.id);
+        continue;
+      }
 
       const { data: existingIssues } = await supabaseAdmin
         .from("client_session_cadence_issues")
@@ -219,5 +294,5 @@ export const detectClientSessionCadenceIssues = async (
     }
   }
 
-  return { issuesCreated, tasksCreated };
+  return { issuesCreated, tasksCreated, issuesResolved };
 };

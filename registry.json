@@ -310,6 +310,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/sessions/sessionFallsInSlotWeek.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/sessions/reverseClientSessionNoShow.ts",
           "type": "registry:component"
         },
