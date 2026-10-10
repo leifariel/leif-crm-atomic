@@ -1,6 +1,9 @@
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 import { formatCadenceWeekLabel } from "../_shared/cadenceWeekLabel.ts";
-import { sessionFallsInSlotWeek } from "../_shared/sessionFallsInSlotWeek.ts";
+import {
+  resolveSlotFulfillment,
+  type ExpectedWindowRef,
+} from "../_shared/cadenceFulfillment.ts";
 
 const RESOLVE_CADENCE_TASK_TYPE = "resolve_client_session_cadence";
 
@@ -11,6 +14,10 @@ export type DetectionResult = {
   // after all. Normally zero; above zero when a booking arrived late, or
   // when a false one is being cleared.
   issuesResolved: number;
+  // Weeks where an unlinked session could belong to more than one expected
+  // week, so the pass refused to spend it on either. Normally zero; above
+  // zero means Leif has something to look at that no rule can settle.
+  ambiguousSlots: number;
 };
 
 // Client + Session Operations cadence correction: the comparison pass
@@ -94,12 +101,52 @@ const resolveFulfilledSlot = async (
   return 1;
 };
 
+/**
+ * Every live expected week belonging to any Enrollment of this contact and
+ * this offer.
+ *
+ * This is the set an UNLINKED session could be mistaken for. A returning
+ * client with a second Enrollment on the same programme is the case that
+ * makes it necessary: one hour must never be spent on two weeks, so when
+ * more than one of these claims the same session the pass refuses to credit
+ * either. Production has no overlapping weeks today; this is the guard that
+ * keeps it that way.
+ */
+const expectedWindowsForContactOffer = async (
+  contactId: number,
+  offerId: number,
+): Promise<ExpectedWindowRef[]> => {
+  const { data: deals } = await supabaseAdmin
+    .from("deals")
+    .select("id")
+    .eq("contact_id", contactId)
+    .eq("offer_id", offerId);
+  const dealIds = (deals ?? []).map((deal) => deal.id);
+  if (dealIds.length === 0) return [];
+
+  const { data: enrollments } = await supabaseAdmin
+    .from("enrollments")
+    .select("id")
+    .in("opportunity_id", dealIds);
+  const enrollmentIds = (enrollments ?? []).map((enrollment) => enrollment.id);
+  if (enrollmentIds.length === 0) return [];
+
+  const { data: windows } = await supabaseAdmin
+    .from("enrollment_expected_sessions")
+    .select("id, enrollment_id, window_start, window_end")
+    .in("enrollment_id", enrollmentIds)
+    // A retired week left the canonical schedule and can own nothing.
+    .is("retired_at", null);
+  return (windows ?? []) as ExpectedWindowRef[];
+};
+
 export const detectClientSessionCadenceIssues = async (
   now: Date = new Date(),
 ): Promise<DetectionResult> => {
   let issuesCreated = 0;
   let tasksCreated = 0;
   let issuesResolved = 0;
+  let ambiguousSlots = 0;
   const todayStr = now.toISOString().slice(0, 10);
 
   const { data: offers } = await supabaseAdmin
@@ -113,7 +160,7 @@ export const detectClientSessionCadenceIssues = async (
       .map((offer) => offer.id),
   );
   if (trackedOfferIds.size === 0) {
-    return { issuesCreated, tasksCreated, issuesResolved };
+    return { issuesCreated, tasksCreated, issuesResolved, ambiguousSlots };
   }
 
   // The Dashboard's own Needs Attention bucket filters Tasks by
@@ -163,21 +210,53 @@ export const detectClientSessionCadenceIssues = async (
     );
     if (closedSlots.length === 0) continue;
 
+    // EVERY session this person had for THIS programme — not only the ones
+    // whose enrollment_id happens to be filled in. Asking by enrollment_id
+    // is what told three real clients they had skipped a week they had
+    // attended; see _shared/cadenceFulfillment.ts.
     const { data: sessions } = await supabaseAdmin
       .from("client_sessions")
-      .select("id, status, scheduled_at, no_show_at")
-      .eq("enrollment_id", enrollment.id);
+      .select(
+        "id, contact_id, offer_id, enrollment_id, status, scheduled_at, no_show_at",
+      )
+      .eq("contact_id", deal.contact_id)
+      .eq("offer_id", deal.offer_id);
+
+    const owner = {
+      enrollment_id: enrollment.id,
+      contact_id: deal.contact_id,
+      offer_id: deal.offer_id,
+    };
+
+    // Only an UNLINKED session can be mistaken for a different week, so
+    // the set of weeks that might claim one is fetched only when such a
+    // session exists. For everybody whose provenance is intact this costs
+    // nothing.
+    const hasUnlinked = (sessions ?? []).some(
+      (session) => session.enrollment_id == null,
+    );
+    const candidateWindows: ExpectedWindowRef[] = hasUnlinked
+      ? await expectedWindowsForContactOffer(deal.contact_id, deal.offer_id)
+      : [];
 
     for (const slot of closedSlots) {
-      // One authority for "did this session happen that week", in the
-      // CRM's own calendar days. This comparison used to build UTC
-      // midnights out of Denver dates, which moved the whole window six
-      // hours early and lost every session booked on the last afternoon
-      // of a week — see _shared/sessionFallsInSlotWeek.ts.
-      const fulfilled = (sessions ?? []).some((session) =>
-        sessionFallsInSlotWeek(session, slot),
-      );
-      if (fulfilled) {
+      const outcome = resolveSlotFulfillment({
+        slot,
+        owner,
+        sessions: sessions ?? [],
+        candidateWindows,
+      });
+
+      if (outcome.status === "ambiguous") {
+        // Two expected weeks could each own that hour. Crediting one would
+        // be a guess, and crediting both would spend the same session
+        // twice — so this pass asserts nothing about this week, changes
+        // nothing, and reports it. Leif handles ambiguity.
+        ambiguousSlots++;
+        continue;
+      }
+
+      if (outcome.status === "fulfilled") {
         // AND IT CONVERGES. A slot that is fulfilled must not be left
         // carrying an open question: the booking may have arrived after
         // the task did, or the task may have been wrong in the first
@@ -294,5 +373,5 @@ export const detectClientSessionCadenceIssues = async (
     }
   }
 
-  return { issuesCreated, tasksCreated, issuesResolved };
+  return { issuesCreated, tasksCreated, issuesResolved, ambiguousSlots };
 };

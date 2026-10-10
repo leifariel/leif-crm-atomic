@@ -15,16 +15,27 @@ function createFakeDb(seed: Record<string, Row[]>) {
 
   // A column the row never set and a column explicitly null are the same
   // absence, which is what `.is(col, null)` asks about.
-  const matches = (row: Row, eqFilters: [string, unknown][]) =>
-    eqFilters.every(([field, value]) => (row[field] ?? null) === value);
+  const matches = (
+    row: Row,
+    eqFilters: [string, unknown][],
+    inFilters: [string, unknown[]][] = [],
+  ) =>
+    eqFilters.every(([field, value]) => (row[field] ?? null) === value) &&
+    inFilters.every(([field, values]) => values.includes(row[field]));
 
   const from = (table: string) => {
     tables[table] ??= [];
     const eqFilters: [string, unknown][] = [];
+    const inFilters: [string, unknown[]][] = [];
 
     const builder = {
       eq(field: string, value: unknown) {
         eqFilters.push([field, value]);
+        return builder;
+      },
+      // The candidate-window lookup asks for several enrollments at once.
+      in(field: string, values: unknown[]) {
+        inFilters.push([field, values]);
         return builder;
       },
       // `.is(col, null)` is how a retired slot is skipped — the detection
@@ -35,12 +46,16 @@ function createFakeDb(seed: Record<string, Row[]>) {
         return builder;
       },
       maybeSingle() {
-        const found = tables[table].find((r) => matches(r, eqFilters));
+        const found = tables[table].find((r) =>
+          matches(r, eqFilters, inFilters),
+        );
         return Promise.resolve({ data: found ?? null, error: null });
       },
       limit(n: number) {
         return Promise.resolve({
-          data: tables[table].filter((r) => matches(r, eqFilters)).slice(0, n),
+          data: tables[table]
+            .filter((r) => matches(r, eqFilters, inFilters))
+            .slice(0, n),
           error: null,
         });
       },
@@ -56,19 +71,38 @@ function createFakeDb(seed: Record<string, Row[]>) {
           }),
         };
       },
+      // Chainable, because a write may carry more than one filter: the
+      // link reconciler guards its update with .is("enrollment_id", null)
+      // so it can only ever fill a blank, and a fake that ignored the
+      // second filter would let that guard rot.
       update(patch: Row) {
-        return {
+        const writeFilters: [string, unknown][] = [];
+        const apply = () => {
+          tables[table] = tables[table].map((r) =>
+            writeFilters.every(([f, v]) => (r[f] ?? null) === v)
+              ? { ...r, ...patch }
+              : r,
+          );
+          return { data: null, error: null };
+        };
+        const chain = {
           eq(field: string, value: unknown) {
-            tables[table] = tables[table].map((r) =>
-              r[field] === value ? { ...r, ...patch } : r,
-            );
-            return Promise.resolve({ data: null, error: null });
+            writeFilters.push([field, value]);
+            return chain;
+          },
+          is(field: string, value: unknown) {
+            writeFilters.push([field, value]);
+            return chain;
+          },
+          then(resolve: (v: unknown) => void) {
+            resolve(apply());
           },
         };
+        return chain;
       },
       then(resolve: (v: unknown) => void) {
         resolve({
-          data: tables[table].filter((r) => matches(r, eqFilters)),
+          data: tables[table].filter((r) => matches(r, eqFilters, inFilters)),
           error: null,
         });
       },
@@ -92,6 +126,21 @@ vi.mock("../_shared/supabaseAdmin.ts", () => ({
 import { detectClientSessionCadenceIssues } from "./detectClientSessionCadenceIssues";
 
 const NOW = new Date("2026-09-25T00:00:00.000Z");
+
+// A session states three things about itself: the person, the programme,
+// and — as PROVENANCE, which may be absent — the Enrollment. Asking only
+// about the third is the bug cadenceFulfillment.ts exists for, so the
+// first two are always present here, exactly as they are in the database.
+const session = (over: Partial<Row> = {}): Row => ({
+  id: 1,
+  contact_id: 1,
+  offer_id: 1,
+  enrollment_id: 100,
+  status: "booked",
+  scheduled_at: "2026-09-15T18:00:00.000Z",
+  no_show_at: null,
+  ...over,
+});
 
 const seedWith = (overrides: Partial<Record<string, Row[]>> = {}) =>
   createFakeDb({
@@ -164,15 +213,7 @@ describe("detectClientSessionCadenceIssues", () => {
           window_end: "2026-09-17",
         },
       ],
-      client_sessions: [
-        {
-          id: 1,
-          enrollment_id: 100,
-          status: "booked",
-          scheduled_at: "2026-09-15T18:00:00.000Z",
-          no_show_at: null,
-        },
-      ],
+      client_sessions: [session()],
     });
 
     const result = await detectClientSessionCadenceIssues(NOW);
@@ -373,15 +414,7 @@ describe("the week of Oct 4–7, in the CRM's own timezone", () => {
   const withSessionAt = (scheduledAt: string) =>
     seedWith({
       enrollment_expected_sessions: [OCT_WEEK],
-      client_sessions: [
-        {
-          id: 1,
-          enrollment_id: 100,
-          status: "booked",
-          scheduled_at: scheduledAt,
-          no_show_at: null,
-        },
-      ],
+      client_sessions: [session({ scheduled_at: scheduledAt })],
     });
 
   it("counts a session on the last evening of the week — the exact production failure", async () => {
@@ -466,13 +499,7 @@ describe("a question that answers itself", () => {
     const taskId = fakeDb.current!.tables.tasks[0]!.id;
 
     // The sync catches up and the session appears.
-    fakeDb.current!.tables.client_sessions.push({
-      id: 1,
-      enrollment_id: 100,
-      status: "booked",
-      scheduled_at: "2026-09-15T18:00:00.000Z",
-      no_show_at: null,
-    });
+    fakeDb.current!.tables.client_sessions.push(session());
 
     const second = await detectClientSessionCadenceIssues(NOW);
 
@@ -517,15 +544,7 @@ describe("a question that answers itself", () => {
           classification: "known_skip",
         },
       ],
-      client_sessions: [
-        {
-          id: 1,
-          enrollment_id: 100,
-          status: "booked",
-          scheduled_at: "2026-09-15T18:00:00.000Z",
-          no_show_at: null,
-        },
-      ],
+      client_sessions: [session()],
     });
 
     const result = await detectClientSessionCadenceIssues(NOW);
@@ -539,15 +558,7 @@ describe("a question that answers itself", () => {
   it("is convergent when run twice over", async () => {
     fakeDb.current = seedWith({
       enrollment_expected_sessions: [WEEK],
-      client_sessions: [
-        {
-          id: 1,
-          enrollment_id: 100,
-          status: "booked",
-          scheduled_at: "2026-09-15T18:00:00.000Z",
-          no_show_at: null,
-        },
-      ],
+      client_sessions: [session()],
     });
 
     await detectClientSessionCadenceIssues(NOW);
@@ -556,5 +567,269 @@ describe("a question that answers itself", () => {
     expect(again.issuesCreated).toBe(0);
     expect(again.issuesResolved).toBe(0);
     expect(fakeDb.current!.tables.tasks).toHaveLength(0);
+  });
+});
+
+// A SESSION THE DETECTOR COULD NOT SEE.
+//
+// The question is "did she have a session for this programme that week",
+// and it was asked as "is there a client_sessions row whose enrollment_id
+// equals this enrollment". Those are not the same question, because
+// enrollment_id is nullable provenance: 62 of 255 production rows carried
+// null, and three real clients were told they had skipped a week they had
+// attended. These tests are that shape, at the level that writes the Task.
+describe("an unlinked session is still a session", () => {
+  const WEEK_SEP = {
+    id: 1,
+    enrollment_id: 100,
+    ordinal: 1,
+    window_start: "2026-09-13",
+    window_end: "2026-09-17",
+  };
+  // Denver Tue 15 Sep 12:00 — squarely inside that week.
+  const UNLINKED = {
+    enrollment_id: null,
+    scheduled_at: "2026-09-15T18:00:00.000Z",
+  };
+
+  it("asks no question when the only evidence is unlinked", async () => {
+    fakeDb.current = seedWith({
+      enrollment_expected_sessions: [WEEK_SEP],
+      client_sessions: [session(UNLINKED)],
+    });
+
+    const result = await detectClientSessionCadenceIssues(NOW);
+
+    expect(result.issuesCreated).toBe(0);
+    expect(result.tasksCreated).toBe(0);
+    expect(fakeDb.current!.tables.tasks).toHaveLength(0);
+  });
+
+  it("closes the stale false Task once the unlinked session is understood", async () => {
+    // Exactly Ava's, Denise's and Gina's production state: an open
+    // question, a pending Task, and the session sitting there all along.
+    fakeDb.current = seedWith({
+      enrollment_expected_sessions: [WEEK_SEP],
+      client_sessions: [session(UNLINKED)],
+      client_session_cadence_issues: [
+        {
+          id: 7,
+          enrollment_id: 100,
+          enrollment_expected_session_id: 1,
+          resolved_at: null,
+          classification: null,
+        },
+      ],
+      tasks: [
+        {
+          id: 70,
+          contact_id: 1,
+          type: "resolve_client_session_cadence",
+          text: "Ada Lovelace · No session booked for week of Sep 13–16",
+          status: "pending",
+          done_date: null,
+          cadence_issue_id: 7,
+        },
+      ],
+    });
+
+    const result = await detectClientSessionCadenceIssues(NOW);
+
+    expect(result.issuesResolved).toBe(1);
+    const issue = fakeDb.current!.tables.client_session_cadence_issues[0]!;
+    expect(issue.resolved_at).not.toBeNull();
+    // Nothing was judged — no classification was invented on her behalf.
+    expect(issue.classification ?? null).toBeNull();
+    const task = fakeDb.current!.tables.tasks.find((t) => t.id === 70)!;
+    expect(task.done_date).not.toBeNull();
+    expect(task.status).toBe("completed");
+    // The history says what happened, in the vocabulary the kind check allows.
+    expect(
+      fakeDb.current!.tables.client_session_cadence_issue_events.map(
+        (event) => event.kind,
+      ),
+    ).toEqual(["resolved"]);
+    // One Task, never a second.
+    expect(fakeDb.current!.tables.tasks).toHaveLength(1);
+  });
+
+  it("is convergent: a second pass resolves nothing twice", async () => {
+    fakeDb.current = seedWith({
+      enrollment_expected_sessions: [WEEK_SEP],
+      client_sessions: [session(UNLINKED)],
+      client_session_cadence_issues: [
+        {
+          id: 7,
+          enrollment_id: 100,
+          enrollment_expected_session_id: 1,
+          resolved_at: null,
+          classification: null,
+        },
+      ],
+    });
+
+    await detectClientSessionCadenceIssues(NOW);
+    const again = await detectClientSessionCadenceIssues(NOW);
+
+    expect(again.issuesResolved).toBe(0);
+    expect(again.issuesCreated).toBe(0);
+    expect(
+      fakeDb.current!.tables.client_session_cadence_issue_events,
+    ).toHaveLength(1);
+    expect(fakeDb.current!.tables.tasks).toHaveLength(0);
+  });
+
+  it.each([
+    {
+      why: "it belongs to the other programme",
+      over: { ...UNLINKED, offer_id: 2 },
+    },
+    { why: "it was cancelled", over: { ...UNLINKED, status: "cancelled" } },
+    {
+      why: "she did not show",
+      over: { ...UNLINKED, no_show_at: "2026-09-15T19:00:00.000Z" },
+    },
+    {
+      why: "it is somebody else's session",
+      over: { ...UNLINKED, contact_id: 2 },
+    },
+  ])("still asks the question when $why", async ({ over }) => {
+    fakeDb.current = seedWith({
+      enrollment_expected_sessions: [WEEK_SEP],
+      client_sessions: [session(over)],
+    });
+
+    const result = await detectClientSessionCadenceIssues(NOW);
+
+    expect(result.issuesCreated).toBe(1);
+    expect(result.tasksCreated).toBe(1);
+  });
+
+  it("refuses to spend one hour on two weeks", async () => {
+    // A returning client: a second Enrollment on the same programme whose
+    // expected week also contains that day. Nothing can say which week the
+    // hour belongs to, so the pass asserts nothing about either.
+    fakeDb.current = seedWith({
+      deals: [
+        { id: 10, offer_id: 1, contact_id: 1 },
+        { id: 11, offer_id: 1, contact_id: 1 },
+      ],
+      enrollments: [
+        {
+          id: 100,
+          opportunity_id: 10,
+          start_date: "2026-08-01",
+          status: "active",
+        },
+        {
+          id: 101,
+          opportunity_id: 11,
+          start_date: "2026-09-01",
+          status: "active",
+        },
+      ],
+      enrollment_expected_sessions: [
+        WEEK_SEP,
+        // Overlaps, and has not closed yet, so only the first week is judged.
+        {
+          id: 2,
+          enrollment_id: 101,
+          ordinal: 1,
+          window_start: "2026-09-14",
+          window_end: "2026-10-01",
+        },
+      ],
+      client_sessions: [session(UNLINKED)],
+    });
+
+    const result = await detectClientSessionCadenceIssues(NOW);
+
+    expect(result.ambiguousSlots).toBe(1);
+    // Nothing invented, nothing closed, nothing asked.
+    expect(result.issuesCreated).toBe(0);
+    expect(result.issuesResolved).toBe(0);
+    expect(fakeDb.current!.tables.tasks).toHaveLength(0);
+  });
+
+  it("never overwrites a classification Leif entered herself", async () => {
+    fakeDb.current = seedWith({
+      enrollment_expected_sessions: [WEEK_SEP],
+      client_sessions: [session(UNLINKED)],
+      client_session_cadence_issues: [
+        {
+          id: 7,
+          enrollment_id: 100,
+          enrollment_expected_session_id: 1,
+          resolved_at: "2026-09-18T00:00:00.000Z",
+          classification: "known_skip",
+        },
+      ],
+    });
+
+    const result = await detectClientSessionCadenceIssues(NOW);
+
+    expect(result.issuesResolved).toBe(0);
+    const issue = fakeDb.current!.tables.client_session_cadence_issues[0]!;
+    expect(issue.classification).toBe("known_skip");
+    expect(issue.resolved_at).toBe("2026-09-18T00:00:00.000Z");
+  });
+});
+
+// THE FOUR, at the level that writes the Task.
+//
+// Three clear and one remains. A repair that clears all four is not a
+// repair, it is a way of never being asked again.
+describe("the four production cases, end to end", () => {
+  const WEEK_OCT = {
+    id: 1,
+    enrollment_id: 100,
+    ordinal: 1,
+    window_start: "2026-10-04",
+    window_end: "2026-10-08",
+  };
+  const OCTOBER = new Date("2026-10-10T12:00:00.000Z");
+
+  it.each([
+    {
+      who: "Ava Frotton",
+      at: "2026-10-05T17:00:00.000Z",
+      when: "Mon 5 Oct 11:00 MT",
+    },
+    {
+      who: "Denise Cormier",
+      at: "2026-10-07T20:00:00.000Z",
+      when: "Wed 7 Oct 14:00 MT, the final day",
+    },
+    {
+      who: "Gina McNamara",
+      at: "2026-10-04T17:00:00.000Z",
+      when: "Sun 4 Oct 11:00 MT, the first day",
+    },
+  ])("$who — $when — no question is asked", async ({ at }) => {
+    fakeDb.current = seedWith({
+      enrollment_expected_sessions: [WEEK_OCT],
+      client_sessions: [session({ enrollment_id: null, scheduled_at: at })],
+    });
+
+    const result = await detectClientSessionCadenceIssues(OCTOBER);
+
+    expect(result.issuesCreated).toBe(0);
+    expect(fakeDb.current!.tables.tasks).toHaveLength(0);
+  });
+
+  it("Jess Beauchamp — nothing that week — the question stands", async () => {
+    fakeDb.current = seedWith({
+      enrollment_expected_sessions: [WEEK_OCT],
+      // Her nearest booking is the week after, and it is linked.
+      client_sessions: [session({ scheduled_at: "2026-10-12T18:00:00.000Z" })],
+    });
+
+    const result = await detectClientSessionCadenceIssues(OCTOBER);
+
+    expect(result.issuesCreated).toBe(1);
+    expect(result.tasksCreated).toBe(1);
+    const task = fakeDb.current!.tables.tasks[0]!;
+    expect(task.status).toBe("pending");
+    expect(task.text).toContain("No session booked for week of Oct 4–7");
   });
 });
