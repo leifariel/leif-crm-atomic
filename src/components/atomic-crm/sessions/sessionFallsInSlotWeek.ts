@@ -34,7 +34,24 @@
 // rule — including the DST week, where an offset-based answer changes and
 // a calendar-day answer does not.
 
-import type { ClientSession, EnrollmentExpectedSession } from "../types";
+// The SHAPES this needs, not the app's full row types.
+//
+// It used to `Pick` from ClientSession and EnrollmentExpectedSession, which
+// made the two mirrored copies differ in their types even while agreeing on
+// every answer — and made the authority refuse a caller that knows a
+// session's status only as a string. It compares against "cancelled" and
+// reads two date columns; that is all it needs to be told. Structural types
+// also make this file and its _shared mirror identical but for the import
+// line, which is what the drift contract is really asserting.
+type ClientSession = {
+  scheduled_at: string;
+  status?: string | null;
+  no_show_at?: string | null;
+};
+type EnrollmentExpectedSession = {
+  window_start: string | null;
+  window_end: string | null;
+};
 
 const CRM_TIME_ZONE = "America/Denver";
 
