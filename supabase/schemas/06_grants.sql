@@ -26,8 +26,16 @@ grant all on function public.get_note_attachments_function_url() to anon;
 grant all on function public.get_note_attachments_function_url() to authenticated;
 grant all on function public.get_note_attachments_function_url() to service_role;
 
+-- The whole posture, stated rather than inherited. Production held only
+-- {postgres=X/postgres} because ALTER DEFAULT PRIVILEGES decides what a new
+-- function starts with and that depends on which role created it, so the
+-- users Edge Function's recovery branch got 42501 (20261010210000 fixed it).
+-- Revoke from public FIRST, then grant: a GRANT materialises the ACL and
+-- keeps the implicit PUBLIC grant rather than replacing it.
 revoke all on function public.get_user_id_by_email(text) from public;
-grant all on function public.get_user_id_by_email(text) to service_role;
+revoke all on function public.get_user_id_by_email(text) from anon;
+revoke all on function public.get_user_id_by_email(text) from authenticated;
+grant execute on function public.get_user_id_by_email(text) to service_role;
 
 grant all on function public.handle_company_saved() to anon;
 grant all on function public.handle_company_saved() to authenticated;

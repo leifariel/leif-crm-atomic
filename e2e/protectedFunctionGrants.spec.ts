@@ -30,10 +30,12 @@ import pinned from "../contracts/security/protectedFunctionGrants.json" with { t
 
 type Posture = {
   internalOnly: string[];
+  serviceRoleOnly: string[];
   publicExecutable: string[];
   unresolvedGrantTargets: string[];
 };
 
+const USERS_LOOKUP = "get_user_id_by_email(email text)";
 const ENQUEUE =
   "enqueue_kit_operation(p_contact_id bigint, p_application_id bigint, p_kind text, p_origin text, p_kit_tag_id bigint, p_kit_tag_name text, p_requested_by text, p_waitlist_invitation_id bigint)";
 
@@ -76,6 +78,28 @@ test.describe("protected function grants", () => {
       live.internalOnly,
       "enqueue_kit_operation is no longer internal-only. anon, authenticated or service_role can now execute it.",
     ).toContain(ENQUEUE);
+  });
+
+  test("the service_role-only functions are exactly the ones pinned", () => {
+    expect(live.serviceRoleOnly.sort(), regenerate).toEqual(
+      [...pinned.serviceRoleOnly].sort(),
+    );
+  });
+
+  test("get_user_id_by_email is callable by service_role and nobody else", () => {
+    // Named as well as pinned by set, because this one actually went wrong:
+    // nothing ever granted service_role, production held only
+    // {postgres=X/postgres}, and the users Edge Function's recovery branch —
+    // the one that fires when an auth account already exists — answered 500
+    // instead of looking the id up. 20261010210000 states the posture rather
+    // than inheriting it from ALTER DEFAULT PRIVILEGES.
+    expect(
+      live.serviceRoleOnly,
+      "get_user_id_by_email is no longer service_role-only: either service_role lost EXECUTE (the users recovery branch 500s again) or a browser role gained it.",
+    ).toContain(USERS_LOOKUP);
+    // And it is NOT reachable any other way.
+    expect(live.publicExecutable).not.toContain(USERS_LOOKUP);
+    expect(live.internalOnly).not.toContain(USERS_LOOKUP);
   });
 
   test("nothing new is SECURITY DEFINER and executable by the public", () => {

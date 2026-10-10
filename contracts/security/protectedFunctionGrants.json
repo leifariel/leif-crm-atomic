@@ -6,6 +6,8 @@
     "",
     "publicExecutable: SECURITY DEFINER, callable, and proacl IS NULL. Anyone may call these and they run as their owner. Deliberately not asserted empty: is_admin() is read by RLS policies and must be callable by whoever the policy is evaluated for, and it only ever reports on the caller.",
     "",
+    "serviceRoleOnly: SECURITY DEFINER, callable, and executable by service_role and nobody else — the internals an Edge Function may reach and a browser may not. get_user_id_by_email dropped out of this set in production because nothing ever granted service_role (ALTER DEFAULT PRIVILEGES decides what a new function starts with, and that depends on which role created it), so the users Edge Function recovery branch answered 500. 20261010210000 states the posture in the chain.",
+    "",
     "Browser-callable RPCs appear in neither list: they hold explicit grants, so they are not internal-only and not NULL-ACL.",
     "",
     "Regenerate with: node scripts/protectedFunctionGrants.mjs --e2e --write"
@@ -23,5 +25,17 @@
     "seed_enrollment_onboarding(p_enrollment_id bigint, p_due_at timestamp with time zone)"
   ],
   "publicExecutable": ["is_admin()"],
-  "unresolvedGrantTargets": []
+  "unresolvedGrantTargets": [],
+  "serviceRoleOnly": [
+    "claim_kit_sync_operations(p_limit integer)",
+    "get_user_id_by_email(email text)",
+    "invite_oldest_waiting(p_offer_id bigint, p_cohort_id bigint, p_limit integer, p_entry_ids bigint[], p_label text)",
+    "materialize_application_responses(p_snapshot_id bigint)",
+    "reconcile_kit_identities()",
+    "reconcile_testimonial_tasks()",
+    "record_external_identity(p_provider text, p_provider_account_id text, p_external_user_id text, p_display_identifier text, p_metadata jsonb, p_observed_at timestamp with time zone, p_email text)",
+    "retry_kit_application_sync(p_application_id bigint)",
+    "set_historical_migration_mode(enable boolean)",
+    "testimonial_sequence_enrollments()"
+  ]
 }

@@ -4201,20 +4201,31 @@ functions, so asserting that broadly would be noise. SECURITY DEFINER **and**
 callable is the combination that matters, and browser-callable RPCs appear in
 neither set because they hold explicit grants.
 
-### Two production/clean-room divergences found, NOT changed
+### Two production/clean-room divergences — one repaired, one left alone
 
-Reported rather than repaired, because their provenance is environment
-configuration rather than the migration chain:
+The provenance is environment configuration rather than the migration chain —
+`ALTER DEFAULT PRIVILEGES` gives functions created by `supabase_admin` EXECUTE
+to anon/authenticated/service_role, while one created by `postgres` starts with
+only `{postgres=X/postgres}`. So the posture depended on which role happened to
+create the function, in which environment. One of the two had a caller and is
+repaired; the other does not and is deliberately untouched:
 
-- `get_user_id_by_email(text)` and `materialize_application_responses(bigint)`
-  have `service_role` EXECUTE in a clean room and **not** in production. No
-  migration ever grants them to `service_role`; the clean room gets it from
-  `ALTER DEFAULT PRIVILEGES` at creation time, which production (where these
-  were created earlier) did not have. `06_grants.sql` declares the grant for
-  `get_user_id_by_email`, so the declaration and production disagree.
-  **Live impact, narrow:** `supabase/functions/users/index.ts` calls
-  `get_user_id_by_email` as `service_role` on the recovery path that fires when
-  an auth account already exists — in production that path returns a 500.
+- **`get_user_id_by_email(text)` — REPAIRED by `20261010210000`.** Proved as the
+  role itself: `set local role service_role` then calling it returned
+  `42501 permission denied` in production, so the recovery branch in
+  `supabase/functions/users/index.ts` — the one that fires when an auth account
+  already exists — answered **500** instead of looking the id up. `06_grants.sql`
+  had declared `service_role` access all along; nothing ever granted it. The
+  migration states the whole posture explicitly (revoke public/anon/authenticated,
+  then grant service_role — in that order, for the reason above) so it no longer
+  depends on a default. Clean room after the repair:
+  `{postgres=X/postgres,service_role=X/postgres}`, with anon, authenticated and
+  PUBLIC all refused at runtime.
+- **`materialize_application_responses(bigint)` — LEFT ALONE, on purpose.** Same
+  divergence, no runtime caller: nothing in TypeScript calls it, and the only SQL
+  reference is an error *hint* string inside `reject_application_response_mutation`.
+  Granting `service_role` would widen a surface nothing needs, so production
+  stays as it is. `06_grants.sql` declares nothing for it either way.
 - `is_admin()` has `proacl = NULL` in production and an explicit ACL in a clean
   room. Effective access is identical; only the representation differs.
 

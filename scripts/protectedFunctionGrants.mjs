@@ -22,6 +22,13 @@
 //     the functions only the database itself may call. A function that loses
 //     its revokes DROPS OUT of this set, which is exactly the regression.
 //
+//   serviceRoleOnly — SECURITY DEFINER, callable, and executable by
+//     service_role and nobody else. These are the internals an Edge
+//     Function may reach and a browser may not. A function that loses its
+//     service_role grant DROPS OUT (get_user_id_by_email did, and the users
+//     recovery branch answered 500); one that gains PUBLIC or a browser role
+//     drops out too.
+//
 //   publicExecutable — SECURITY DEFINER, callable, and executable by
 //     PUBLIC. BOTH ways of getting there count: `proacl IS NULL`, the
 //     default a freshly created function carries, and an explicit GRANT TO
@@ -93,6 +100,17 @@ select jsonb_build_object(
        and not has_function_privilege('anon', c.oid, 'EXECUTE')
        and not has_function_privilege('authenticated', c.oid, 'EXECUTE')
        and not has_function_privilege('service_role', c.oid, 'EXECUTE')),
+    '[]'::jsonb),
+  'serviceRoleOnly', coalesce((
+    select jsonb_agg(signature order by signature)
+      from callable c
+     where c.prosecdef
+       and has_function_privilege('service_role', c.oid, 'EXECUTE')
+       and not has_function_privilege('anon', c.oid, 'EXECUTE')
+       and not has_function_privilege('authenticated', c.oid, 'EXECUTE')
+       and not (c.proacl is null
+                or exists (select 1 from aclexplode(c.proacl) a
+                            where a.grantee = 0 and a.privilege_type = 'EXECUTE'))),
     '[]'::jsonb),
   'publicExecutable', coalesce((
     select jsonb_agg(signature order by signature)
@@ -176,6 +194,7 @@ const unresolved =
 
 const posture = {
   internalOnly: live.internalOnly ?? [],
+  serviceRoleOnly: live.serviceRoleOnly ?? [],
   publicExecutable: live.publicExecutable ?? [],
   // Signatures 06_grants.sql names that no function in the database has.
   // Each one is a grant or revoke that silently does nothing.

@@ -1,0 +1,42 @@
+-- THE USERS RECOVERY PATH CAN ASK AGAIN.
+--
+-- `supabase/functions/users/index.ts` adds a CRM user. When
+-- `auth.admin.createUser` answers `email_exists` — the auth account is
+-- already there, the `sales` row is not — it recovers by looking the user id
+-- up through `get_user_id_by_email(text)`, as `service_role`.
+--
+-- In production that call returned
+--
+--   42501: permission denied for function get_user_id_by_email
+--
+-- so the branch fell into `if (!data || error)` and answered 500 "Internal
+-- Server Error" instead of recovering. Proved by running it as the role
+-- itself, read-only and uncommitted.
+--
+-- WHY IT WAS MISSING, and it is the mirror image of 20261010200000. There,
+-- a GRANT kept an implicit PUBLIC grant nobody wanted. Here, nothing ever
+-- granted `service_role` at all: `20260127140209` revoked EXECUTE from anon,
+-- authenticated and public, and no migration has mentioned the function
+-- since. A clean room nonetheless HAS the grant, because
+-- `ALTER DEFAULT PRIVILEGES` gives functions created by `supabase_admin`
+-- EXECUTE to anon/authenticated/service_role, while one created by
+-- `postgres` gets only `{postgres=X/postgres}` — which is exactly what
+-- production holds. So the posture depended on which role happened to create
+-- the function, in which environment.
+--
+-- `06_grants.sql` has declared `service_role` access all along. This states
+-- it in the chain, so it no longer depends on a default.
+--
+-- ORDER MATTERS, and it is the lesson 20261010200000 paid for: revoke from
+-- PUBLIC **first**, then grant. A GRANT materialises the ACL and bakes the
+-- implicit PUBLIC grant in rather than replacing it.
+--
+-- Deterministic and replay-safe: revoking an absent privilege is a no-op and
+-- the grant is idempotent, so this replays into an empty database without
+-- asserting anything about production's rows. It names ONE signature and
+-- widens nothing else — `materialize_application_responses(bigint)` has the
+-- same divergence and is deliberately left alone, because nothing calls it.
+revoke all on function public.get_user_id_by_email(text) from public;
+revoke all on function public.get_user_id_by_email(text) from anon;
+revoke all on function public.get_user_id_by_email(text) from authenticated;
+grant execute on function public.get_user_id_by_email(text) to service_role;
