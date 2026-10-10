@@ -523,6 +523,51 @@ const getDataProviderWithCustomMethods = () => {
       }
       return data as Record<string, unknown>;
     },
+    // Who could be invited off a waitlist, and why somebody could not.
+    // Reads; writes nothing. The same function the invitation itself uses,
+    // so the list Leif confirms is produced by the rules that do the work.
+    async waitlistInvitationCandidates(input: {
+      offerId: Identifier;
+      cohortId: Identifier | null;
+    }) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "waitlist_invitation_candidates",
+        { p_offer_id: input.offerId, p_cohort_id: input.cohortId ?? null },
+      );
+      if (error) {
+        console.error("waitlist_invitation_candidates.error", error);
+        throw new Error("Could not read who is waiting");
+      }
+      return (data ?? []) as Record<string, unknown>[];
+    },
+    // THE SERVER DECIDES WHO. The browser sends how many, never which
+    // people — a list on screen can be stale, filtered or collapsed, and
+    // none of those may decide who gets an email. Writes the batch, the
+    // invitations and the Kit outbox rows in one transaction; Kit itself is
+    // called later by the worker.
+    async inviteOldestWaiting(input: {
+      offerId: Identifier;
+      cohortId: Identifier | null;
+      limit: number | null;
+      entryIds: Identifier[] | null;
+      label: string | null;
+    }) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "invite_oldest_waiting",
+        {
+          p_offer_id: input.offerId,
+          p_cohort_id: input.cohortId ?? null,
+          p_limit: input.limit,
+          p_entry_ids: input.entryIds,
+          p_label: input.label,
+        },
+      );
+      if (error) {
+        console.error("invite_oldest_waiting.error", error);
+        throw new Error("Could not queue those invitations");
+      }
+      return data as Record<string, unknown>;
+    },
     async setProgramKitTag(input: {
       offerId: Identifier;
       event: string;

@@ -58,6 +58,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/waitlist/waitlistInvitationActions.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/waitlist/waitlistEntryValidation.ts",
           "type": "registry:component"
         },
@@ -106,7 +110,7 @@
           "type": "registry:component"
         },
         {
-          "path": "src/components/atomic-crm/waitlist/InviteToBookDialog.tsx",
+          "path": "src/components/atomic-crm/waitlist/InviteToApplyDialog.tsx",
           "type": "registry:component"
         },
         {

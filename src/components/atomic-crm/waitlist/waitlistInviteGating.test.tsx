@@ -19,29 +19,34 @@ import type { WaitlistEntryRow } from "./useWaitlistEntries";
 // Until delivery exists, production must not offer an action whose plain
 // meaning is "these people have been invited".
 
-const rows: WaitlistEntryRow[] = [
-  {
-    entryId: 1,
-    contactId: 1,
-    name: "Wren Halloway",
-    email: "wren@example.invalid",
-    status: "waiting",
-    joinedAt: "2026-08-01T00:00:00.000Z",
-  } as WaitlistEntryRow,
-  {
-    entryId: 2,
-    contactId: 2,
-    name: "Rowan Vance",
-    email: "rowan@example.invalid",
-    status: "waiting",
-    joinedAt: "2026-08-02T00:00:00.000Z",
-  } as WaitlistEntryRow,
+// Six people, so the list is collapsed to its three-row preview — which is
+// the state Leif actually works in, and the state a selection has to
+// survive.
+const NAMES = [
+  "Wren Halloway",
+  "Rowan Vance",
+  "Juno Albright",
+  "Esme Carrow",
+  "Fen Darrow",
+  "Marlo Quist",
 ];
+const rows: WaitlistEntryRow[] = NAMES.map(
+  (name, index) =>
+    ({
+      entryId: index + 1,
+      contactId: index + 1,
+      name,
+      email: `person${index + 1}@example.invalid`,
+      status: "waiting",
+      joinedAt: `2026-08-0${index + 1}T00:00:00.000Z`,
+      cohortId: null,
+    }) as WaitlistEntryRow,
+);
 
 const renderSection = async (enableBulkInvite?: boolean) => {
   const dataProvider = createDataProvider({
     db: createCrmDb({
-      contacts: [buildContact({ id: 1 }), buildContact({ id: 2 })],
+      contacts: NAMES.map((_, index) => buildContact({ id: index + 1 })),
       offers: [
         {
           id: 1,
@@ -83,13 +88,16 @@ const renderSection = async (enableBulkInvite?: boolean) => {
   );
 };
 
-describe("bulk invite gating before Gmail delivery exists", () => {
-  it("offers no bulk invite action in production, so nobody can mistake prepared for sent", async () => {
-    // Production default: VITE_ENABLE_WAITLIST_INVITE_DELIVERY is unset.
+// The flag now defaults ON, because the thing it was waiting for exists:
+// a programme's Kit tag, delivered through the same outbox as every other
+// tag. What the flag still buys is a way to take the control off every
+// waitlist at once, which these tests hold it to.
+describe("bulk invite gating", () => {
+  it("offers no bulk invite action when delivery is switched off", async () => {
     const screen = await renderSection(false);
 
     const text = screen.container.textContent ?? "";
-    expect(text).not.toContain("Invite to Book");
+    expect(text).not.toContain("Invite to apply");
     expect(text).not.toContain("Select all");
     // No selection affordance at all.
     expect(
@@ -100,17 +108,59 @@ describe("bulk invite gating before Gmail delivery exists", () => {
     expect(text).toContain("Wren Halloway");
   });
 
-  it("exposes the bulk action once delivery is enabled, and says plainly that nothing is sent yet", async () => {
+  it("offers the oldest-N batch, and says what will actually happen", async () => {
     const screen = await renderSection(true);
 
-    await expect.element(screen.getByText("Select all")).toBeInTheDocument();
-    await screen.getByText("Select all").click();
-    await screen.getByRole("button", { name: /Invite to Book/ }).click();
+    // The ordinary batch: a number, and the server works out who.
+    await expect
+      .element(screen.getByLabelText("Invite oldest"))
+      .toHaveValue(25);
+    await screen
+      .getByRole("button", { name: "Invite to apply" })
+      .first()
+      .click();
 
     const dialog =
       screen.container.ownerDocument.querySelector('[role="dialog"]')
         ?.textContent ?? "";
-    // The review step never implies delivery.
-    expect(dialog).toContain("No email is sent yet");
+    // It names the tag that actually reaches the person, and it does not
+    // claim anybody has stopped waiting.
+    expect(dialog).toContain("Kit tag");
+    expect(dialog).toContain("Nobody stops being Waiting until Kit confirms");
+  });
+
+  it("can invite a hand-picked selection instead", async () => {
+    const screen = await renderSection(true);
+
+    await screen.getByText("Select all").click();
+    await expect
+      .element(screen.getByRole("button", { name: /Invite selected to apply/ }))
+      .toBeInTheDocument();
+  });
+
+  it("keeps a selection that the collapsed list cannot show", async () => {
+    // THE TRAP THIS EXISTS FOR. The list shows three of six, and a
+    // selection held by position — or rebuilt from the rendered rows —
+    // would quietly shrink to whatever happened to be on screen. Leif
+    // would then invite three people believing she had invited six.
+    const screen = await renderSection(true);
+
+    // Collapsed: three rows and a disclosure for the rest.
+    await expect
+      .element(screen.getByRole("button", { name: "3 more" }))
+      .toBeInTheDocument();
+
+    await screen.getByText("Select all").click();
+
+    // All six are selected, while only three are rendered.
+    await expect
+      .element(
+        screen.getByRole("button", { name: /Invite selected to apply · 6/ }),
+      )
+      .toBeInTheDocument();
+    expect(
+      screen.container.ownerDocument.querySelectorAll('[role="checkbox"]')
+        .length,
+    ).toBe(3);
   });
 });

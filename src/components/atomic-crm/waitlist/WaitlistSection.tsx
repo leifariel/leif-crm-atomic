@@ -17,7 +17,7 @@ import {
 } from "./waitlistConstants";
 import { WaitlistEntryActions } from "./WaitlistEntryActions";
 import { Checkbox } from "@/components/ui/checkbox";
-import { InviteToBookDialog } from "./InviteToBookDialog";
+import { InviteToApplyDialog, type InviteMode } from "./InviteToApplyDialog";
 import { isInvitable } from "./waitlistInvitations";
 import { isBulkInviteDeliveryEnabled } from "./waitlistInviteFeature";
 import { isImportProvenance } from "./isImportProvenance";
@@ -87,8 +87,13 @@ export const WaitlistSection = ({
 }) => {
   const translate = useTranslate();
   const [search, setSearch] = useState("");
+  // Held by entry id, never by position. Collapsing the list changes which
+  // rows are RENDERED and nothing else, so a selection survives it — which
+  // is the whole reason this is a Set of ids and not an index.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteMode, setInviteMode] = useState<InviteMode | null>(null);
+  // How many to invite. Leif's real batches are 25 and 30.
+  const [oldestCount, setOldestCount] = useState("25");
 
   // Hidden in production until Gmail delivery exists — a "prepared" batch
   // must never be presented as though people were actually invited.
@@ -160,25 +165,77 @@ export const WaitlistSection = ({
                   _: "Select all",
                 })}
           </Button>
-          {selectedEntries.length > 0 && (
-            <Button type="button" size="sm" onClick={() => setInviteOpen(true)}>
-              {translate("resources.waitlist_entries.invite.action", {
-                _: "Invite to Book",
-              })}{" "}
-              · {selectedEntries.length}
+          <div className="flex items-center gap-2">
+            {/* The ordinary batch: the oldest N still waiting. The number
+                is the whole instruction — the SERVER works out who they
+                are, because what is on screen may be collapsed, filtered
+                or simply from five minutes ago. */}
+            <label
+              className="text-xs text-muted-foreground"
+              htmlFor="waitlist-invite-oldest"
+            >
+              {translate("resources.waitlist_entries.invite.select_oldest", {
+                _: "Invite oldest",
+              })}
+            </label>
+            <Input
+              id="waitlist-invite-oldest"
+              type="number"
+              min={1}
+              max={500}
+              value={oldestCount}
+              onChange={(event) => setOldestCount(event.target.value)}
+              className="h-8 w-20 text-sm"
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={
+                !Number.isFinite(Number(oldestCount)) || Number(oldestCount) < 1
+              }
+              onClick={() =>
+                setInviteMode({
+                  kind: "oldest",
+                  count: Math.floor(Number(oldestCount)),
+                })
+              }
+            >
+              {translate("resources.waitlist_entries.invite.action_oldest", {
+                _: "Invite to apply",
+              })}
             </Button>
-          )}
+            {selectedEntries.length > 0 && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() =>
+                  setInviteMode({
+                    kind: "selected",
+                    entryIds: selectedEntries.map((entry) => entry.entryId),
+                  })
+                }
+              >
+                {translate("resources.waitlist_entries.invite.action", {
+                  _: "Invite selected to apply",
+                })}{" "}
+                · {selectedEntries.length}
+              </Button>
+            )}
+          </div>
         </div>
       )}
-      {canInvite && (
-        <InviteToBookDialog
-          open={inviteOpen}
-          onOpenChange={setInviteOpen}
+      {canInvite && inviteMode != null && (
+        <InviteToApplyDialog
+          open
+          onOpenChange={(next) => {
+            if (!next) setInviteMode(null);
+          }}
           offerId={offerId!}
           offerName={offerName!}
           cohortId={cohortId}
           cohortName={cohortName}
-          selected={selectedEntries}
+          mode={inviteMode}
           onConfirmed={() => setSelectedIds(new Set())}
         />
       )}

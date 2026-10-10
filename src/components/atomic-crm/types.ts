@@ -1,3 +1,4 @@
+import type { KitTagEvent } from "./applications/kitTagActions";
 import type { Identifier, RaRecord } from "ra-core";
 import type { ComponentType } from "react";
 
@@ -1374,7 +1375,10 @@ export type KitSyncFailureClass =
 // arbitrary number into the mapping that decides a future applicant's email.
 export type KitTagMapping = {
   offer_id: Identifier;
-  event: "applicant" | "approved" | "needs_higher_care" | "not_fit";
+  // Every event a programme can map, including the decision events and the
+  // waitlist invitation. It had drifted to the first four and stayed
+  // compiling because nothing read it narrowly.
+  event: KitTagEvent;
   kit_tag_id: number;
   kit_tag_name: string;
   // What happens AFTER this tag lands. Owner-stated, because Kit knows and

@@ -4105,6 +4105,116 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8h. Waitlist batch invitations — BUILT, NOT YET RUN (2026-10-10)
+
+Leif invites twenty-five people off the Living Example waitlist and thirty
+off Growing Yourself Up's when capacity reopens. The infrastructure for that
+is built and proven; **nobody has been invited and no production tag has
+been applied.** Migration `20261010120000`, deterministic, **159 total**.
+
+### What already existed, and was reused rather than rebuilt
+
+| | |
+|---|---|
+| `waitlist_invitation_batches` / `waitlist_invitations` | the invitation records, built so nobody is marked Invited because a checkbox was ticked |
+| `kit_sync_operations` | the durable outbox, with its evidence rules, failure classes and retry policy already proven by the applicant and decision paths |
+| `enqueue_kit_operation` | the one place an operation is created, including which address a person is reached at |
+| `kit_tag_mappings` | which Kit tag a programme means by an event — so no tag string is ever written into runtime code |
+
+What was missing was a way to DELIVER an invitation. The programme's own Kit
+tag is now that way.
+
+### The one rule everything serves
+
+**A person stops being Waiting when Kit has confirmed their tag, and at no
+other moment.** That is a trigger on the outbox, not something the worker
+remembers to do, because "the CRM said invited and Kit never heard" is the
+failure this design exists to make impossible. A Kit refusal leaves the
+person exactly where they were, with the reason recorded against their
+invitation.
+
+### The flow
+
+1. Leif asks for a number (25) or ticks specific rows.
+2. **The server decides who.** `invite_oldest_waiting()` locks the places,
+   works the list out from the database at that moment, writes the batch,
+   the invitations and one outbox row each — all in one transaction. Kit is
+   not called. The browser sends HOW MANY, never WHICH PEOPLE: a list on
+   screen can be stale, filtered, or collapsed to three rows.
+3. The existing Kit worker claims the outbox rows, creates/finds the
+   subscriber, applies the tag, and records the subscriber id Kit returned.
+4. The trigger turns a confirmed tag into a sent invitation and ends that
+   person's waiting.
+
+A hand-picked selection is still re-checked server-side: a selection is an
+instruction about who, never a permission to skip the rules.
+
+### Eligibility, and why somebody is passed over
+
+`waitlist_invitation_candidates()` answers both the preview and the run, so
+the list Leif confirms is produced by the rules that do the work. An
+exclusion is NAMED, never filtered away — "25 of 61 are eligible" is not
+something anybody can act on.
+
+`already-invited` · `invitation-in-flight` · `contact-missing` ·
+`do-not-engage` · `no-email` · `already-applied` · `already-a-client` ·
+`kit-refused-this-address-before`
+
+**An excluded person does not consume one of the requested N** — the request
+is for N people invited, not N rows read.
+
+**One place per person.** Somebody can hold a general place AND a place for
+a round; the database allows it (uniqueness is per person/programme/round)
+and the oldest of the two carries the invitation, so nobody is tagged twice.
+
+### Two things that are Leif's, not the CRM's
+
+**Kit subscriber state.** The CRM cannot read whether somebody unsubscribed,
+bounced or complained — Kit holds that and does not tell us. What it can see
+is that Kit REFUSED an address before (`failure_class = 'rejected'`), which
+is the class that means Kit will say the same thing again, and those people
+are excluded by name. The subscriber call itself is the existing canonical
+one, unchanged. Whether that call can reactivate an unsubscribed person is a
+question about Kit's own behaviour that this repository cannot answer, and it
+is open.
+
+**The same person on both lists.** `waitlist_invitation_overlap()` matches
+on the contact AND on the address, because one person can reach the CRM as
+two contacts and Kit only knows the address. If anybody is in both batches
+the preflight says **STOP — Leif decides**; two invitations to apply to two
+different things on the same morning is not a decision a batch may make.
+
+### Proof
+
+`e2e/waitlistBatchInvitations.spec.ts` — nine tests against real Postgres:
+the oldest ELIGIBLE taken with four ineligible people between them consuming
+nothing and each named; a programme with no mapping unable to send at all;
+Kit confirming → invited, Kit refusing → still waiting with the reason; the
+same batch run twice queuing nobody twice and moving on to the next person;
+a hand-picked selection re-checked; each programme using only its own tag
+and no Applicant tag; a refused address passed over afterwards with the
+history kept; one person waiting twice invited once; and the overlap
+surfaced.
+
+`waitlistInviteGating.test.tsx` — the batch UI, including **a selection of
+six surviving a list collapsed to three**: a selection held by position
+would quietly shrink to what is on screen, and Leif would invite three
+people believing she had invited six.
+
+### What has NOT happened
+
+No production tag. No real batch. The `waitlist_invited` mappings do not
+exist in production yet — Leif sets `LE_Waitlist_Invited` and
+`GYU_Waitlist_Invited` from each programme's own Kit box, and until she
+does, `invite_oldest_waiting` returns `not-configured` and sends nothing.
+
+A true clean-room Kit call was NOT performed: `KIT_API_KEY` does not exist
+in the clean room and the worker returns before claiming anything, which is
+the safety property that makes an accidental real call impossible. The
+worker path itself is unchanged from the applicant and decision paths; what
+is new is the trigger, and that is driven in the e2e exactly as the worker
+drives it.
+
 ## 8g. Programme configuration UX — PRODUCTION ACCEPTED 2026-10-10
 
 Accepted by Leif in production at `00b25c6a`; migration `20261009120000`

@@ -37,6 +37,10 @@ const EVENTS: Array<{ event: KitTagEvent; label: string }> = [
   // decision must never apply a tag an email automation may be hanging off.
   { event: "bespoke_accepted", label: "Bespoke Accepted" },
   { event: "bespoke_denied", label: "Bespoke Denied" },
+  // Inviting somebody off the waitlist to apply. A fact about the
+  // PROGRAMME, like the others — and deliberately not the Applicant tag,
+  // which means an application was actually submitted.
+  { event: "waitlist_invited", label: "Invited from the waitlist" },
 ];
 
 export const OfferKitSection = () => {

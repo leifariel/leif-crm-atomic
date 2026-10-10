@@ -18,7 +18,12 @@ export type KitTagEvent =
   | "not_fit"
   | "offered_other_programme"
   | "bespoke_accepted"
-  | "bespoke_denied";
+  | "bespoke_denied"
+  // Not an application event at all: inviting somebody off a waitlist to
+  // apply. It shares this union because it shares the mapping table — a
+  // programme says which Kit tag it means by an event, and that is the
+  // same question whether the event is a decision or an invitation.
+  | "waitlist_invited";
 
 export type AddKitTagResult = {
   status:

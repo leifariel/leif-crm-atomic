@@ -1,4 +1,8 @@
 import {
+  candidatesMirror,
+  inviteMirror,
+} from "../../waitlist/waitlistInvitationActions";
+import {
   withLifecycleCallbacks,
   type CreateParams,
   type DataProvider,
@@ -920,6 +924,10 @@ export const createDataProvider = ({
       kitTagName: string;
       applicationId?: Identifier | null;
     }) => addKitTagMirror(dataProvider, input),
+    waitlistInvitationCandidates: async (input: never) =>
+      await candidatesMirror(dataProvider, input),
+    inviteOldestWaiting: async (input: never) =>
+      await inviteMirror(dataProvider, input),
     setOfferPaymentOption: async (draft: never) => {
       const result = await setOfferPaymentOptionMirror(dataProvider, draft);
       // Shaped exactly like the RPC's jsonb, field for field. The caller
