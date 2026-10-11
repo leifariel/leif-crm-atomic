@@ -4118,6 +4118,85 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8n. Saving a Kit tag has to save it — REPAIRED, AWAITING DEPLOY (2026-10-10)
+
+Leif set **"Invited from the waitlist"** on The Living Example to
+`LE_Waitlist_Invited`, got a toast saying it had saved, navigated away, came
+back to Edit programme — and the row read **"Not set"**. It had never been
+written.
+
+### The failing boundary
+
+`set_program_kit_tag()` carries its own list of acceptable events, and
+`waitlist_invited` was not on it. Proved against production, rolled back:
+
+```
+select public.set_program_kit_tag(1, 'waitlist_invited', 99999999, 'LE_Waitlist_Invited');
+  -> {"status": "event-invalid"}            -- and no row written
+select public.set_program_kit_tag(1, 'applicant', 24082722, 'MiniDD_Applicant');
+  -> {"status": "set"}                      -- for contrast
+```
+
+**Class A: the write never persisted.** Production held 14 mappings across 7
+events and **zero** `waitlist_invited` rows for either programme.
+
+### Why the UI said success
+
+The function refuses by **returning a named status**, deliberately — *"a named
+answer rather than a raised exception, so the picker can say what happened."*
+PostgREST therefore answered **200**, the provider checked only `if (error)`,
+and `OfferKitSection.save()` **discarded the return value entirely** and
+notified `"${tag.name} saved."`.
+
+So the success condition was *"the request did not error"* rather than *"the
+mapping was persisted."* A consequential write may only claim success when the
+authority says it persisted.
+
+### THE EVENT LIST LIVED IN THREE PLACES AND ONLY ONE WAS UPDATED
+
+`20261010120000` added `waitlist_invited` to the production table constraint
+and to the picker. It never reached:
+
+- `set_program_kit_tag`'s own whitelist — **the bug**
+- the DECLARATIVE constraint in `01_tables.sql`, which still said seven while
+  production said eight (the §8m drift class again)
+
+So the picker offered a slot the writer refused. `20261010220000` extends the
+writer; `01_tables.sql` now matches production.
+
+Only that one function needed it. `enqueue_kit_application_decision`,
+`review_application` and `enforce_bespoke_kit_separation` carry
+similar-looking lists, but those are application **statuses** and review
+**outcomes** — `review_application`'s even includes `do_not_engage`, which is
+not a mapping event at all. `waitlist_invited` is correctly absent from all
+three. This is the only function that validates a mapping EVENT.
+
+### The guard
+
+`contracts/applications/kitMappingEvents.test.ts` holds **all three sources to
+one set** — the table constraint, the writer's whitelist, and the picker's
+offered events — by **equality**, not "the writer knows at least what the table
+allows". A picker that can offer an event the writer refuses is the whole
+defect. It also asserts success is **allow-listed** in the UI (`set` /
+`cleared`), so a status added later is a failure by default rather than a
+silent success, and that every named refusal has a message for Leif.
+
+`e2e/kitMappingPersists.spec.ts` proves the round trip against real Postgres:
+set, read back fresh, change, clear, an unrecognised event refused with no row,
+and the ordinary mappings still persisting.
+
+**Sensitivity.** Writer back to seven events → 3 contract tests fail, including
+the named `waitlist_invited` one, and both e2e persistence tests fail.
+Constraint back to seven → 2 fail. Picker stops reading the status → *"the
+picker treats every one of them as a failure"* fails.
+
+The duplication is kept deliberately rather than removed: deriving the set from
+the constraint at runtime would mean catching `check_violation` and guessing
+which of this table's six constraints raised it. The list stays explicit and a
+test holds it honest.
+
+---
+
 ## 8m. A grant does not revoke PUBLIC — SCHEMA DRIFT + ONE REAL EXPOSURE (2026-10-10)
 
 ### What this slice was for, and the correction it owes

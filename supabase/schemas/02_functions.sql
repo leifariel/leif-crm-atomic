@@ -4150,9 +4150,15 @@ begin
   if not exists (select 1 from offers where id = p_offer_id) then
     return jsonb_build_object('status', 'offer-invalid');
   end if;
+  -- Every event kit_tag_mappings_event_check allows, and nothing else.
+  -- It allowed eight from 20261010120000 onward while this list still had
+  -- seven, so `waitlist_invited` was refused as 'event-invalid' and the
+  -- picker — which checked only for an error, not the status — said saved.
+  -- contracts/applications/kitMappingEvents.test.ts holds the two together.
   if p_event not in (
     'applicant', 'approved', 'needs_higher_care', 'not_fit',
-    'offered_other_programme', 'bespoke_accepted', 'bespoke_denied'
+    'offered_other_programme', 'bespoke_accepted', 'bespoke_denied',
+    'waitlist_invited'
   ) then
     return jsonb_build_object('status', 'event-invalid');
   end if;

@@ -2445,9 +2445,16 @@ create table if not exists public.kit_tag_mappings (
     kit_tag_name text not null,
     created_at timestamp with time zone not null default now(),
     primary key (offer_id, event),
+    -- 20261010120000 added 'waitlist_invited' to this constraint in the
+    -- database; the declaration said seven for a while afterwards, as did
+    -- set_program_kit_tag's own list, while the picker already offered the
+    -- eighth. So a tag Leif chose was refused as 'event-invalid' and the
+    -- toast still said saved. contracts/applications/kitMappingEvents.test.ts
+    -- now holds this constraint, that writer and that picker to one set.
     constraint kit_tag_mappings_event_check
         check (event in ('applicant', 'approved', 'needs_higher_care', 'not_fit',
-                         'offered_other_programme', 'bespoke_accepted', 'bespoke_denied')),
+                         'offered_other_programme', 'bespoke_accepted', 'bespoke_denied',
+                         'waitlist_invited')),
     constraint kit_tag_mappings_name_check check (btrim(kit_tag_name) <> ''),
     constraint kit_tag_mappings_tag_id_check check (kit_tag_id > 0)
 );

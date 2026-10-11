@@ -43,6 +43,26 @@ const EVENTS: Array<{ event: KitTagEvent; label: string }> = [
   { event: "waitlist_invited", label: "Invited from the waitlist" },
 ];
 
+// What the writer's refusals mean, in Leif's terms rather than the
+// database's. Only 'set' and 'cleared' are success; everything else means
+// nothing was written, and saying otherwise is the bug this exists for.
+const describeRefusal = (status: string | undefined): string => {
+  switch (status) {
+    case "tag-already-used-by-another-decision":
+      return "That tag is already used by another decision on this programme. Nothing was changed.";
+    case "tag-invalid":
+      return "That tag could not be used. Nothing was changed.";
+    case "offer-invalid":
+      return "This programme could not be found. Nothing was changed.";
+    case "event-invalid":
+      // Not something Leif can do anything about: the server does not
+      // recognise this slot, which means the CRM disagrees with itself.
+      return "The server did not recognise this Kit slot, so nothing was saved. This needs a fix, not a retry.";
+    default:
+      return "Could not save that Kit tag. Nothing was changed.";
+  }
+};
+
 export const OfferKitSection = () => {
   const record = useRecordContext<Offer>();
   const dataProvider = useDataProvider();
@@ -84,12 +104,27 @@ export const OfferKitSection = () => {
   const save = async (event: KitTagEvent, tag: KitTag | null) => {
     setSaving(true);
     try {
-      await setProgramKitTag(dataProvider, {
+      const result = await setProgramKitTag(dataProvider, {
         offerId: record.id,
         event,
         kitTagId: tag ? tag.id : null,
         kitTagName: tag ? tag.name : null,
       });
+
+      // BELIEVE THE AUTHORITY, NOT THE ABSENCE OF AN ERROR.
+      //
+      // set_program_kit_tag() refuses by returning a NAMED STATUS, on
+      // purpose, so a picker can say what happened. This did not read it: it
+      // awaited the call, saw no exception, and said "saved". Leif set
+      // "Invited from the waitlist", was told it saved, came back and found
+      // "Not set" — the writer had answered 'event-invalid' and nothing was
+      // ever written. A consequential write may only report success when the
+      // authority says it persisted.
+      if (result?.status !== "set" && result?.status !== "cleared") {
+        notify(describeRefusal(result?.status), { type: "error" });
+        return;
+      }
+
       notify(tag ? `${tag.name} saved.` : "Tag cleared.", { type: "info" });
       setEditing(null);
       refresh();
