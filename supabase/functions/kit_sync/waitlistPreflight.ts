@@ -46,6 +46,48 @@ export type ResolvedCandidate = {
   finalRank: number | null;
 };
 
+/**
+ * The one shape a resolved candidate has once it leaves this function —
+ * identical to the snapshot's own columns.
+ *
+ * THE BUG THIS EXISTS FOR. `ResolvedCandidate` is camelCase, and
+ * `saveSnapshot` translated it into the snapshot's column names on the way
+ * INTO the database, correctly. The RESPONSE skipped that translation and
+ * returned the camelCase object as it stood, while the browser's read model
+ * reads the snapshot's column names. So every field it looked for was
+ * absent: `raw.final_eligible === true` is false on a row that says
+ * `finalEligible`, and `raw.exclusion_reason ?? null` is null on a row that
+ * says `exclusionReason`.
+ *
+ * Leif asked for 25 for The Living Example and 30 for Growing Yourself Up.
+ * Both snapshots were written correctly — 25 and 30 people ranked and
+ * invitable, read back independently from production. Both dialogs said
+ * "Invite 0 people" and listed every single person as skipped with no
+ * reason given. One defect, three symptoms, and the skipped counts were the
+ * proof: 28 and 32, the FULL candidate lists, where a correct read would
+ * have shown the 3 and the 2 who were merely past the number asked for.
+ *
+ * The translation now has ONE definition, used by the database write and by
+ * the response, so what Leif is shown is by construction what was stored
+ * and what `invite_from_preflight()` will act on. Nothing in between gets
+ * to disagree.
+ */
+export const preflightRowShape = (row: ResolvedCandidate) => ({
+  waitlist_entry_id: row.waitlistEntryId,
+  contact_id: row.contactId,
+  contact_name: row.name,
+  email: row.email,
+  joined_at: row.joinedAt,
+  db_eligible: row.dbEligible,
+  db_exclusion_reason: row.dbExclusionReason,
+  kit_subscriber_id: row.kitSubscriberId,
+  kit_state: row.kitState,
+  kit_checked_at: row.kitCheckedAt,
+  final_eligible: row.finalEligible,
+  exclusion_reason: row.exclusionReason,
+  final_rank: row.finalRank,
+});
+
 export type PreflightDb = {
   candidates: (
     offerId: number,
@@ -196,6 +238,7 @@ export const runWaitlistPreflight = async ({
     resolved: safeFound,
     // Enough people, or not — said plainly rather than left to be counted.
     shortBy: Math.max(0, requested - safeFound),
-    rows,
+    // The stored shape, not the internal one. See preflightRowShape.
+    rows: rows.map(preflightRowShape),
   };
 };

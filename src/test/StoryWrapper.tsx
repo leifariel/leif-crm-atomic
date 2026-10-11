@@ -40,6 +40,7 @@ const baseSale: Sale = {
 // that matter for each scenario.
 export const createCrmDb = (overrides: Partial<Db> = {}): Db =>
   ({
+    applications: [],
     application_responses: [],
     application_notes: [],
     companies: [],
@@ -78,6 +79,11 @@ export const createCrmDb = (overrides: Partial<Db> = {}): Db =>
     waitlist_entries: [],
     waitlist_invitation_batches: [],
     waitlist_invitations: [],
+    // The preflight writes a snapshot before anybody confirms anything, so
+    // a db without these two cannot preview a batch at all — it throws, and
+    // the dialog says "Could not check who can be invited".
+    waitlist_invitation_preflights: [],
+    waitlist_invitation_preflight_candidates: [],
     sales_calls: [],
     sales_call_events: [],
     client_sessions: [],

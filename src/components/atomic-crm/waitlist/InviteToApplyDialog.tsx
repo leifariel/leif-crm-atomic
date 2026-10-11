@@ -20,7 +20,9 @@ import { humanizeCohortName } from "../cohorts/humanizeCohortName";
 import { formatISODateString } from "../deals/dealUtils";
 import type { KitTagMapping } from "../types";
 import {
+  invitableIn,
   inviteFromPreflight,
+  passedOverIn,
   runWaitlistPreflight,
   type InvitationExclusionReason,
   type PreflightResult,
@@ -152,16 +154,8 @@ export const InviteToApplyDialog = ({
     };
   }, [open, dataProvider, offerId, cohortId, mode]);
 
-  const askedEligible = (preflight?.rows ?? [])
-    .filter((row) => row.finalEligible)
-    .sort((a, b) => (a.finalRank ?? 0) - (b.finalRank ?? 0));
-  // Everybody passed over on the way down to that last person — database
-  // reasons and Kit reasons together, because to Leif they are one list.
-  const passedOver = (preflight?.rows ?? []).filter(
-    (row) =>
-      !row.finalEligible &&
-      row.exclusionReason !== "beyond-the-number-asked-for",
-  );
+  const askedEligible = invitableIn(preflight?.rows ?? []);
+  const passedOver = passedOverIn(preflight?.rows ?? []);
 
   const oldestJoined = askedEligible[0]?.joinedAt ?? null;
   const newestJoined =

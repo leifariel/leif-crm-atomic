@@ -5,7 +5,10 @@ import { createErrorResponse } from "../_shared/utils.ts";
 import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 import { createKitClient } from "../_shared/kit.ts";
 import { processKitSyncOperations } from "./kitSyncProcessor.ts";
-import { runWaitlistPreflight } from "./waitlistPreflight.ts";
+import {
+  preflightRowShape,
+  runWaitlistPreflight,
+} from "./waitlistPreflight.ts";
 
 // The only thing in this system that holds the Kit credential.
 //
@@ -320,21 +323,11 @@ Deno.serve(async (req: Request) =>
                 const { error: rowsError } = await supabaseAdmin
                   .from("waitlist_invitation_preflight_candidates")
                   .insert(
+                    // The same single translation the response uses, so the
+                    // row Leif sees and the row stored here are one shape.
                     input.rows.map((row) => ({
                       preflight_id: preflight.id,
-                      waitlist_entry_id: row.waitlistEntryId,
-                      contact_id: row.contactId,
-                      contact_name: row.name,
-                      email: row.email,
-                      joined_at: row.joinedAt,
-                      db_eligible: row.dbEligible,
-                      db_exclusion_reason: row.dbExclusionReason,
-                      kit_subscriber_id: row.kitSubscriberId,
-                      kit_state: row.kitState,
-                      kit_checked_at: row.kitCheckedAt,
-                      final_eligible: row.finalEligible,
-                      exclusion_reason: row.exclusionReason,
-                      final_rank: row.finalRank,
+                      ...preflightRowShape(row),
                     })),
                   );
                 if (rowsError) throw new Error(rowsError.message);

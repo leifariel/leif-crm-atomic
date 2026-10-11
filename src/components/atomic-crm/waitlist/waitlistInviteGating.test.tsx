@@ -43,7 +43,25 @@ const rows: WaitlistEntryRow[] = NAMES.map(
     }) as WaitlistEntryRow,
 );
 
-const renderSection = async (enableBulkInvite?: boolean) => {
+/**
+ * Waitlist places in the database, for the tests that need the preview to
+ * have real people in it. Default empty: the four gating tests above read
+ * the controls, not the preview.
+ */
+const seedEntries = () =>
+  NAMES.map((_, index) => ({
+    id: index + 1,
+    offer_id: 1,
+    cohort_id: null,
+    contact_id: index + 1,
+    status: "waiting",
+    joined_at: `2026-08-0${index + 1}T00:00:00.000Z`,
+  }));
+
+const renderSection = async (
+  enableBulkInvite?: boolean,
+  waitlistEntries: ReturnType<typeof seedEntries> = [],
+) => {
   const dataProvider = createDataProvider({
     db: createCrmDb({
       contacts: NAMES.map((_, index) => buildContact({ id: index + 1 })),
@@ -59,7 +77,7 @@ const renderSection = async (enableBulkInvite?: boolean) => {
           updated_at: "2026-01-01T00:00:00.000Z",
         },
       ],
-      waitlist_entries: [],
+      waitlist_entries: waitlistEntries,
       waitlist_invitation_batches: [],
       waitlist_invitations: [],
     } as any),
@@ -68,7 +86,7 @@ const renderSection = async (enableBulkInvite?: boolean) => {
   });
 
   await page.viewport(1280, 900);
-  return render(
+  const screen = await render(
     <MemoryRouter>
       <CoreAdminContext
         dataProvider={dataProvider}
@@ -86,6 +104,7 @@ const renderSection = async (enableBulkInvite?: boolean) => {
       </CoreAdminContext>
     </MemoryRouter>,
   );
+  return { screen, dataProvider };
 };
 
 // The flag now defaults ON, because the thing it was waiting for exists:
@@ -94,7 +113,7 @@ const renderSection = async (enableBulkInvite?: boolean) => {
 // waitlist at once, which these tests hold it to.
 describe("bulk invite gating", () => {
   it("offers no bulk invite action when delivery is switched off", async () => {
-    const screen = await renderSection(false);
+    const { screen } = await renderSection(false);
 
     const text = screen.container.textContent ?? "";
     expect(text).not.toContain("Invite to apply");
@@ -109,7 +128,7 @@ describe("bulk invite gating", () => {
   });
 
   it("offers the oldest-N batch, and says what will actually happen", async () => {
-    const screen = await renderSection(true);
+    const { screen } = await renderSection(true);
 
     // The ordinary batch: a number, and the server works out who.
     await expect
@@ -130,7 +149,7 @@ describe("bulk invite gating", () => {
   });
 
   it("can invite a hand-picked selection instead", async () => {
-    const screen = await renderSection(true);
+    const { screen } = await renderSection(true);
 
     await screen.getByText("Select all").click();
     await expect
@@ -143,7 +162,7 @@ describe("bulk invite gating", () => {
     // selection held by position — or rebuilt from the rendered rows —
     // would quietly shrink to whatever happened to be on screen. Leif
     // would then invite three people believing she had invited six.
-    const screen = await renderSection(true);
+    const { screen } = await renderSection(true);
 
     // Collapsed: three rows and a disclosure for the rest.
     await expect
@@ -162,5 +181,72 @@ describe("bulk invite gating", () => {
       screen.container.ownerDocument.querySelectorAll('[role="checkbox"]')
         .length,
     ).toBe(3);
+  });
+});
+
+// WHAT THE DIALOG SAYS, AND WHAT CANCEL DOES.
+//
+// Leif asked for 25 and for 30 and both dialogs said "Invite 0 people" over
+// snapshots holding 25 and 30 invitable people. The crossing itself is held
+// by contracts/waitlist/thePreviewIsTheSnapshot.test.ts; these two hold the
+// dialog that displays the result — that it states the number it was given,
+// and that the way out of it writes nothing.
+describe("the invite dialog", () => {
+  it("states the number of people it can actually invite", async () => {
+    const { screen } = await renderSection(true, seedEntries());
+
+    await screen
+      .getByRole("button", { name: "Invite to apply" })
+      .first()
+      .click();
+
+    // Six waiting, all reachable, none of them already applied — so six,
+    // and the confirm button agrees with the title.
+    await expect
+      .element(screen.getByRole("button", { name: "Invite 6" }))
+      .toBeInTheDocument();
+    const dialog =
+      screen.container.ownerDocument.querySelector('[role="dialog"]')
+        ?.textContent ?? "";
+    expect(dialog).toContain("Invite 6 people to apply to The Living Example");
+    // Nobody was listed as skipped, because nobody was.
+    expect(dialog).not.toContain("skipped");
+  });
+
+  it("sends nothing when Leif cancels", async () => {
+    const { screen, dataProvider } = await renderSection(true, seedEntries());
+
+    await screen
+      .getByRole("button", { name: "Invite to apply" })
+      .first()
+      .click();
+    // Non-vacuous: there were six real people it could have invited.
+    await expect
+      .element(screen.getByRole("button", { name: "Invite 6" }))
+      .toBeInTheDocument();
+
+    await screen.getByRole("button", { name: "Cancel" }).click();
+
+    const batches = await dataProvider.getList("waitlist_invitation_batches", {
+      pagination: { page: 1, perPage: 100 },
+      sort: { field: "id", order: "ASC" },
+      filter: {},
+    });
+    const invitations = await dataProvider.getList("waitlist_invitations", {
+      pagination: { page: 1, perPage: 100 },
+      sort: { field: "id", order: "ASC" },
+      filter: {},
+    });
+    expect(batches.data).toEqual([]);
+    expect(invitations.data).toEqual([]);
+    // And nobody stopped waiting.
+    const entries = await dataProvider.getList("waitlist_entries", {
+      pagination: { page: 1, perPage: 100 },
+      sort: { field: "id", order: "ASC" },
+      filter: {},
+    });
+    expect(entries.data.every((entry) => entry.status === "waiting")).toBe(
+      true,
+    );
   });
 });

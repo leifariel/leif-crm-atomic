@@ -4118,7 +4118,94 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8n. Saving a Kit tag has to save it — REPAIRED, AWAITING DEPLOY (2026-10-10)
+## 8o. Both waitlist previews said "Invite 0 people" — REPAIRED, NOT YET DEPLOYED (2026-10-11)
+
+Leif opened Invite to apply on The Living Example asking for 25, and on
+Growing Yourself Up asking for 30. Both dialogs said
+
+    Invite 0 people to apply to The Living Example    28 skipped
+    Invite 0 people to apply to Growing Yourself Up   32 skipped
+
+with every person listed as skipped and no reason shown against any of them.
+
+**The snapshots were correct.** Read back independently from production:
+preflight 3 (LE, offer 1) `requested 25 · resolved 25 · status open`, 28
+candidate rows, 25 with `final_eligible = true` and a `final_rank`, 3
+excluded as `beyond-the-number-asked-for`, all 28 `db_eligible`, Kit states
+10 active + 18 missing. Preflight 2 (GYU, offer 2) `requested 30 ·
+resolved 30`, 32 rows, 30 ranked, 2 beyond the number, all 32 active.
+
+**Nothing was sent.** 0 invitation batches, 0 invitations, 0 Kit operations
+with `origin = 'waitlist_invitation'`, 0 invitation tags applied, 0
+`invited_at` set, both snapshots still `used_at NULL`.
+
+### The defect
+
+`runWaitlistPreflight` builds its rows as `ResolvedCandidate`, which is
+camelCase. `saveSnapshot` translated that into the snapshot's column names
+on the way into the database — correctly, which is why the stored rows were
+right. The RESPONSE skipped the translation and returned the camelCase
+object as it stood, while the browser's read model reads the snapshot's
+column names. So every field it looked for was absent, not false:
+
+- `raw.final_eligible === true` → false for everybody → **Invite 0 people**
+- `raw.exclusion_reason ?? null` → null for everybody → **blank reasons**,
+  and since the skipped list is "not eligible AND not merely past the
+  number", a null reason put **every** row in it
+- `String(raw.contact_name ?? "")` → `""` → **blank names**
+
+One defect, three symptoms. The skipped counts are the proof it was the
+reading and not the snapshot: 28 and 32 are the full candidate lists, where
+a correct read shows the 3 and the 2 who were only past the number asked
+for.
+
+**Why 28 and 32 were checked rather than the whole list.** Kit lookups run
+in windows of `KIT_LOOKUP_CONCURRENCY = 4` and the walk stops once it has
+enough safe people, so it overshoots by at most three. 25 → 28, 30 → 32.
+Working as designed, and recorded rather than hidden.
+
+### Why nothing caught it
+
+Nothing exercised the seam. The demo mirror returns the snapshot's columns,
+so every demo-mode test passed. `e2e/waitlistInvitationPreflight.spec.ts`
+writes its snapshot rows itself and reads them back from the database, so it
+passed. **No test imported the real walker at all**, and the one thing never
+exercised was the Edge Function's RESPONSE being read by the client that
+reads it.
+
+### The repair
+
+`preflightRowShape()` is now the single definition of a preflight row's
+shape, used by BOTH the database write and the response. The two cannot
+drift, because there is only one of them.
+`contracts/waitlist/thePreviewIsTheSnapshot.test.ts` runs the real function
+through the real reader into the real selection the dialog displays, and
+holds: 25 of 40 with a quarter unsendable, 30 of 48, an active subscriber and
+somebody Kit has never heard of both invitable, the walk continuing to the
+end of a short list with `shortBy` said plainly, a name and a reason on every
+skipped line, nobody merely past the number reported as skipped, and Kit
+never asked about anybody the database already ruled out. The last test in
+that file states the shape that actually shipped and proves it produces
+Leif's three symptoms, so the regression cannot be weakened into a tautology.
+Reverting the repair fails 7 of its 8 tests with `expected [] to have a
+length of 25` and `expected '' not to be ''`.
+
+Two adjacent gaps were closed because they blocked the above, and both were
+real: `KitClient` was missing `listTags`, `createTag` and `subscriberTags`
+(which the implementation provides and `kit_sync/index.ts` calls) and
+referenced an undeclared `KitTag` — invisible until a contract test pulled
+`supabase/functions/` into the typecheck program for the first time. And
+`createCrmDb` had no `applications`, `waitlist_invitation_preflights` or
+`waitlist_invitation_preflight_candidates`, so the demo preflight threw and
+the dialog fell back to "Could not check who can be invited" — which is the
+state the existing gating test had been asserting against.
+
+### Still true after this
+
+The two production snapshots remain open and unused. Nothing was sent, no
+batch exists, and the real LE 25 / GYU 30 sends have not been run.
+
+## 8n. Saving a Kit tag has to save it — PRODUCTION ACCEPTED (2026-10-10)
 
 Leif set **"Invited from the waitlist"** on The Living Example to
 `LE_Waitlist_Invited`, got a toast saying it had saved, navigated away, came

@@ -563,7 +563,46 @@ export type PreflightResult = {
   rows: PreflightRow[];
 };
 
-const shapeRow = (raw: Record<string, unknown>): PreflightRow => ({
+/**
+ * Who this batch would invite, in the order they will be invited.
+ *
+ * Named and exported rather than written inline in the dialog, because it is
+ * the number Leif decides on — "Invite 25 people" — and a contract test has
+ * to be able to measure the same thing the dialog displays.
+ */
+export const invitableIn = (rows: PreflightRow[]): PreflightRow[] =>
+  rows
+    .filter((row) => row.finalEligible)
+    .sort((a, b) => (a.finalRank ?? 0) - (b.finalRank ?? 0));
+
+/**
+ * Everybody passed over on the way down to that last person — database
+ * reasons and Kit reasons together, because to Leif they are one list.
+ *
+ * Somebody merely past the number asked for was not passed over; they are
+ * next time's candidate, and listing them as skipped would misreport the
+ * batch.
+ */
+export const passedOverIn = (rows: PreflightRow[]): PreflightRow[] =>
+  rows.filter(
+    (row) =>
+      !row.finalEligible &&
+      row.exclusionReason !== "beyond-the-number-asked-for",
+  );
+
+/**
+ * The read model: one snapshot row as Leif's dialog reads it.
+ *
+ * Exported because it is half of a contract. It reads the SNAPSHOT's column
+ * names, and for a while the Edge Function's response did not use them — so
+ * every preview said "Invite 0 people" over a snapshot holding 25 invitable
+ * people. `contracts/waitlist/thePreviewIsTheSnapshot.test.ts` now runs the
+ * real function's output through this real reader, because the seam between
+ * them is the one thing neither side's own tests can see.
+ */
+export const readPreflightRow = (
+  raw: Record<string, unknown>,
+): PreflightRow => ({
   waitlistEntryId: raw.waitlist_entry_id as Identifier,
   contactId: raw.contact_id as Identifier,
   name: String(raw.contact_name ?? "").trim(),
@@ -616,7 +655,7 @@ export const runWaitlistPreflight = async (
     requested: Number(raw.requested ?? input.requested),
     resolved: Number(raw.resolved ?? 0),
     shortBy: Number(raw.shortBy ?? 0),
-    rows: ((raw.rows as Record<string, unknown>[]) ?? []).map(shapeRow),
+    rows: ((raw.rows as Record<string, unknown>[]) ?? []).map(readPreflightRow),
   };
 };
 

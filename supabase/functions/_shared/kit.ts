@@ -91,6 +91,12 @@ export type KitSubscriber = {
   state: KitSubscriberState;
 };
 
+/** One tag in the Kit account, as the CRM needs it: a number and a name. */
+export type KitTag = {
+  id: number;
+  name: string;
+};
+
 export type KitClient = {
   /**
    * The subscriber Kit currently holds for this exact address, or null.
@@ -118,6 +124,10 @@ export type KitClient = {
     tagId: number,
     email: string,
   ) => Promise<KitResult<{ subscriberId: string | null }>>;
+  /** Every tag in the account, so Leif picks a real one by name. */
+  listTags: () => Promise<KitResult<KitTag[]>>;
+  createTag: (name: string) => Promise<KitResult<KitTag>>;
+  subscriberTags: (subscriberId: string) => Promise<KitResult<KitTag[]>>;
 };
 
 export const createKitClient = (
