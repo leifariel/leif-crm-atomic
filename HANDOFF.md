@@ -336,6 +336,10 @@ new cycle. Pinned across runtimes by
 [oneReviewableStageRule.test.ts](contracts/applications/oneReviewableStageRule.test.ts).
 
 ### Opportunities / sales
+**What Interested, Nurture and Waitlist MEAN, and the outreach lifecycle that
+moves people between them, are canonical in §4b** — read it before touching any
+invitation, follow-up or pipeline-stage work.
+
 **One Opportunity per sales attempt.** Active means `archived_at IS NULL AND
 stage <> 'won' AND outcome IS NULL` — [dealActivity.ts](src/components/atomic-crm/deals/dealActivity.ts).
 Stage order: interested → application_received → approved → call_booked →
@@ -641,6 +645,260 @@ rollback; rows do not.
 
 ---
 
+## 4b. APPLICATION OUTREACH — CANONICAL LIFECYCLE (decided 2026-10-11)
+
+**This is the canonical model for how someone gets invited to apply, and what
+happens next.** It supersedes any earlier statement that treats waitlist
+outreach and Instagram outreach as separate state machines, that lets
+Interested hold people indefinitely with nothing scheduled, or that gives an
+external system ownership of the lifecycle. Nothing here is built yet; the
+phasing is at the end of this section.
+
+**The CRM owns business truth. External systems execute communications.**
+
+### The six operational meanings
+
+| State | What it means, in Leif's words |
+|---|---|
+| **Waitlist** | "People still waiting for me to invite them." |
+| **Interested** | "People I have actively invited to take the next step, and whose follow-up window is still alive." |
+| **Application Received** | They submitted the application. |
+| **Nurture** | "Still viable, but no active sales/outreach process is currently running." |
+| **Lost** | Explicit decline, or the sale genuinely closed. |
+| **Do Not Engage** | Global hard stop. |
+
+**INTERESTED MUST NOT BECOME A GRAVEYARD OF OLD LEADS.** A person belongs in
+Interested only while a live next step exists. When the outreach window
+exhausts without an application, the Opportunity leaves Interested for Nurture
+**automatically** — not when somebody remembers to tidy up.
+
+### Active Waitlist means `waiting`, and only `waiting`
+
+The waitlist table and its history stay durable, and the statuses may remain
+`waiting` · `invited` · `converted` · `removed`. But the **programme page's
+waitlist count and list must mean `status = 'waiting'` only.**
+
+If 60 are waiting and 50 are successfully invited, the active Waitlist shows
+about 10 — not 60 with 50 silently skipped as already-invited.
+
+**This is live UX debt right now.** After the 11 Oct sends, GYU still displays
+53 when only 23 are genuinely waiting, and LE displays 63 when 38 are. The
+people are correctly `invited` in the database; the display is what is wrong.
+
+Historical entries stay in storage. A successful invitation preserves
+provenance: `joined_at`, `invited_at`, the invitation batch, the invitation
+tag/event, and the resulting Opportunity / outreach relationship. **Never
+delete waitlist history merely because somebody left the active Waitlist.**
+
+### Leaving Waiting is governed by external delivery truth
+
+**Do not move anybody out of Waiting because Leif clicked Invite.** This rule
+is already built and proved for Kit (§8h, §8i) and generalises:
+
+    Leif confirms the invitation
+    -> durable invitation / outbox row created
+    -> external sender or tag executor attempts delivery
+    -> delivery CONFIRMED
+    -> waitlist entry waiting -> invited, invited_at set
+    -> person leaves the ACTIVE Waitlist
+    -> same-offer Opportunity created or reused, in Interested
+    -> an Application Outreach becomes active
+
+If delivery fails or stays unconfirmed: the entry **remains waiting**,
+`invited_at` stays unset, no outreach is pretended, and the failure stays
+visible and retryable. ATOMIC HANDLES CERTAINTY. LEIF HANDLES AMBIGUITY.
+
+### Application Outreach — the durable authority
+
+One new business concept (final naming to be chosen against the architecture
+as it stands when it is built):
+
+> **Application Outreach** — "the durable CRM record of an
+> invitation-to-apply episode and its follow-up lifecycle."
+
+It is **not Gmail-specific, not Kit-specific and not Instagram-specific.** It
+should retain enough to answer: which Opportunity · which attempt/episode ·
+source · channel · `started_at` · the initial invitation delivery · current
+follow-up step · `next_action_at` · status · `ended_at` · `end_reason` ·
+communication provenance.
+
+**The exact schema is deliberately not prescribed here.** Inspect the
+architecture as it then exists and choose the smallest authoritative model
+that satisfies these invariants.
+
+### One lifecycle, many sources
+
+The same lifecycle runs regardless of how the person arrived:
+
+| Source | Entry |
+|---|---|
+| `waitlist` | waitlist invitation confirmed |
+| `instagram` | Leif sends the application from an IG conversation |
+| `manual` / `email` | Leif explicitly invites someone |
+| referral / future | same lifecycle, different provenance |
+
+**Do not build a separate sales-state machine per source.**
+
+### The sequence, and why its timing is configurable
+
+Current product intent — spacing configurable, not hard-coded:
+
+    Day 0    initial application invitation
+    Day 3    reminder 1
+    Day 7    reminder 2
+    Day 14   reminder 3
+    Day 21   outreach exhausted -> Nurture
+
+**This example is not a frozen timing specification.** The architecture must
+support changing it without a migration of meaning.
+
+**The moment an application is submitted:** cancel every remaining reminder,
+close the outreach with `application_submitted`, move or reuse the Opportunity
+into Application Received. **A now-obsolete reminder must never send.**
+
+### Exit reasons
+
+| Event | Result |
+|---|---|
+| Application submitted | Application Received · reminders stop immediately |
+| "Not now" | reminders stop · Nurture · optionally keep a future follow-up date |
+| Explicit no | reminders stop · Lost |
+| Outreach exhausted, no response | Nurture · reason `application_not_submitted` or equivalent |
+| Do Not Engage | global hard stop · no automated outreach from any Opportunity |
+| Unsubscribed / complained / unsafe external state | no automated email · stop or pause · **never work around consent** |
+| Bounce / unreachable email | do **not** record communication success · `email_unreachable` or equivalent · another channel may later create a manual next step |
+
+### Interested must show a next step
+
+Interested shows actionable context, not just a name. Conceptually:
+
+    Maria Smith
+    Waitlist invite - Oct 11
+    Reminder 2 of 3
+    Next: Oct 18
+
+    Joe Adams
+    Instagram - Application sent Oct 11
+    No email
+    IG follow-up due Oct 14
+
+The UI is designable later. The rule is not: **every Interested Opportunity
+has a meaningful next step or an active outreach state. No permanently inert
+Interested cards.**
+
+### Deduplication and re-invitation, per offer
+
+- An active Application Outreach already exists → **do not start a second
+  sequence.** "Send application" surfaces that one is already running;
+  restarting is explicit.
+- Prior outreach exhausted, Opportunity in Nurture → Leif may re-invite; that
+  creates a **new attempt/episode**, reuses the same Opportunity where the
+  canonical lifecycle permits, and **preserves the prior history**. Never
+  overwrite the old attempt.
+- Already applied for that offer → do not send a new invitation by accident.
+- Already a current client for that offer → block ordinary application
+  outreach.
+- Same-offer Opportunity already further down the lifecycle → **do not regress
+  it to Interested** because an outreach action was attempted. Later-stage
+  truth wins; surface the ambiguity instead of guessing. (This is §4
+  "Opportunities / sales" applied to outreach.)
+
+### Cross-offer people
+
+A Contact may legitimately hold an LE Opportunity **and** a GYU Opportunity.
+These are separate journeys, and Application Outreach is
+offer/opportunity-specific: a GYU outreach must not close or mutate an LE
+Opportunity, or vice versa, unless a defined cross-offer transfer action does
+it (§8b-next).
+
+Contact-level safety still applies globally: Do Not Engage, consent
+restrictions, identity/email safety, and any other global communication block.
+**Cross-offer ambiguity belongs to Leif.**
+
+### Waitlist rejoin, and the waitlist-plus-Interested collision
+
+If somebody historically invited, converted or removed genuinely joins a
+waitlist again later, **preserve the old episode.** Do not erase `invited_at`
+or rewrite history to make them "waiting" again — support a **new episode**,
+respecting the uniqueness and invariant design in place at the time.
+
+If a person is already in an active same-offer Interested / Application
+Outreach state **and** appears as waiting for that same offer, the CRM
+reconciles it rather than sending a second invitation. The active waitlist must
+not become a duplicate outreach source for a journey already running.
+
+### An application that arrives after Nurture
+
+Preserve the old outreach history, reuse or reopen the canonical same-offer
+Opportunity, move to Application Received. **Do not invent a duplicate lead
+just because the application came late.**
+
+### Gmail is an executor, not the authority
+
+This architecture is the foundation Gmail depends on (§9). The division:
+
+- **CRM decides:** "Reminder 2 is now due for Opportunity X," and writes a
+  durable Communication Event.
+- **Gmail executes it**, recording the Gmail message id, thread id, `sent_at`,
+  provider result and a durable audit trail.
+- **Retries are idempotent.**
+- **Immediately before any external send, re-check current business truth.**
+  If the person has applied, become Do Not Engage, unsubscribed, become unsafe,
+  or otherwise left the outreach, the obsolete communication must not go.
+  **"Scheduled earlier" is not "still valid now."**
+
+Gmail will eventually replace Kit's **email automations**. Semantic Kit tags
+remain useful facts for history and segmentation — `LE_Waitlist_Invited` stays
+meaningful after Gmail becomes the sender.
+
+### Instagram is a channel on the same authority
+
+Instagram (§10) eventually executes the **same** Application Outreach
+authority. Until direct IG automation exists, IG-origin outreach may create
+manual follow-up tasks. **Do not pretend Gmail can contact somebody whose email
+is unknown;** once an address is acquired the channel may change under explicit
+rules. **No parallel pipeline model.**
+
+### Pipeline stages are not workflow steps
+
+**Do not add pipeline columns `Reminder 1` / `Reminder 2` / `Reminder 3`.**
+Those are outreach steps, not sales stages. The pipeline stays semantically
+small — interested → application_received → approved → call_booked → decision →
+won — and the outreach engine tracks reminder steps *beneath* Interested.
+
+### Backfilling the 55 people already invited
+
+When this is implemented, **the 55 people invited on 11 Oct 2026 must not
+vanish from the new model.** Backfill them from actual production invitation
+truth (§8h), preserving at minimum: `source = waitlist`, the confirmed
+invitation date/time, the same-offer Opportunity created or reused under
+canonical Opportunity rules, and the outreach provenance. LE 25 and GYU 30
+alike.
+
+**Do not resend an invitation merely because an outreach record was
+backfilled.** Kit automations are already running their current email journey
+for these people. The cutover needs explicit semantics — historical Kit-driven
+provenance, future Gmail-driven Communication Events, and **no double execution
+across both systems.**
+
+### Phasing
+
+| Phase | Work |
+|---|---|
+| **0** | Finish production acceptance of `9510906e` with the zero-send hard-reload test (§8p). |
+| **1** | Correct active Waitlist semantics: UI/count = `waiting` only; confirmed invitation removes the person from the active Waitlist; preserve historical provenance. |
+| **2** | Create/reuse the same-offer Interested Opportunity on confirmed invitation. Introduce the durable Application Outreach authority. Backfill the 55 without resending anything. |
+| **3** | Interested derives from a live Application Outreach / actionable next step. Expired outreach leaves Interested for Nurture. |
+| **4** | Unify every application-invitation entry point — waitlist, Instagram/manual, future referral/email — onto the one lifecycle. |
+| **5** | The other queued CRM work: 13-week client-opening buffer; deposits (LE $500 / GYU $400); Sales Call Workflow. |
+| **6** | Integration Readiness Gate. |
+| **7** | Gmail executes Application Outreach via durable Communication Events. |
+| **8** | Post-Gmail stabilisation. |
+| **9** | Instagram executes the same outreach authority. |
+
+**Do not let this architecture disappear behind the Gmail implementation.
+Gmail depends on it.**
+
 ## 5. Recently closed defects — the invariant, not the story
 
 | defect | what prevents recurrence |
@@ -719,6 +977,11 @@ classes. **Full record, and the tooling debt carried forward, in §8.**
 ---
 
 ## 6. Waiting on Leif — do not guess these
+
+**SNAPSHOT-STABILITY ACCEPTANCE — OPEN (§8p).** One hard reload, one waitlist
+preview left open a minute, then Cancel. It sends nothing and consumes nothing,
+and it is the last thing standing between `9510906e` and a sealed waitlist
+slice.
 
 **KIT — DEPLOYED AND OPERATIONALLY ACCEPTED 2026-09-28 (§8b-kit-live).**
 **(1) CLOSED 2026-10-05 (§8b-apps-accepted).** Leif has written both
@@ -4118,7 +4381,29 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8p. The approved preflight must be the sent preflight — REPAIRED, NOT YET DEPLOYED (2026-10-11)
+## 8p. The approved preflight must be the sent preflight — DEPLOYED, ACCEPTANCE OPEN (2026-10-11)
+
+**STATUS. `9510906e` is pushed, deployed and CI green — and its production
+acceptance is still open.** Both real sends were made from browser tabs that had
+loaded the OLDER bundle: GYU preflight 7 was created at 13:01:58 and the repair
+reached production at 13:36:51, so the tab that sent at 13:46:32 was still
+running the unguarded code. The invariant held on both sends — one preflight per
+opening, the audited id consumed — but it held under the old code, by luck,
+because nothing changed a dependency identity inside those windows.
+
+**The remaining acceptance costs nothing and sends nothing:**
+
+1. Hard-reload production so the new bundle loads.
+2. Open a waitlist preview (any number) on the new bundle.
+3. Leave it open through a minute or more of ordinary re-renders.
+4. Cancel.
+5. Read production: exactly one preflight created, zero replacement preflights,
+   zero invitation mutation.
+
+A preview writes a snapshot and nothing else — no tag, no email, nobody's place
+moves — and Cancel consumes nothing. **Do not forget this item.**
+
+
 
 **LE batch 1 is production accepted.** 25 invitations, 25 Kit operations, all
 succeeded on the first attempt, `LE_Waitlist_Invited #24462485`, no failures,
@@ -4992,7 +5277,36 @@ claims exactly one operation. **A real-provider proof must own the whole
 queue it runs against** — reaching anything it did not create is the
 proof's fault, not the worker's.
 
-## 8h. Waitlist batch invitations — BUILT, NOT YET RUN (2026-10-10)
+## 8h. Waitlist batch invitations — PRODUCTION ACCEPTED 2026-10-11
+
+**Both first real batches went out on 11 Oct 2026 and both are accepted.**
+
+| | LE | GYU |
+|---|---|---|
+| batch | 1 | 2 |
+| source preflight | 9 | 7 |
+| invitations | 25 | 30 |
+| Kit operations | 25/25 succeeded | 30/30 succeeded |
+| tag | LE_Waitlist_Invited #24462485 | GYU_Waitlist_Invited #24462489 |
+| entries now invited | 25 | 30 |
+| still waiting after the send | 38 | 23 |
+
+Across both: **55 real invitations, 55 succeeded, 0 failed, 0 collateral queue
+work**, no cross-programme overlap between the two sets, idempotency proved.
+
+Delivery is not instant, and that is correct: the kit-sync cron runs every five
+minutes and claims 25 per run, so GYU went out as 25 at 13:50 and the last 5 at
+13:55. LE's batch happened to land three seconds before a boundary, which is the
+only reason it looked instantaneous.
+
+**The UX debt this exposed is canonical in §4b:** the programme waitlist count
+still includes historical invited people, so GYU reads 53 where 23 are genuinely
+waiting, and LE reads 63 where 38 are. Active Waitlist must mean `status =
+'waiting'` only.
+
+The original note, which described the design before it had ever run:
+
+### How it was built (2026-10-10)
 
 Leif invites twenty-five people off the Living Example waitlist and thirty
 off Growing Yourself Up's when capacity reopens. The infrastructure for that
@@ -6525,6 +6839,14 @@ ATOMIC HANDLES CERTAINTY. LEIF HANDLES AMBIGUITY.
 
 ## 9. Gmail (after Capacity + Waitlist)
 
+**GMAIL IS AN EXECUTOR, NOT THE LIFECYCLE AUTHORITY. READ §4b FIRST.** The CRM
+decides that a reminder is due and writes a durable Communication Event; Gmail
+sends it and records the provider result. Gmail replaces Kit's email
+AUTOMATIONS, not the CRM's ownership of the outreach lifecycle, and semantic Kit
+tags stay useful facts afterwards. Building Gmail before §4b exists means
+building the lifecycle inside the mail provider, which is the one thing §4b
+forbids.
+
 **READ §8b-kit-gmail FIRST.** Gmail cannot become authoritative for
 application-decision emails until Kit's existing decision automations are made
 safe and the deliberate one-time Kit backfill has happened, **in that order**.
@@ -6551,6 +6873,12 @@ Constraints: communication facts are **not Tasks**. Failures must be visible.
 ---
 
 ## 10. Instagram / Meta (after Gmail acceptance)
+
+**Instagram is a CHANNEL on the same Application Outreach authority (§4b), not a
+second pipeline.** An IG-origin invitation creates the same outreach lifecycle
+with `source = instagram`; until direct IG automation exists it may create
+manual follow-up tasks rather than sends, and it must never pretend Gmail can
+reach somebody whose email is unknown.
 
 - **Immutable Meta external user id is identity.** Username/handle is mutable
   display metadata only.
@@ -6638,15 +6966,37 @@ The next Claude session should, in order:
 8. **Surface disagreements rather than silently resolving them.**
 9. **STOP before implementation and report readiness.**
 
-**The exact next action as of 2026-09-27:** `origin/main` = `1c1ef676`,
-production at 142 migrations, Jenna sealed, the sales-call modal accepted for the
-already-attached branch. Push the local `legacy_untracked` fix (§8b-ux-fix) and
-confirm production reaches **143** migrations; **until then do not click Repair
-on any client**, because 20 legacy clients are currently offered it wrongly.
-Two acceptances stay open and neither can be forced: an unmatched Acuity booking
-for the Dashboard resolution branch, and a genuinely stale tracked client for the
-repair card. Then the queue is the client start-week / capacity UX, Kit, and only
-then the Application Form Builder.
+**The exact next action as of 2026-10-11:** `origin/main` = `9510906e`,
+production at **165 migrations**, working tree clean, nothing unpushed.
+
+The waitlist slice is all but sealed. **55 real invitations went out today** —
+LE 25 (batch 1, preflight 9) and GYU 30 (batch 2, preflight 7) — all 55 Kit
+operations succeeded, no failures, no collateral queue work (§8h). **One
+acceptance is open and it is cheap:** the `9510906e` snapshot-stability repair
+is deployed and CI green but was never exercised, because both sends came from
+tabs running the older bundle. Close it with the zero-send hard-reload test in
+§8p before starting anything else.
+
+**Then the queue, in order, is §4b's phasing** — and §4b is canonical, so read
+it before touching invitations, follow-ups or pipeline stages:
+
+1. Active Waitlist means `waiting` only. GYU currently displays 53 where 23 are
+   genuinely waiting; the data is right and the display is wrong.
+2. Create/reuse the same-offer Interested Opportunity on a confirmed invitation,
+   introduce the durable **Application Outreach** authority, and backfill the 55
+   people invited today **without resending anything**.
+3. Interested derives from a live outreach; exhausted outreach falls to Nurture.
+4. Unify every invitation entry point — waitlist, Instagram, manual — onto that
+   one lifecycle.
+5. Only then the 13-week client-opening buffer, deposits (LE $500 / GYU $400)
+   and the Sales Call Workflow; then the Integration Readiness Gate, then Gmail,
+   then Instagram.
+
+**Gmail is not next, and it is not independent.** It executes §4b. Building it
+first builds the lifecycle inside the mail provider.
+
+Still parked and not to be disturbed: the payment commit `c9dcc918` (not an
+ancestor of main) and the Application Form Builder working tree (§8b-builder).
 
 And before calling anything finished, re-read §2's acceptance loop. **Leif's
 try-run is a step in the work, not a formality after it** — schedule it while
@@ -6655,8 +7005,9 @@ the feature is still open to change, and keep the batch before it small.
 Useful facts for step 6: `npx supabase db query --linked` runs SQL against
 production and only returns the **last statement's** result; feed it SQL on
 **stdin** (`< file.sql`), because `--file` hangs. `python3` is OOM-killed on
-this machine — use `node`. Run the app suite serially
-(`--maxWorkers=1 --fileParallelism=false`).
+this machine — use `node`. Run the app suite in its DEFAULT PARALLEL mode —
+serial (`--maxWorkers=1 --fileParallelism=false`) dies partway through with
+zero reported failures, which reads as a pass.
 
 The reliability tooling from §8 is part of the baseline now:
 `make start-supabase-e2e` builds a clean room from empty and
