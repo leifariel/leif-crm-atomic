@@ -479,6 +479,9 @@ export const waitlistPreflightMirror = async (
     };
   });
 
+  // Mirrors the table default. A preview of who Kit will deliver to is
+  // evidence for a couple of hours and a guess after that.
+  const expiresAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
   const { data: preflight } = await dataProvider.create(
     "waitlist_invitation_preflights",
     {
@@ -488,6 +491,7 @@ export const waitlistPreflightMirror = async (
         requested,
         resolved: rank,
         status: "open",
+        expires_at: expiresAt,
       } as never,
     },
   );
@@ -499,6 +503,7 @@ export const waitlistPreflightMirror = async (
 
   return {
     preflightId: preflight.id,
+    expiresAt,
     requested,
     resolved: rank,
     shortBy: Math.max(0, requested - rank),
@@ -556,6 +561,8 @@ export type PreflightRow = {
 
 export type PreflightResult = {
   preflightId: Identifier;
+  /** When the server stops accepting this snapshot, ISO-8601, or null. */
+  expiresAt: string | null;
   requested: number;
   resolved: number;
   /** How many short of the number asked for, said rather than counted. */
@@ -652,6 +659,7 @@ export const runWaitlistPreflight = async (
 
   return {
     preflightId: (raw.preflightId ?? raw.preflight_id) as Identifier,
+    expiresAt: ((raw.expiresAt ?? raw.expires_at) as string | null) ?? null,
     requested: Number(raw.requested ?? input.requested),
     resolved: Number(raw.resolved ?? 0),
     shortBy: Number(raw.shortBy ?? 0),

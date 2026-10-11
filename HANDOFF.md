@@ -4118,7 +4118,94 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8o. Both waitlist previews said "Invite 0 people" — REPAIRED, NOT YET DEPLOYED (2026-10-11)
+## 8p. The approved preflight must be the sent preflight — REPAIRED, NOT YET DEPLOYED (2026-10-11)
+
+**LE batch 1 is production accepted.** 25 invitations, 25 Kit operations, all
+succeeded on the first attempt, `LE_Waitlist_Invited #24462485`, no failures,
+no substitutions, no collateral queue work, 25 entries `invited`, LE waiting
+38. Source preflight **9**.
+
+And that last fact is the defect. Leif and ChatGPT audited preflight **8**.
+
+    13:02:07  dialog opened       -> preflight 8 created
+    13:04:55  dialog still open   -> preflight 9 created, state replaced
+    13:04:57  Invite 25 clicked   -> preflight 9 consumed
+
+Preflight 8 is still `open`, `used_at NULL`, `batch_id NULL` to this day. The
+send was correct — 8 and 9 held the same 25 people at the same ranks, proven
+by set comparison on contact_id and normalized email — but it was correct by
+luck. Nobody joined and no Kit state moved in those three minutes. Had either
+happened, Leif would have approved one list and sent another, silently.
+
+### Why it happened
+
+The effect that runs the preflight listed `dataProvider` and `mode` among its
+dependencies. Both are reference types the dialog does not own. ra-core
+memoizes the dataProvider proxy on `[dataProvider, logoutIfAccessDenied,
+queryClient]`, and `logoutIfAccessDenied` is a `useCallback` over
+`[authProvider, logout, notify, handleRedirect]` -> `[navigate]`. None of that
+is stable by contract, and at least one admin path constructs its
+`QueryClient` in a component body. Any one of them taking a new identity
+re-ran a whole preflight — a fresh walk that asks Kit about everybody again —
+and swapped the answer underneath the open dialog.
+
+Reproduced in a test by changing ONLY the dataProvider's identity: the
+preflight log goes `[8]` -> `[8, 9, 10]` and Confirm consumes 9 while 8 is on
+screen. So yes, it could repeat indefinitely while the dialog stayed open.
+
+Which specific dependency fired in Leif's browser at 13:04:55 is not
+recoverable — there is no client telemetry from that session, and the three
+minute gap is consistent with several of them. It does not matter: making one
+dependency stable would leave the next one free to do the same.
+
+### The invariant, and the repair
+
+THE PREFLIGHT LEIF SEES AND APPROVES IS THE PREFLIGHT
+`invite_from_preflight` CONSUMES.
+
+The run is now guarded by a ref — one preflight per opening, and a re-render
+for any reason is a no-op. The effect deliberately has NO cleanup function: a
+cleanup fires on every dependency change and would abandon a request the
+guard had decided to keep, leaving the dialog loading forever. Liveness is a
+token instead, bumped on close and on unmount.
+
+Two ways a snapshot can stop being the right one, and neither silently
+replaces it:
+
+- **Expired.** The server owns the two-hour window and now returns
+  `expiresAt`; the dialog blocks Confirm and says to close and reopen. It
+  does not keep its own copy of the rule.
+- **A different number asked for.** Blocked with "This preview is for 2, not
+  5", rather than quietly previewing 5 and calling it approved.
+
+Closing and reopening runs a fresh one, because the parent unmounts the
+dialog. Cancel still consumes nothing.
+
+A thirty-second clock tick now re-renders the dialog to re-evaluate expiry.
+That is safe only because of the guard — before it, it would have run a whole
+new preflight every thirty seconds.
+
+### The abandoned snapshots are harmless — leave them
+
+Eight sit `open` and unused (1–8; 1, 2, 3 are past their window). They hold
+240 candidate rows. They are safe for a reason stronger than expiry:
+`invite_from_preflight` re-checks each candidate against
+`waitlist_invitation_candidates()` at consume time and skips anyone who
+changed, with reason `changed-since-preflight`. All 25 LE people now read
+`already-invited`, so consuming preflight 4, 6 or 8 today would invite
+**zero** people — proven against production, read-only. The worst residue
+would be an empty batch row, and only from a deliberate direct RPC call with
+a stale id, which the UI never makes. No cleanup migration is needed; an
+explicit expired/cancelled sweep would be tidiness, not safety.
+
+### GYU
+
+Untouched and deliberately not sent. Preflight 7 open and unused, 0 batches,
+0 invitations, 0 `GYU_Waitlist_Invited` operations, 53 waiting, 0 invited.
+After this deploys, Leif reopens GYU for a FRESH preview — and the snapshot
+audited will now be the snapshot sent.
+
+## 8o. Both waitlist previews said "Invite 0 people" — PRODUCTION ACCEPTED (2026-10-11)
 
 Leif opened Invite to apply on The Living Example asking for 25, and on
 Growing Yourself Up asking for 30. Both dialogs said

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   useDataProvider,
   useGetList,
@@ -105,6 +105,11 @@ export const InviteToApplyDialog = ({
   const [busy, setBusy] = useState(false);
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
   const [failed, setFailed] = useState(false);
+  /** How many were asked for when this preview was taken. */
+  const [approvedCount, setApprovedCount] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const requestedCount =
+    mode.kind === "oldest" ? mode.count : mode.entryIds.length;
 
   // The programme's own tag for an invitation. Named in the confirmation
   // because it is the thing that actually reaches the person — Leif hangs
@@ -129,30 +134,79 @@ export const InviteToApplyDialog = ({
   // anything — cancelled, complained, bounced and inactive are all people
   // who have told Kit to stop. Discovering that after Leif confirms "25"
   // is how she invites twenty-two believing she invited twenty-five.
+  //
+  // AND IT RUNS EXACTLY ONCE PER OPENING. The snapshot Leif reads is the
+  // snapshot Confirm consumes, and nothing between those two moments may
+  // replace it.
+  //
+  // THE BUG THIS GUARD EXISTS FOR, from the first real batch. This effect
+  // used to re-run whenever one of its dependencies took a new identity.
+  // `dataProvider` is such a dependency: ra-core memoizes the proxy on
+  // [dataProvider, logoutIfAccessDenied, queryClient], and
+  // logoutIfAccessDenied is a useCallback over
+  // [authProvider, logout, notify, handleRedirect] -> [navigate]. None of
+  // that is stable by contract. On 2026-10-11 Leif opened the dialog at
+  // 13:02:07 (preflight 8), the effect re-ran at 13:04:55 (preflight 9),
+  // and her click at 13:04:57 consumed 9 — the snapshot nobody had read.
+  // The two happened to hold the same 25 people, so the batch was right;
+  // it was right by luck, because no one joined and no Kit state moved in
+  // those three minutes.
+  //
+  // Making one dependency stable would not fix it — the next unstable one
+  // would do the same. So the run is guarded by a ref instead, and a
+  // re-render for any reason at all is a no-op.
+  const runStarted = useRef(false);
+  // Bumped whenever a result stops being wanted, so a reply that arrives
+  // after a close is dropped. The effect deliberately has NO cleanup: a
+  // cleanup would fire on every dependency change and abandon a request the
+  // guard above had already decided to keep.
+  const runToken = useRef(0);
+  useEffect(() => () => void (runToken.current += 1), []);
+
   useEffect(() => {
     if (!open) {
+      runToken.current += 1;
+      runStarted.current = false;
       setPreflight(null);
+      setApprovedCount(null);
       setFailed(false);
       return;
     }
-    let live = true;
+    if (runStarted.current) return;
+    runStarted.current = true;
+    const token = runToken.current;
+    setApprovedCount(requestedCount);
     setFailed(false);
     void runWaitlistPreflight(dataProvider, {
       offerId,
       cohortId,
-      requested: mode.kind === "oldest" ? mode.count : mode.entryIds.length,
+      requested: requestedCount,
       entryIds: mode.kind === "selected" ? mode.entryIds : null,
     })
       .then((result) => {
-        if (live) setPreflight(result);
+        if (runToken.current === token) setPreflight(result);
       })
       .catch(() => {
-        if (live) setFailed(true);
+        if (runToken.current === token) setFailed(true);
       });
-    return () => {
-      live = false;
-    };
-  }, [open, dataProvider, offerId, cohortId, mode]);
+  }, [open, dataProvider, offerId, cohortId, mode, requestedCount]);
+
+  // A preview of who Kit will deliver to goes stale; the server gives it two
+  // hours and refuses it after that. Re-reading the clock re-renders, which
+  // is safe now and would not have been before: it would have run a whole
+  // new preflight every thirty seconds.
+  useEffect(() => {
+    if (!open) return;
+    const tick = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(tick);
+  }, [open]);
+
+  const expired =
+    preflight?.expiresAt != null && Date.parse(preflight.expiresAt) <= now;
+  // Asking for a different number is a different question, and the honest
+  // answer is a new preview rather than a quietly swapped one.
+  const countMoved = approvedCount != null && approvedCount !== requestedCount;
+  const stale = expired || countMoved;
 
   const askedEligible = invitableIn(preflight?.rows ?? []);
   const passedOver = passedOverIn(preflight?.rows ?? []);
@@ -165,6 +219,10 @@ export const InviteToApplyDialog = ({
 
   const handleConfirm = async () => {
     if (preflight == null) return;
+    // Belt as well as braces: the button is disabled, and the server
+    // refuses a used or expired preflight anyway. Sending one regardless
+    // would be the UI claiming something it cannot know.
+    if (stale) return;
     setBusy(true);
     try {
       // Exactly the people in the snapshot above — never a list worked out
@@ -294,6 +352,24 @@ export const InviteToApplyDialog = ({
             </p>
           )}
 
+          {expired && (
+            <p className="text-sm text-destructive">
+              {translate("resources.waitlist_entries.invite.expired", {
+                _: "This preview is out of date — who Kit will deliver to may have changed. Close this and open it again to check. Nothing was sent.",
+              })}
+            </p>
+          )}
+
+          {countMoved && !expired && (
+            <p className="text-sm text-destructive">
+              {translate("resources.waitlist_entries.invite.count_moved", {
+                _: "This preview is for %{approved}, not %{asked}. Close this and open it again to preview %{asked}. Nothing was sent.",
+                approved: approvedCount,
+                asked: requestedCount,
+              })}
+            </p>
+          )}
+
           {failed && (
             <p className="text-sm text-destructive">
               {translate("resources.waitlist_entries.invite.preflight_failed", {
@@ -362,7 +438,8 @@ export const InviteToApplyDialog = ({
               busy ||
               preflight == null ||
               askedEligible.length === 0 ||
-              mapping == null
+              mapping == null ||
+              stale
             }
           >
             {translate("resources.waitlist_entries.invite.confirm", {

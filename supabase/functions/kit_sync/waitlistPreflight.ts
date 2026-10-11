@@ -100,7 +100,7 @@ export type PreflightDb = {
     resolved: number;
     createdBy: string | null;
     rows: ResolvedCandidate[];
-  }) => Promise<{ preflightId: number }>;
+  }) => Promise<{ preflightId: number; expiresAt: string | null }>;
 };
 
 /**
@@ -223,7 +223,7 @@ export const runWaitlistPreflight = async ({
     }
   }
 
-  const { preflightId } = await db.saveSnapshot({
+  const { preflightId, expiresAt } = await db.saveSnapshot({
     offerId,
     cohortId,
     requested,
@@ -234,6 +234,9 @@ export const runWaitlistPreflight = async ({
 
   return {
     preflightId,
+    // The server owns how long a preview is worth trusting. The dialog
+    // blocks Confirm on it rather than keeping its own copy of the rule.
+    expiresAt,
     requested,
     resolved: safeFound,
     // Enough people, or not — said plainly rather than left to be counted.

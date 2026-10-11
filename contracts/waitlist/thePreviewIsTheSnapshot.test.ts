@@ -89,7 +89,7 @@ const fakeDb = (candidates: PreflightCandidate[]) => {
             final_rank: row.finalRank,
           });
         }
-        return { preflightId: 77 };
+        return { preflightId: 77, expiresAt: null };
       },
     },
   };

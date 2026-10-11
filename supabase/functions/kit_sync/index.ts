@@ -316,7 +316,7 @@ Deno.serve(async (req: Request) =>
                   resolved: input.resolved,
                   created_by: input.createdBy,
                 })
-                .select("id")
+                .select("id, expires_at")
                 .single();
               if (error) throw new Error(error.message);
               if (input.rows.length > 0) {
@@ -332,7 +332,10 @@ Deno.serve(async (req: Request) =>
                   );
                 if (rowsError) throw new Error(rowsError.message);
               }
-              return { preflightId: preflight.id as number };
+              return {
+                preflightId: preflight.id as number,
+                expiresAt: (preflight.expires_at as string | null) ?? null,
+              };
             },
           },
         });
