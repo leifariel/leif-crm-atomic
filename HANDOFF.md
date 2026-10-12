@@ -681,9 +681,21 @@ waitlist count and list must mean `status = 'waiting'` only.**
 If 60 are waiting and 50 are successfully invited, the active Waitlist shows
 about 10 — not 60 with 50 silently skipped as already-invited.
 
-**This is live UX debt right now.** After the 11 Oct sends, GYU still displays
-53 when only 23 are genuinely waiting, and LE displays 63 when 38 are. The
-people are correctly `invited` in the database; the display is what is wrong.
+**Shipped and accepted 2026-10-11** (§8q). The programme pages read 62 and 53
+after the first batches, when 38 and 23 were genuinely waiting; they now read
+38 and 23, and the Contacts "Waitlist" filter 61 rather than 115.
+
+**FOUR QUESTIONS, FOUR ANSWERS. Do not collapse them back into one constant** —
+that is exactly what caused this:
+
+| Question | Answer | Where |
+|---|---|---|
+| Who is on the programme's waitlist now? | `waiting` only | `isStillWaiting` → `useWaitlistEntries` |
+| Is this Contact on a waitlist now? | `waiting` only | `contacts_summary.is_on_waitlist` |
+| May this person hold another place? | `{waiting, invited}` | `ACTIVE_WAITLIST_STATUSES`, mirroring `waitlist_entries_active_unique_idx` |
+| What has ever happened to them? | every status | the rows themselves, untouched |
+
+`contracts/waitlist/oneActiveWaitlistRule.test.ts` holds all four apart.
 
 Historical entries stay in storage. A successful invitation preserves
 provenance: `joined_at`, `invited_at`, the invitation batch, the invitation
@@ -886,7 +898,7 @@ across both systems.**
 | Phase | Work |
 |---|---|
 | **0** | ~~Production acceptance of `9510906e`~~ — **DONE 2026-10-11** (§8p). |
-| **1** | ~~Correct active Waitlist semantics~~ — **BUILT 2026-10-11** (§8q), awaiting deploy and Leif's read of the two counts. |
+| **1** | ~~Correct active Waitlist semantics~~ — **PRODUCTION ACCEPTED 2026-10-11** (§8q). |
 | **2** | Create/reuse the same-offer Interested Opportunity on confirmed invitation. Introduce the durable Application Outreach authority. Backfill the 55 without resending anything. |
 | **3** | Interested derives from a live Application Outreach / actionable next step. Expired outreach leaves Interested for Nurture. |
 | **4** | Unify every application-invitation entry point — waitlist, Instagram/manual, future referral/email — onto the one lifecycle. |
@@ -4381,7 +4393,28 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8q. Active waitlist means waiting — BUILT, NOT YET DEPLOYED (2026-10-11)
+## 8q. Active waitlist means waiting — PRODUCTION ACCEPTED 2026-10-11
+
+**ACCEPTED.** Leif hard-reloaded production and read the rendered pages:
+
+    The Living Example    Waitlist · 38
+    Growing Yourself Up   Waitlist · 23
+    Contacts "Waitlist"   61
+
+Independently verified against production at the same time: authoritative
+`status = 'waiting'` is 38 for LE and 23 for GYU; `contacts_summary` with
+`is_on_waitlist` returns 61, and that set is **identical in both directions**
+to the set of Contacts holding a waiting entry — no invited-only,
+converted-only or removed-only Contact reads true. Migration applied exactly
+once, production total 166, live view now
+`bool_or(w.status = 'waiting'::text)`.
+
+History came through untouched: 119 waitlist entries, 55 invitations, 2
+batches, 55 `invited_at` values, `shimes06@gmail.com` still converted with
+application 244 and deal 351 at `application_received`. Zero side effects —
+no batch, invitation, Kit operation, `invited_at` transition, application or
+Opportunity was created by the deploy. The duplicate-prevention index still
+reads `{waiting, invited}`.
 
 **One migration, `20261011200000`, takes the chain to 166.** It replaces a
 view definition and asserts nothing about any row, so it is deterministic and
@@ -7106,14 +7139,18 @@ work (§8h). The `9510906e` snapshot-stability repair was accepted in production
 the same evening with a zero-send test (§8p). The first conversion has already
 landed on its own.
 
-**The next slice is §4b Phase 1: ACTIVE WAITLIST SEMANTICS.** §4b is canonical —
-read it before touching invitations, follow-ups or pipeline stages:
+**§4b Phase 1 is PRODUCTION ACCEPTED** (§8q, tip `4c6ea71b`, production at
+166 migrations). Active waitlist means waiting, on the programme pages and in
+the Contacts filter alike: LE 38, GYU 23, Contacts 61, with every historical
+row intact.
 
-1. Active Waitlist means `waiting` only. GYU currently displays 53 where 23 are
-   genuinely waiting; the data is right and the display is wrong.
-2. Create/reuse the same-offer Interested Opportunity on a confirmed invitation,
-   introduce the durable **Application Outreach** authority, and backfill the 55
-   people invited today **without resending anything**.
+**The next slice is §4b Phase 2.** §4b is canonical — read it before touching
+invitations, follow-ups or pipeline stages:
+
+1. ~~Active Waitlist means `waiting` only.~~ **Done.**
+2. **NEXT:** create/reuse the same-offer Interested Opportunity on a confirmed
+   invitation, introduce the durable **Application Outreach** authority, and
+   backfill the 55 people invited on 11 Oct **without resending anything**.
 3. Interested derives from a live outreach; exhausted outreach falls to Nurture.
 4. Unify every invitation entry point — waitlist, Instagram, manual — onto that
    one lifecycle.
