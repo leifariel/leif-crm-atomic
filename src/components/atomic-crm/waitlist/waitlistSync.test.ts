@@ -94,10 +94,40 @@ const buildProvider = (entries: WaitlistEntry[], deals: Deal[] = []) =>
   });
 
 describe("Opportunity creation converts a compatible Waitlist Entry (§4)", () => {
-  it("creating an LE Opportunity through the normal New Opportunity flow converts the offer-level LE entry — the Sarah Jones contradiction", async () => {
+  it("a real Opportunity converts the offer-level LE entry — the Sarah Jones contradiction", async () => {
     const dataProvider = buildProvider([buildEntry({ status: "waiting" })]);
 
     const { data: deal } = await dataProvider.create<Deal>("deals", {
+      data: {
+        contact_id: CONTACT_ID,
+        offer_id: LE_OFFER_ID,
+        stage: "application_received",
+        outcome: null,
+        amount: 4000,
+        description: "",
+      },
+    });
+
+    const { data: entry } = await dataProvider.getOne<WaitlistEntry>(
+      "waitlist_entries",
+      { id: ENTRY_ID },
+    );
+    expect(entry.status).toBe("converted");
+    expect(entry.converted_at).not.toBeNull();
+    expect(entry.converted_opportunity_id).toBe(deal.id);
+  });
+
+  it("an Interested Opportunity does NOT convert it — an invitation must not spend the place", async () => {
+    // §4b Phase 2A0. Sarah Jones's actual contradiction was an APPROVED
+    // Opportunity beside a Waiting entry, and that still converts. What
+    // changed is the bottom of the pipeline: Phase 2 creates an Interested
+    // Opportunity the moment an invitation is delivered, and if that spent
+    // the waitlist place then all 54 people resting at `invited` would have
+    // been converted by a backfill. Interested means the conversation has
+    // started, not that the sale has.
+    const dataProvider = buildProvider([buildEntry({ status: "waiting" })]);
+
+    await dataProvider.create<Deal>("deals", {
       data: {
         contact_id: CONTACT_ID,
         offer_id: LE_OFFER_ID,
@@ -112,9 +142,9 @@ describe("Opportunity creation converts a compatible Waitlist Entry (§4)", () =
       "waitlist_entries",
       { id: ENTRY_ID },
     );
-    expect(entry.status).toBe("converted");
-    expect(entry.converted_at).not.toBeNull();
-    expect(entry.converted_opportunity_id).toBe(deal.id);
+    expect(entry.status).toBe("waiting");
+    expect(entry.converted_at).toBeNull();
+    expect(entry.converted_opportunity_id).toBeNull();
   });
 
   it("an Opportunity advancing to Approved through a plain edit (not the waitlist button) also converts it", async () => {
@@ -206,7 +236,7 @@ describe("Opportunity creation converts a compatible Waitlist Entry (§4)", () =
       data: {
         contact_id: CONTACT_ID,
         offer_id: LE_OFFER_ID,
-        stage: "interested",
+        stage: "application_received",
         outcome: null,
         amount: 4000,
         description: "",
@@ -236,7 +266,7 @@ describe("GYU compatibility rules (§4)", () => {
         contact_id: CONTACT_ID,
         offer_id: GYU_OFFER_ID,
         cohort_id: NOVEMBER_COHORT_ID,
-        stage: "interested",
+        stage: "application_received",
         outcome: null,
         amount: 1400,
         description: "",
@@ -264,7 +294,7 @@ describe("GYU compatibility rules (§4)", () => {
         contact_id: CONTACT_ID,
         offer_id: GYU_OFFER_ID,
         cohort_id: NOVEMBER_COHORT_ID,
-        stage: "interested",
+        stage: "application_received",
         outcome: null,
         amount: 1400,
         description: "",
@@ -292,7 +322,7 @@ describe("GYU compatibility rules (§4)", () => {
         contact_id: CONTACT_ID,
         offer_id: GYU_OFFER_ID,
         cohort_id: NOVEMBER_COHORT_ID,
-        stage: "interested",
+        stage: "application_received",
         outcome: null,
         amount: 1400,
         description: "",
@@ -327,7 +357,7 @@ describe("GYU compatibility rules (§4)", () => {
         contact_id: CONTACT_ID,
         offer_id: GYU_OFFER_ID,
         cohort_id: NOVEMBER_COHORT_ID,
-        stage: "interested",
+        stage: "application_received",
         outcome: null,
         amount: 1400,
         description: "",
@@ -355,7 +385,7 @@ describe("idempotency", () => {
       data: {
         contact_id: CONTACT_ID,
         offer_id: LE_OFFER_ID,
-        stage: "interested",
+        stage: "application_received",
         outcome: null,
         amount: 4000,
         description: "",

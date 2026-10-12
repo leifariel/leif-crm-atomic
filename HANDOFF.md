@@ -4393,6 +4393,58 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8r. A waitlist place is spent when the sale starts — BUILT, NOT YET DEPLOYED (2026-10-12)
+
+§4b **Phase 2A0**, and a prerequisite for the rest of Phase 2.
+
+`handle_deal_waitlist_sync()` converted a waiting/invited place whenever ANY
+active same-offer Opportunity was written, **whatever stage it was at**. Phase
+2 will create an Interested Opportunity the moment an invitation is delivered,
+so that rule would have flipped every person resting at `invited` straight to
+`converted` — as an invisible side effect of a backfill.
+
+Leif's ruling: **`invited` means invited and not yet progressed; `converted`
+begins at same-offer Application Received or later.**
+
+### Two rules now, and they must not be merged back together
+
+| | Converts when | Who |
+|---|---|---|
+| **AUTOMATIC** | the Deal is at `application_received`, `approved`, `call_booked`, `decision`, `won` or legacy `onboarding` | the `on_deal_waitlist_sync` trigger; `syncWaitlistForActiveDeal` behind the two `deals` lifecycle hooks |
+| **EXPLICIT** | always — the business event itself spent the place | `submit_public_application` and the manual-application RPC do their own UPDATE; `convertCompatibleWaitlistEntries` from Convert to Opportunity (BOTH branches), submitApplication and createManualApplication |
+
+Stages are **enumerated, not ordered**, so one added later converts nobody
+until somebody decides it should — the same fail-closed shape the
+manual-application `array_position(...) NOT BETWEEN 1 AND 3` guard already
+uses. `won` is included because a won sale carries no outcome and is certainly
+not still waiting.
+
+**The trap worth remembering:** `convertToOpportunity` creates its Opportunity
+at `interested` and relied entirely on the automatic hook. Gating the hook
+without giving that branch an explicit call would have silently broken Leif's
+own Convert to Opportunity button — the person would stay on the waitlist
+after she pressed it. `createManualApplication` creates at
+`application_received`, so it needed nothing.
+
+### Sarah Jones is still fixed
+
+Her contradiction was an **Approved** Opportunity beside a Waiting entry, and
+Approved still converts. What changed is only the bottom of the pipeline.
+
+### Reclassifies nothing on deploy
+
+Production holds **zero active Opportunities at stage `interested`** — all 39
+interested rows are concluded (18 lost, 21 nurture). Verified before and after
+writing it. No existing waitlist entry can change when the function is
+replaced.
+
+### Still open for Phase 2
+
+The Oct 11 backfill still needs the **exact LE and GYU Kit automation
+durations**, or a deliberate CRM follow-up window chosen by Leif, so an
+`executor = kit` Outreach has a CRM-owned end. No backfill until that is
+known.
+
 ## 8q. Active waitlist means waiting — PRODUCTION ACCEPTED 2026-10-11
 
 **ACCEPTED.** Leif hard-reloaded production and read the rendered pages:

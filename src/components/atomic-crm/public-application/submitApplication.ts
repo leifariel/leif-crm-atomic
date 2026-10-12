@@ -9,7 +9,7 @@ import {
   ensureReviewApplicationTask,
   findPendingReviewApplicationTask,
 } from "../applications/reviewApplicationTask";
-import { syncWaitlistForActiveDeal } from "../waitlist/waitlistSync";
+import { convertCompatibleWaitlistEntries } from "../waitlist/waitlistSync";
 
 // Native Application Intake slice (§1-§14): the dev/FakeRest-backed half of
 // the dual-implementation intake path. Mirrors reviewApplication.ts's own
@@ -246,7 +246,7 @@ export const submitApplication = async (
     // sync (providers/fakerest/dataProvider.ts -> waitlistSync.ts) never
     // fires for this path — call it directly, mirroring
     // waitlist/waitlistActions.ts's convertToOpportunity exactly (§13).
-    await syncWaitlistForActiveDeal(deal, dataProvider);
+    await convertCompatibleWaitlistEntries(deal, dataProvider);
   }
 
   const application = existingPendingApplication

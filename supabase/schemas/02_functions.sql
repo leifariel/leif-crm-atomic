@@ -981,8 +981,12 @@ begin
 end;
 $$;
 
--- Human-acceptance repair pass, §4/§5: a Contact cannot stay Waiting/
--- Invited for a relationship they already have an active Opportunity for
+-- A Contact cannot stay Waiting/Invited once a same-offer sale has really
+-- started. "Really started" means stage application_received or later, NOT
+-- merely an active Opportunity: §4b Phase 2 creates an Interested
+-- Opportunity the moment an invitation is delivered, and the older rule
+-- would have converted everybody the instant that happened (migration
+-- 20261012100000). Invited means invited and not yet progressed
 -- (mirrors src/components/atomic-crm/waitlist/waitlistSync.ts exactly —
 -- keep both in sync). "Active" = not archived and no exit outcome
 -- (needs_higher_care/not_fit/nurture/lost); Won counts as active here too,
@@ -995,9 +999,22 @@ $$;
 CREATE OR REPLACE FUNCTION "public"."handle_deal_waitlist_sync"() RETURNS "trigger"
     LANGUAGE "plpgsql"
     SET "search_path" TO 'public'
-    AS $$
+    AS $
 begin
-  if new.archived_at is null and new.outcome is null then
+  -- A place is spent when the SALE really starts. Stage says whether it has.
+  --
+  -- The stages listed are every stage at or past application_received,
+  -- enumerated rather than ordered, so a stage added later converts nobody
+  -- until somebody decides it should. 'won' belongs here because a won sale
+  -- carries no outcome and certainly is not still waiting; legacy
+  -- 'onboarding' is far past a review and belongs for the same reason.
+  if new.archived_at is null
+     and new.outcome is null
+     and new.stage in (
+       'application_received', 'approved', 'call_booked', 'decision',
+       'won', 'onboarding'
+     )
+  then
     update waitlist_entries
     set status = 'converted',
         converted_at = now(),
@@ -1009,7 +1026,7 @@ begin
   end if;
   return new;
 end;
-$$;
+$;
 
 CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER

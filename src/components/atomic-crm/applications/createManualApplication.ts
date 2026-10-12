@@ -6,7 +6,7 @@ import {
   isActiveOpportunity,
   type ActiveSalesStage,
 } from "../deals/dealActivity";
-import { syncWaitlistForActiveDeal } from "../waitlist/waitlistSync";
+import { convertCompatibleWaitlistEntries } from "../waitlist/waitlistSync";
 
 // An Application Leif entered herself — and the Opportunity that has to
 // come with it.
@@ -209,7 +209,7 @@ export const createManualApplicationMirror = async (
   // waitlist sync never fires for that branch — the canonical function
   // does this same explicit sync for the same reason.
   if (existingDeal) {
-    await syncWaitlistForActiveDeal(existingDeal, dataProvider);
+    await convertCompatibleWaitlistEntries(existingDeal, dataProvider);
   }
 
   const { data: application } = await dataProvider.create<Application>(

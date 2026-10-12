@@ -11,7 +11,7 @@ import { isContactDoNotEngage } from "../contacts/doNotEngageGuard";
 import type { Deal, Offer, WaitlistEntry } from "../types";
 import { isActiveOpportunity } from "../deals/dealActivity";
 import { recordManualInvitation } from "./waitlistInvitations";
-import { syncWaitlistForActiveDeal } from "./waitlistSync";
+import { convertCompatibleWaitlistEntries } from "./waitlistSync";
 
 export type WaitlistTransitionResult =
   | { applied: true }
@@ -126,16 +126,18 @@ export const convertToOpportunity = async (
     // THIS entry (and any other compatible one, e.g. a sibling general-
     // Offer-level entry — §4) Converted, so no separate update is needed
     // here.
-    await syncWaitlistForActiveDeal(existingActiveDeal, dataProvider);
+    await convertCompatibleWaitlistEntries(existingActiveDeal, dataProvider);
   } else {
     const { data: offer } = await dataProvider.getOne<Offer>("offers", {
       id: entry.offer_id,
     });
-    // The "deals" afterCreate hook (dataProvider.ts) runs
-    // syncWaitlistForActiveDeal for the new deal before create() resolves
-    // (FakeRest calls are sequential/awaited — see ensureEnrollmentFor-
-    // WonDeal's own comment) — this entry is already Converted by the
-    // time this call returns; nothing further to do here either.
+    // The deal is created at Interested, and since §4b Phase 2A0 the
+    // automatic "deals" afterCreate sync deliberately does NOT convert a
+    // waitlist place for an Interested Opportunity — otherwise every
+    // invitation would spend one. So this branch converts EXPLICITLY, below,
+    // for the same reason the reuse branch does: Leif pressing Convert to
+    // Opportunity is an intentional operator decision that the place is
+    // spent, not an accidental consequence of a Deal existing.
     const { data: createdDeal } = await dataProvider.create<Deal>("deals", {
       data: {
         contact_id: entry.contact_id,
@@ -150,6 +152,7 @@ export const convertToOpportunity = async (
     });
     dealId = createdDeal.id;
     reusedExisting = false;
+    await convertCompatibleWaitlistEntries(createdDeal, dataProvider);
   }
 
   return { applied: true, dealId, reusedExisting };

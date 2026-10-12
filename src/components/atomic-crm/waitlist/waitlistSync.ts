@@ -20,16 +20,36 @@ import type { DataProvider } from "ra-core";
 import type { Deal, WaitlistEntry } from "../types";
 import { ACTIVE_WAITLIST_STATUSES } from "./waitlistConstants";
 
-// A Deal "establishes an active sales relationship" once it exists without
-// having exited — archived or given an exit outcome (needs_higher_care /
-// not_fit / nurture / lost). Deliberately broader than waitlistActions.ts's
-// own isActiveDeal (which excludes Won, for a DIFFERENT purpose — deciding
-// whether to reuse a deal instead of creating a duplicate): a Won deal is
-// certainly not "still waiting" either, so it must still convert any
-// compatible entry.
-const establishesActiveSalesRelationship = (
-  deal: Pick<Deal, "archived_at" | "outcome">,
-) => deal.archived_at == null && deal.outcome == null;
+// A Deal spends a waitlist place once the SALE HAS REALLY STARTED: it has
+// not exited (archived, or an exit outcome) AND it has reached stage
+// application_received or later.
+//
+// The stage half is the §4b Phase 2A0 ruling. Phase 2 creates an Interested
+// Opportunity the moment an invitation is delivered, and without it every
+// invited person would be converted the instant that happened. Invited means
+// invited and not yet progressed; converted begins at Application Received.
+//
+// Stages are ENUMERATED rather than ordered, so one added later converts
+// nobody until somebody decides it should. Won is here because a won sale
+// carries no outcome and is certainly not still waiting; legacy onboarding
+// for the same reason. Mirrors handle_deal_waitlist_sync() exactly —
+// migration 20261012100000 — and contracts/waitlist/aPlaceIsSpentWhenTheSale
+// Starts.test.ts pins the two lists together.
+const SPENDS_A_WAITLIST_PLACE: ReadonlySet<string> = new Set([
+  "application_received",
+  "approved",
+  "call_booked",
+  "decision",
+  "won",
+  "onboarding",
+]);
+
+const theSaleHasReallyStarted = (
+  deal: Pick<Deal, "archived_at" | "outcome" | "stage">,
+) =>
+  deal.archived_at == null &&
+  deal.outcome == null &&
+  SPENDS_A_WAITLIST_PLACE.has(deal.stage);
 
 // Compatible = same Contact + Offer, and:
 // - a cohort-specific entry (cohort_id set) matches only that exact Cohort
@@ -43,16 +63,25 @@ const isCompatible = (entry: WaitlistEntry, deal: Deal) =>
   entry.offer_id === deal.offer_id &&
   (entry.cohort_id == null || entry.cohort_id === deal.cohort_id);
 
-// Finds every active Waitlist Entry compatible with this Deal and marks
-// them Converted, linked to it. Idempotent (only touches entries still
-// waiting/invited) and safe to call redundantly — a no-op once every
-// compatible entry is already Converted.
-export const syncWaitlistForActiveDeal = async (
+/**
+ * Marks every compatible Waitlist Entry Converted, linked to this Deal,
+ * WITHOUT asking what stage the Deal is at.
+ *
+ * For the callers that already know the place is spent because of something
+ * that just happened outside the Deal row: an application arrived
+ * (submitApplication, createManualApplication) or Leif pressed Convert to
+ * Opportunity (waitlistActions). Each reuses an existing Deal and so writes
+ * nothing to "deals", which is why the automatic path below never fires for
+ * them. The SQL side does exactly this too — submit_public_application() and
+ * the manual-application RPC run their own UPDATE in the reuse branch, and
+ * only the TRIGGER is stage-gated.
+ *
+ * Idempotent: only touches entries still waiting/invited.
+ */
+export const convertCompatibleWaitlistEntries = async (
   deal: Deal,
   dataProvider: DataProvider,
 ): Promise<void> => {
-  if (!establishesActiveSalesRelationship(deal)) return;
-
   const { data: entries } = await dataProvider.getList<WaitlistEntry>(
     "waitlist_entries",
     {
@@ -82,4 +111,22 @@ export const syncWaitlistForActiveDeal = async (
       }),
     ),
   );
+};
+
+/**
+ * The AUTOMATIC rule, wired into the "deals" afterCreate/afterUpdate hooks:
+ * a Deal that has really started a sale spends any compatible waitlist place.
+ *
+ * This is the mirror of the `on_deal_waitlist_sync` trigger, and it is
+ * stage-gated for the same reason the trigger is — see
+ * `theSaleHasReallyStarted`. An Interested Opportunity, including the one
+ * §4b Phase 2 will create when an invitation is delivered, leaves the place
+ * exactly where it was.
+ */
+export const syncWaitlistForActiveDeal = async (
+  deal: Deal,
+  dataProvider: DataProvider,
+): Promise<void> => {
+  if (!theSaleHasReallyStarted(deal)) return;
+  await convertCompatibleWaitlistEntries(deal, dataProvider);
 };
