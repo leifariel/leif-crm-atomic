@@ -885,7 +885,7 @@ across both systems.**
 
 | Phase | Work |
 |---|---|
-| **0** | Finish production acceptance of `9510906e` with the zero-send hard-reload test (§8p). |
+| **0** | ~~Production acceptance of `9510906e`~~ — **DONE 2026-10-11** (§8p). |
 | **1** | Correct active Waitlist semantics: UI/count = `waiting` only; confirmed invitation removes the person from the active Waitlist; preserve historical provenance. |
 | **2** | Create/reuse the same-offer Interested Opportunity on confirmed invitation. Introduce the durable Application Outreach authority. Backfill the 55 without resending anything. |
 | **3** | Interested derives from a live Application Outreach / actionable next step. Expired outreach leaves Interested for Nurture. |
@@ -978,10 +978,10 @@ classes. **Full record, and the tooling debt carried forward, in §8.**
 
 ## 6. Waiting on Leif — do not guess these
 
-**SNAPSHOT-STABILITY ACCEPTANCE — OPEN (§8p).** One hard reload, one waitlist
-preview left open a minute, then Cancel. It sends nothing and consumes nothing,
-and it is the last thing standing between `9510906e` and a sealed waitlist
-slice.
+**SNAPSHOT-STABILITY ACCEPTANCE — CLOSED 2026-10-11 (§8p).** Leif ran the
+zero-send test on the deployed bundle and confirmed the human fact the database
+could not: she opened the dialog twice. One preflight per opening, no
+replacement, nothing sent. The waitlist invitation slice is complete.
 
 **KIT — DEPLOYED AND OPERATIONALLY ACCEPTED 2026-09-28 (§8b-kit-live).**
 **(1) CLOSED 2026-10-05 (§8b-apps-accepted).** Leif has written both
@@ -4381,27 +4381,37 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8p. The approved preflight must be the sent preflight — DEPLOYED, ACCEPTANCE OPEN (2026-10-11)
+## 8p. The approved preflight must be the sent preflight — PRODUCTION ACCEPTED 2026-10-11
 
-**STATUS. `9510906e` is pushed, deployed and CI green — and its production
-acceptance is still open.** Both real sends were made from browser tabs that had
-loaded the OLDER bundle: GYU preflight 7 was created at 13:01:58 and the repair
-reached production at 13:36:51, so the tab that sent at 13:46:32 was still
-running the unguarded code. The invariant held on both sends — one preflight per
-opening, the audited id consumed — but it held under the old code, by luck,
-because nothing changed a dependency identity inside those windows.
+**ACCEPTED on the deployed bundle.** Leif hard-reloaded production, opened GYU →
+Waitlist with "Invite oldest = 1", let the preview load, left the dialog open
+over a minute, and clicked Cancel.
 
-**The remaining acceptance costs nothing and sends nothing:**
+| | |
+|---|---|
+| preflights created | **one per opening** — 10 at 16:37:29, 11 at 18:01:04 |
+| replacement during an opening | **none** |
+| Cancel consumed | nothing — both remain `open`, `used_at NULL`, `batch_id NULL` |
+| mutation since 16:00 | 0 batches · 0 invitations · 0 Kit operations · 0 `invited_at` · 0 applications |
+| the only rows written | the two previews' 68 candidate rows, which is all a preview writes |
 
-1. Hard-reload production so the new bundle loads.
-2. Open a waitlist preview (any number) on the new bundle.
-3. Leave it open through a minute or more of ordinary re-renders.
-4. Cancel.
-5. Read production: exactly one preflight created, zero replacement preflights,
-   zero invitation mutation.
+**The fact the database could not supply.** Two preflights existed 1h23m35s
+apart, and nothing in Postgres records which dialog opening produced which —
+there is no session or dialog identifier on the row. Every replacement this bug
+ever produced was 20s to 2m47s apart, so 84 minutes was far outside the
+pattern, but pattern is not proof. **Leif confirmed she opened the dialog
+twice.** One opening, one preflight, twice over.
 
-A preview writes a snapshot and nothing else — no tag, no email, nobody's place
-moves — and Cancel consumes nothing. **Do not forget this item.**
+Worth keeping for the next time this question arises: a preflight row carries no
+provenance for the dialog instance that created it, so "one opening or two?"
+is unanswerable from production alone. If that distinction ever needs to be
+machine-checkable, the row needs to say which opening it belongs to.
+
+**The two real sends did NOT exercise this repair**, and that remains true: GYU
+preflight 7 was created at 13:01:58 and the repair reached production at
+13:36:51, so the tab that sent at 13:46:32 was still running the unguarded code.
+The invariant held on both sends by luck — nothing changed a dependency identity
+inside those windows. This acceptance is what proves the guard itself.
 
 
 
@@ -5298,6 +5308,16 @@ Delivery is not instant, and that is correct: the kit-sync cron runs every five
 minutes and claims 25 per run, so GYU went out as 25 at 13:50 and the last 5 at
 13:55. LE's batch happened to land three seconds before a boundary, which is the
 only reason it looked instantaneous.
+
+**The first conversion landed the same day, unprompted.**
+`shimes06@gmail.com` (contact 180, LE rank 6) was invited at 13:05:14 and
+submitted an LE application at **14:39:07** — 94 minutes later. That produced
+application 244 (offer 1, pending), **deal 351 at stage `application_received`**,
+Kit operation 132 (`MiniDD_Applicant`, succeeded), and moved waitlist entry 13
+from `invited` to `converted`. So the whole chain ran on its own: waiting →
+invited → applied → converted, with an Opportunity at Application Received. This
+is exactly the lifecycle §4b describes, and it happened before any of §4b was
+built.
 
 **The UX debt this exposed is canonical in §4b:** the programme waitlist count
 still includes historical invited people, so GYU reads 53 where 23 are genuinely
@@ -6969,16 +6989,15 @@ The next Claude session should, in order:
 **The exact next action as of 2026-10-11:** `origin/main` = `9510906e`,
 production at **165 migrations**, working tree clean, nothing unpushed.
 
-The waitlist slice is all but sealed. **55 real invitations went out today** —
-LE 25 (batch 1, preflight 9) and GYU 30 (batch 2, preflight 7) — all 55 Kit
-operations succeeded, no failures, no collateral queue work (§8h). **One
-acceptance is open and it is cheap:** the `9510906e` snapshot-stability repair
-is deployed and CI green but was never exercised, because both sends came from
-tabs running the older bundle. Close it with the zero-send hard-reload test in
-§8p before starting anything else.
+**The waitlist invitation slice is COMPLETE and sealed.** 55 real invitations
+went out on 11 Oct — LE 25 (batch 1, preflight 9) and GYU 30 (batch 2,
+preflight 7) — all 55 Kit operations succeeded, no failures, no collateral queue
+work (§8h). The `9510906e` snapshot-stability repair was accepted in production
+the same evening with a zero-send test (§8p). The first conversion has already
+landed on its own.
 
-**Then the queue, in order, is §4b's phasing** — and §4b is canonical, so read
-it before touching invitations, follow-ups or pipeline stages:
+**The next slice is §4b Phase 1: ACTIVE WAITLIST SEMANTICS.** §4b is canonical —
+read it before touching invitations, follow-ups or pipeline stages:
 
 1. Active Waitlist means `waiting` only. GYU currently displays 53 where 23 are
    genuinely waiting; the data is right and the display is wrong.
