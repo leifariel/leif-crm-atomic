@@ -886,7 +886,7 @@ across both systems.**
 | Phase | Work |
 |---|---|
 | **0** | ~~Production acceptance of `9510906e`~~ — **DONE 2026-10-11** (§8p). |
-| **1** | Correct active Waitlist semantics: UI/count = `waiting` only; confirmed invitation removes the person from the active Waitlist; preserve historical provenance. |
+| **1** | ~~Correct active Waitlist semantics~~ — **BUILT 2026-10-11** (§8q), awaiting deploy and Leif's read of the two counts. |
 | **2** | Create/reuse the same-offer Interested Opportunity on confirmed invitation. Introduce the durable Application Outreach authority. Backfill the 55 without resending anything. |
 | **3** | Interested derives from a live Application Outreach / actionable next step. Expired outreach leaves Interested for Nurture. |
 | **4** | Unify every application-invitation entry point — waitlist, Instagram/manual, future referral/email — onto the one lifecycle. |
@@ -4380,6 +4380,90 @@ parent record for every reference. For a deal that was a no-op; for any
 parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
+
+## 8q. Active waitlist means waiting — BUILT, NOT YET DEPLOYED (2026-10-11)
+
+§4b Phase 1. After the first real batches, the programme pages still read
+**Waitlist · 62** for The Living Example and **Waitlist · 53** for Growing
+Yourself Up, when 38 and 23 people were genuinely still waiting. The 55 who
+had just been invited were counted, listed, searchable and selectable as
+though nothing had happened.
+
+### The boundary, and why it was one constant doing two jobs
+
+Every waitlist surface — both programme pages, the cohort page, the Programs
+hub card, the Dashboard capacity card, the section header count, the list, the
+search and the selection — reads through **one** hook,
+`useWaitlistEntries`. That hook filtered on `ACTIVE_WAITLIST_STATUSES`.
+
+That set means `{waiting, invited}` and exists to mirror the database's
+partial unique index. It answers **"may this person be given another place?"**
+— no, while they hold one of those two. It had also been pressed into
+answering **"is this person still waiting for Leif?"**, and its own comment
+claimed both jobs out loud:
+
+> the only two statuses that count toward duplicate prevention, program
+> waitlist counts, and Person-page "currently waiting" displays
+
+Those are different questions. Somebody invited still holds their place and is
+no longer waiting.
+
+### The repair
+
+`isStillWaiting` is now the operational rule, named and documented beside the
+set it must not be confused with, and `useWaitlistEntries` is the only place
+that applies it. Nothing else changed: no component filters status for itself,
+so the header cannot disagree with the rows beneath it.
+
+**Nothing was removed from the database, and no migration was added.** An
+invited, converted or removed entry keeps its row, its `joined_at`, its
+`invited_at` and its batch; it simply stops being part of the answer to "who
+is still waiting".
+
+### What deliberately did NOT change
+
+| Surface | Why it keeps `{waiting, invited}` |
+|---|---|
+| `waitlistEntryValidation.ts` | duplicate prevention — an invited person still holds their place |
+| `waitlistSync.ts` | a won deal converts the place, and an invited place converts too |
+| `ContactWaitlists.tsx` | Contact-side lifetime history |
+| `ContactSalesAction.tsx` | Contact-side — an invited person already has something in flight |
+| `contacts_summary.is_on_waitlist` | a Contact FILTER chip ("On waitlist"), not the programme list |
+| fakerest `dataProvider` / `contactRelationshipFields` | mirror the DB index and the view |
+| `INVITABLE_WAITLIST_STATUSES` + `waitlist_invitation_candidates()` | the invitation AUTHORITY, which still considers invited people and excludes them with reason `already-invited` — the audit trail depends on it |
+
+**UI truth and database safety are separate layers, and this slice only moved
+the first.** The browser still cannot bypass the live Kit consent check,
+already-invited / already-applied / already-a-client / DNE / no-email are still
+excluded server-side, and `invite_from_preflight` still re-checks every
+candidate at consume time. Filtering the visible list did not become a safety
+boundary.
+
+### Open question, not decided here
+
+`contacts_summary.is_on_waitlist` still means `{waiting, invited}`, so the
+Contacts "On waitlist" filter includes people who have been invited. That may
+or may not be what Leif wants it to mean now. It is a Contact-relationship
+filter rather than the programme list, so it was left alone rather than
+changed silently.
+
+### Debt recorded, not fixed
+
+`waitlist_entries.updated_at` is not maintained — an entry changed status on
+11 Oct while the column still read 2026-09-17. Nothing in this slice depends on
+it, and it was deliberately not used as proof of transition timing. If a later
+slice needs reliable row-change timing, that column needs a trigger first.
+
+### Expected in production after deploy
+
+    The Living Example    Waitlist · 38
+    Growing Yourself Up   Waitlist · 23
+
+and expanding each shows exactly those people. Authoritative counts read from
+production at build time: LE 38 waiting / 24 invited / 2 converted / 1 removed;
+GYU 23 waiting / 30 invited / 1 removed. GYU's page reads **across cohorts** —
+its offer-level-only count is 0, so a page that forgot that flag would show
+nothing.
 
 ## 8p. The approved preflight must be the sent preflight — PRODUCTION ACCEPTED 2026-10-11
 

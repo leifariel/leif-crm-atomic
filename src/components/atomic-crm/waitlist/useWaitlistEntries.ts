@@ -1,7 +1,7 @@
 import { useGetList, useGetMany, type Identifier } from "ra-core";
 
 import type { Contact, WaitlistEntry, WaitlistEntryStatus } from "../types";
-import { ACTIVE_WAITLIST_STATUSES } from "./waitlistConstants";
+import { isStillWaiting } from "./waitlistConstants";
 
 export type WaitlistEntryRow = {
   entryId: Identifier;
@@ -26,10 +26,12 @@ export type WaitlistEntryRow = {
 // Backs every "Waitlist" section (Living Example / Group Program / Cohort
 // pages, §7/§8) and their counts (Programs hub / Dashboard cards, §6/§15,
 // and program capacity cards) — real WaitlistEntry + Contact data only.
-// Returns *active* (waiting/invited) entries only: a Program/Cohort page's
-// live waitlist is a current-operations view, not a history log — see
-// waitlist/useContactWaitlists.ts for the Contact-side lifetime history
-// (including converted/removed).
+// Returns the people STILL WAITING to be invited, and nobody else: a
+// Program/Cohort page's waitlist is a current-operations view, not a history
+// log. Invited, converted and removed entries stay in the table with their
+// provenance intact and simply stop being part of this answer — see
+// waitlist/useContactWaitlists.ts for the Contact-side lifetime history, and
+// HANDOFF §4b for why "active waitlist" means waiting only.
 //
 // `cohortId: null` means offer-level entries only (cohort_id IS NULL —
 // general "wants this Offer" waiting, never silently including
@@ -72,9 +74,7 @@ export const useWaitlistEntries = ({
       { enabled: cohortId != null || offerId != null },
     );
 
-  const activeEntries = (entries ?? []).filter((entry) =>
-    ACTIVE_WAITLIST_STATUSES.has(entry.status),
-  );
+  const activeEntries = (entries ?? []).filter(isStillWaiting);
 
   const contactIds = [
     ...new Set(activeEntries.map((entry) => entry.contact_id)),
