@@ -48,8 +48,6 @@ const PLACE_HELD_CALLERS: Record<string, string> = {
   [`${WAITLIST}/ContactWaitlists.tsx`]: "Contact-side lifetime history",
   [`${WAITLIST}/ContactSalesAction.tsx`]:
     "Contact-side: an invited person already has something in flight",
-  "src/components/atomic-crm/providers/fakerest/contactRelationshipFields.ts":
-    "mirrors contacts_summary.is_on_waitlist",
   "src/components/atomic-crm/providers/fakerest/dataProvider.ts":
     "mirrors the DB partial unique index",
 };
@@ -102,6 +100,28 @@ describe("the operational waitlist has exactly one definition", () => {
         "ACTIVE_WAITLIST_STATUSES",
       );
     }
+  });
+
+  it("the Contacts filter and its demo mirror both mean currently waiting", () => {
+    // contacts_summary.is_on_waitlist was the last surface answering the
+    // operational question with the place-held set. Migration
+    // 20261011200000 corrected the view; this holds the declarative schema
+    // and the fakerest mirror to the same meaning, so a demo-mode answer
+    // and a production answer cannot diverge.
+    const view = read("supabase/schemas/03_views.sql");
+    expect(view).toContain("bool_or(w.status = 'waiting') as is_on_waitlist");
+    expect(
+      view,
+      "the view must not go back to counting invited people as waiting",
+    ).not.toContain("bool_or(w.status in ('waiting', 'invited'))");
+
+    const mirror = read(
+      "src/components/atomic-crm/providers/fakerest/contactRelationshipFields.ts",
+    );
+    expect(mirror).toContain(
+      "is_on_waitlist: contactWaitlistEntries.some(isStillWaiting)",
+    );
+    expect(mirror).not.toContain("ACTIVE_WAITLIST_STATUSES");
   });
 
   it("the place-held set still mirrors the database index", () => {

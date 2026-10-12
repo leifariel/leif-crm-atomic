@@ -146,10 +146,15 @@ select
     -- Has ever submitted an Application (any review status) via any of
     -- their Opportunities.
     bool_or(app.id is not null) as has_applied,
-    -- Currently on an active Waitlist entry (waiting/invited — the same
-    -- ACTIVE_WAITLIST_STATUSES the rest of the app already treats as
-    -- "active"; converted/removed entries don't count).
-    bool_or(w.status in ('waiting', 'invited')) as is_on_waitlist,
+    -- STILL WAITING to be invited — the Contacts "Waitlist" filter, and a
+    -- question about now. Invited, converted and removed are all people who
+    -- have left the waitlist, whatever happened next; their entries keep
+    -- every bit of their history, they are simply not waiting any more.
+    -- This read waiting+invited until 2026-10-11 and so returned 115
+    -- Contacts where 61 were genuinely waiting. A HISTORICAL filter is a
+    -- different question and would need a different name ("has waitlist
+    -- history") rather than overloading this one. See HANDOFF §4b.
+    bool_or(w.status = 'waiting') as is_on_waitlist,
     -- Has a non-archived Opportunity currently exited into nurture.
     bool_or(d.outcome = 'nurture' and d.archived_at is null) as has_nurture_deal,
     -- The legacy free-text identifiers note, so search can reach it.

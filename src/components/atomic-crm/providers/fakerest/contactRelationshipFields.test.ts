@@ -144,6 +144,85 @@ describe("contacts getList — derived relationship fields (FakeRest)", () => {
     expect(data[0]!.first_name).toBe("Waiting");
   });
 
+  // "ON WAITLIST" MEANS STILL WAITING TO BE INVITED.
+  //
+  // THE BUG THIS EXISTS FOR. This field read {waiting, invited} — the
+  // place-held set that mirrors the database's partial unique index — so
+  // after the first real invitation batches the Contacts "Waitlist" filter
+  // returned 115 people in production where 61 were genuinely waiting. The
+  // 54 who had just been invited were still counted as waiting for an
+  // invitation they had already been sent.
+  //
+  // Mirrors contacts_summary; migration 20261011200000 is the same change
+  // against real Postgres.
+  it.each([
+    { label: "only waiting", statuses: ["waiting"], expected: true },
+    { label: "only invited", statuses: ["invited"], expected: false },
+    { label: "only converted", statuses: ["converted"], expected: false },
+    { label: "only removed", statuses: ["removed"], expected: false },
+    {
+      label: "invited before, waiting again now",
+      statuses: ["invited", "waiting"],
+      expected: true,
+    },
+    {
+      label: "converted, with nothing live",
+      statuses: ["converted", "removed"],
+      expected: false,
+    },
+  ])(
+    "a Contact with $label is on the waitlist: $expected",
+    async ({ statuses, expected }) => {
+      const contact = buildContact({ id: 1, first_name: "Subject" });
+      const entries: WaitlistEntry[] = statuses.map((status, index) => ({
+        id: index + 1,
+        contact_id: 1,
+        offer_id: leOffer.id,
+        cohort_id: null,
+        status: status as WaitlistEntry["status"],
+        joined_at: `2026-01-0${index + 1}T00:00:00.000Z`,
+        desired_timing: null,
+        notes: null,
+        priority: null,
+        source: null,
+        invited_at: status === "invited" ? "2026-02-01T00:00:00.000Z" : null,
+        converted_at: null,
+        converted_opportunity_id: null,
+        removed_at: null,
+        created_at: "2026-01-01T00:00:00.000Z",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      }));
+
+      const dataProvider = createDataProvider({
+        db: createCrmDb({
+          contacts: [contact],
+          offers: [leOffer, gyuOffer],
+          waitlist_entries: entries,
+        } as any),
+        silent: true,
+        latency: 0,
+      });
+
+      const { data } = await dataProvider.getList<Contact>("contacts", {
+        pagination: { page: 1, perPage: 10 },
+        sort: { field: "id", order: "ASC" },
+        filter: { is_on_waitlist: true },
+      });
+
+      expect(data).toHaveLength(expected ? 1 : 0);
+
+      // Whatever the filter says, every episode is still on record — the
+      // history is what Contact-side surfaces read.
+      const { data: kept } = await dataProvider.getList("waitlist_entries", {
+        pagination: { page: 1, perPage: 10 },
+        sort: { field: "id", order: "ASC" },
+        filter: { contact_id: 1 },
+      });
+      expect(kept).toHaveLength(statuses.length);
+      expect(kept.map((row) => row.status)).toEqual(statuses);
+    },
+  );
+
   it("supports filtering Offer History via the array-containment operator (offer_ids@cs), the same pattern the existing tags filter already uses", async () => {
     const leContact = buildContact({ id: 1, first_name: "LEOnly" });
     const gyuContact = buildContact({ id: 2, first_name: "GYUOnly" });

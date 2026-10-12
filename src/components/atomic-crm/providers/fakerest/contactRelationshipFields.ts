@@ -1,7 +1,7 @@
 import type { DataProvider, Identifier, RaRecord } from "ra-core";
 
 import type { Application, Deal, Enrollment, WaitlistEntry } from "../../types";
-import { ACTIVE_WAITLIST_STATUSES } from "../../waitlist/waitlistConstants";
+import { isStillWaiting } from "../../waitlist/waitlistConstants";
 
 const ACTIVE_ENROLLMENT_STATUSES = new Set(["onboarding", "active"]);
 const PAST_ENROLLMENT_STATUSES = new Set(["offboarding", "completed"]);
@@ -64,9 +64,9 @@ export const computeContactRelationshipFields = (params: {
       PAST_ENROLLMENT_STATUSES.has(e.status),
     ),
     has_applied: contactApplications.length > 0,
-    is_on_waitlist: contactWaitlistEntries.some((w) =>
-      ACTIVE_WAITLIST_STATUSES.has(w.status),
-    ),
+    // Mirrors contacts_summary: STILL WAITING, not "has ever been on a
+    // waitlist". Invited, converted and removed have all left it.
+    is_on_waitlist: contactWaitlistEntries.some(isStillWaiting),
     has_nurture_deal: contactDeals.some(
       (d) => d.outcome === "nurture" && d.archived_at == null,
     ),

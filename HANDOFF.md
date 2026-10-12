@@ -4383,6 +4383,10 @@ decision state. It now says which record it is for.
 
 ## 8q. Active waitlist means waiting — BUILT, NOT YET DEPLOYED (2026-10-11)
 
+**One migration, `20261011200000`, takes the chain to 166.** It replaces a
+view definition and asserts nothing about any row, so it is deterministic and
+replays into an empty database; the manifest's total was updated with it.
+
 §4b Phase 1. After the first real batches, the programme pages still read
 **Waitlist · 62** for The Living Example and **Waitlist · 53** for Growing
 Yourself Up, when 38 and 23 people were genuinely still waiting. The 55 who
@@ -4439,13 +4443,35 @@ excluded server-side, and `invite_from_preflight` still re-checks every
 candidate at consume time. Filtering the visible list did not become a safety
 boundary.
 
-### Open question, not decided here
+### The Contact filter means the same thing — ruled 2026-10-11
 
-`contacts_summary.is_on_waitlist` still means `{waiting, invited}`, so the
-Contacts "On waitlist" filter includes people who have been invited. That may
-or may not be what Leif wants it to mean now. It is a Contact-relationship
-filter rather than the programme list, so it was left alone rather than
-changed silently.
+Leif ruled on the question this slice surfaced: **"On waitlist" is current
+operational state.** Invited is not on the waitlist. Converted is not. Removed
+is not.
+
+`contacts_summary.is_on_waitlist` read `{waiting, invited}` and so returned
+**115 Contacts in production where 61 were genuinely waiting** — the 54
+invited on 11 Oct among them. Migration
+`20261011200000_on_waitlist_means_still_waiting.sql` corrects the view to
+`bool_or(w.status = 'waiting')`, and the fakerest mirror follows it through
+`isStillWaiting`, so a demo answer and a production answer cannot diverge.
+
+**It changes a DERIVED READ only.** No waitlist row is written, deleted or
+reclassified. The Contact's own waitlist history still reads the rows
+themselves and still shows every episode, invited and converted and removed
+alike, with `invited_at` intact.
+
+If a HISTORICAL Contact filter is wanted later it needs its own name — "has
+waitlist history" — rather than overloading this one.
+
+So the four questions now have four answers and must not be collapsed again:
+
+| Question | Answer |
+|---|---|
+| Programme active waitlist | `waiting` only (`isStillWaiting`) |
+| Contact "Waitlist" filter | `waiting` only (`contacts_summary`) |
+| May this person hold another place? | `{waiting, invited}` (`ACTIVE_WAITLIST_STATUSES`, the DB index) |
+| Historical provenance | every status, untouched |
 
 ### Debt recorded, not fixed
 
