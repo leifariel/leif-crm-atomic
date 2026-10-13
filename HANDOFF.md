@@ -899,7 +899,9 @@ across both systems.**
 |---|---|
 | **0** | ~~Production acceptance of `9510906e`~~ — **DONE 2026-10-11** (§8p). |
 | **1** | ~~Correct active Waitlist semantics~~ — **PRODUCTION ACCEPTED 2026-10-11** (§8q). |
-| **2** | Create/reuse the same-offer Interested Opportunity on confirmed invitation. Introduce the durable Application Outreach authority. Backfill the 55 without resending anything. |
+| **2A0** | ~~A waitlist place is spent when the sale starts, not when interest is noted~~ — **PRODUCTION ACCEPTED and EXERCISED 2026-10-13** (§8r). |
+| **2A** | ~~The durable Application Outreach authority: schema, invariants, immutable history, security~~ — **PRODUCTION ACCEPTED 2026-10-13** (§8s), 0 rows by design. |
+| **2B** | Create/reuse the same-offer Interested Opportunity on confirmed invitation. Give **every delivered pre-Outreach invitation** Outreach provenance, without resending anything — closed attempts for those who already applied, active `kit` attempts for those still invited. The **active half only** is blocked on the Kit automation duration (§6, §8s); the closed half and the plumbing are not. |
 | **3** | Interested derives from a live Application Outreach / actionable next step. Expired outreach leaves Interested for Nurture. |
 | **4** | Unify every application-invitation entry point — waitlist, Instagram/manual, future referral/email — onto the one lifecycle. |
 | **5** | The other queued CRM work: 13-week client-opening buffer; deposits (LE $500 / GYU $400); Sales Call Workflow. |
@@ -989,6 +991,38 @@ classes. **Full record, and the tooling debt carried forward, in §8.**
 ---
 
 ## 6. Waiting on Leif — do not guess these
+
+**KIT AUTOMATION DURATION — OPEN, AND IT BLOCKS §4b PHASE 2B (§8s).** The one
+missing fact: **how long do the LE and GYU Kit invitation automations run?**
+Either the exact sequence durations, or a CRM follow-up window Leif chooses
+instead.
+
+**The rule it serves:** every delivered pre-Outreach waitlist invitation
+eventually gets Application Outreach provenance. At backfill time each one is
+classified by current same-offer truth, and only one of the two classes needs
+this answer (§8s has the table).
+
+It blocks:
+
+1. the **ACTIVE** half of the backfill — delivered invitations whose person is
+   still `invited` (75 at the last audit: 22 LE, 53 GYU), and
+2. **activating any future confirmed waitlist invitation** as a live
+   Kit-managed outreach — every new send hits the same wall on the day it goes.
+
+It does **not** block:
+
+- the **CLOSED** half — anybody who already applied (3 at the last audit) gets
+  a closed historical attempt, `end_reason = 'application_submitted'`, needing
+  no future boundary, or
+- building the convergence plumbing, which cannot activate a Kit attempt
+  without a finite boundary anyway.
+
+`application_outreach_attempts_kit_boundary_check` refuses to store an active
+`executor = 'kit'` attempt without an `externally_managed_until`, deliberately:
+a Kit attempt with no CRM-owned end is the permanent-Interested-card failure the
+authority exists to prevent. **The constraint is not to be weakened to route
+around this question** — the answer is a fact about Leif's Kit sequences and has
+to come from Leif. Nothing else in Phase 2B is blocked by anything else.
 
 **SNAPSHOT-STABILITY ACCEPTANCE — CLOSED 2026-10-11 (§8p).** Leif ran the
 zero-send test on the deployed bundle and confirmed the human fact the database
@@ -4393,7 +4427,96 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8s. An invitation to apply is an episode, and it has to end — BUILT, NOT YET DEPLOYED (2026-10-13)
+## 8s. An invitation to apply is an episode, and it has to end — PRODUCTION ACCEPTED 2026-10-13
+
+**Three claims, kept apart as always:**
+
+| Claim | State | What it rests on |
+|---|---|---|
+| **CODE GREEN** | YES | every repo gate on these exact bytes, including the 441-test clean-room suite from an empty database, **and remote `✅ Check` green** (run 38470901910 attempt 2) |
+| **SYSTEM GREEN** | YES | migration `20261013120000` applied **exactly once**, production total **168**, and the whole authority read back from the production catalog rather than inferred |
+| **PRODUCTION-EXERCISED** | **NO** | `application_outreach_attempts` holds **0 production rows, by design** — this slice deliberately writes nothing. Phase 2A0's exercise (§8r) is a *different* claim about a *different* slice and does not transfer here. |
+
+**CI: `✅ Check` is GREEN** on rerun (run 38470901910, **attempt 2**,
+conclusion `success`): e2e-test ✅ Typecheck ✅ Test ✅ Build ✅ ESLint ✅
+Prettier ✅. Attempt 1's `e2e-test` was **cancelled**, not failed, and the
+rerun resolved it.
+
+**The `🚀 Deploy` failure is a chronic external-mirror publish failure, not
+anything this slice did.** The classification rests on workflow structure plus
+history, not on the habit of calling it noise:
+
+- `📡 Deploy GitHub pages` (`npx gh-pages --remote production`, pushing to
+  `vars.DEPLOY_REPOSITORY` / `vars.DEMO_DEPLOY_REPOSITORY`) is the **last
+  step of exactly the two failing jobs**, with no `if:` guard and no
+  `continue-on-error`, so its failure fails the job.
+- The one Deploy job that **passes**, `(doc)`, is the only one with **no
+  gh-pages step** — it publishes through `make registry-deploy` /
+  `make doc-deploy`.
+- The pattern is chronic: **8 consecutive Deploy runs on main** (`fe19a023`
+  through `88cc77cb`, 11–13 Oct) show demo ✗ / supabase ✗ / doc ✓, spanning
+  three slices that were independently production-accepted.
+- `📡 Push supabase migrations` runs **before** it, and production proves it
+  succeeded: the chain advanced 165 → 166 → 167 → 168 across those runs, each
+  applied exactly once.
+
+**Residual uncertainty, stated rather than papered over:** step-level logs need
+an authenticated API and `gh` is unavailable in this session, so the supabase
+job's failing step cannot be pinned to Pages versus `📡 Deploy supabase
+functions`, which also sits after the migration push. The `(demo)` job has
+**no Supabase steps at all** and fails identically, which points at the shared
+gh-pages step as the common cause. Either way it is downstream of everything
+this slice delivered: the range touches **no Edge Function and no `src/`
+file**.
+
+**Read back from production, not from the migration file:** all 16 columns with
+their types, nullability and defaults; 8 CHECK constraints; 3 foreign keys; 5
+indexes including all three partial/unique ones; `pg_get_functiondef` of the
+guard and `pg_get_triggerdef` of the BEFORE UPDATE trigger it is attached to;
+`relrowsecurity = true`; one `select` policy for `authenticated`.
+
+**ACL truth from `pg_class.relacl`**, which is the only statement worth making
+about grants:
+
+    authenticated = rDxtm/postgres     -- SELECT, no INSERT/UPDATE/DELETE
+    service_role  = arwdDxtm/postgres
+    postgres      = arwdDxtm/postgres
+    anon          -- absent entirely
+
+This is the **most restrictive table in the schema**. Every comparable table —
+`deals`, `applications`, `waitlist_entries`, `waitlist_invitations`,
+`enrollments`, `sales_calls`, `tasks`, `offers` — grants `authenticated` the
+full `arwd`, and `applications`/`contacts`/`deals`/`enrollments`/`offers`/
+`sales_calls`/`tasks`/`waitlist_entries` additionally carry an `anon` entry.
+This table grants `authenticated` read and nothing else, and `anon` nothing.
+
+**One pre-existing, schema-wide observation, not introduced here and not fixed
+here:** `D` (TRUNCATE) sits in the `authenticated` ACL of *every* public
+table, and in the `anon` ACL of several. TRUNCATE is not reachable through
+PostgREST, and the revoke in this migration named `insert, update, delete`
+as the house posture does. It deserves its own pass; it is recorded so the
+next ACL slice does not rediscover it.
+
+### Zero side effects, anchored absolutely
+
+The pre-deploy baseline instant is **2026-10-13 21:29:32 UTC**. Across the
+deploy window, rows **created after** it: 0 batches · 0 invitations · 0 Kit
+operations · 0 applications · 0 Opportunities · 0 waitlist entries · 0 outreach
+attempts. Rows **mutated after** it: 0 `deals.updated_at` · 0 `invited_at` ·
+0 `converted_at` · 0 `applications.updated_at`. Every total unchanged:
+batches 3, invitations 78, Kit operations 142, applications 194, Opportunities
+199, Interested 39.
+
+**A timezone lesson worth keeping.** Every clock time in this session's reports
+is **MDT (UTC−6)**, the machine's zone — not UTC and not Sydney. A first pass
+at this proof assumed otherwise and produced a "since" window that swept in
+pre-deploy organic activity, and a second pass compared an all-deals
+`lost`/`nurture` count against a baseline that had been scoped to Interested,
+making 18/21 look like 63/36. Neither was a production change. **Anchor a
+side-effect window on an absolute instant, and re-run the baseline's own query
+rather than a reconstruction of it.**
+
+
 
 §4b **Phase 2A**: the durable Application Outreach authority.
 `application_outreach_attempts`. Schema, invariants, security and contracts
@@ -4450,10 +4573,18 @@ entry, which can be invited more than once over its life.
 
 `opportunity_id` cascades, following `deal_stage_events` / `sales_calls` /
 `applications`. The two provenance pointers — `waitlist_invitation_id` and
-`resulting_application_id` — are `on delete set null`, following
-`waitlist_entries.converted_opportunity_id`: losing a pointer must never
-delete the episode, because "we asked this person and they never replied"
-stays true regardless.
+`resulting_application_id` — are **`on delete restrict`**, which is NOT what
+this slice first wrote; see "History does not change its mind" below for why
+`set null` and immutable provenance cannot both hold. Production confirms all
+three:
+
+    opportunity_id             -> deals                  ON DELETE CASCADE
+    waitlist_invitation_id     -> waitlist_invitations   ON DELETE RESTRICT
+    resulting_application_id   -> applications           ON DELETE RESTRICT
+
+(all three also `ON UPDATE CASCADE`.) Losing a pointer must never delete the
+episode, because "we asked this person and they never replied" stays true
+regardless — so the delete is refused instead.
 
 ### History does not change its mind
 
@@ -4496,12 +4627,81 @@ belong in authoritative functions that can check these invariants, not in
 arbitrary client UPDATEs. Proved behaviourally in `securityPosture.spec.ts`
 rather than by reading grant text.
 
-### Still blocked
+### Still blocked — and it blocks TWO things, not one
 
-The 11 Oct backfill still needs the **exact LE and GYU Kit automation
-durations**, or a CRM follow-up window Leif chooses. The schema does not
-require knowing them today — but it does require knowing them before any
-`executor = 'kit'` row can exist, which is exactly the point.
+The **exact LE and GYU Kit automation durations** (or a CRM follow-up window
+Leif chooses) are a prerequisite for BOTH:
+
+**A. the ACTIVE half of the backfill** — every delivered invitation whose
+person is **still `invited`** must become an `executor = 'kit'` attempt, and
+cannot without a finite `externally_managed_until`.
+
+**B. activating any FUTURE confirmed waitlist invitation** as an active
+`executor = 'kit'` Outreach attempt. This is the part easy to miss: it is not
+only about history. Every new confirmed invitation that converges on a
+Kit-managed journey hits the same wall on the day it is sent.
+
+**What it does NOT block**, and this matters for sequencing Phase 2B:
+
+- **the CLOSED half of the backfill** — anybody who already applied gets a
+  closed historical attempt with `end_reason = 'application_submitted'`, and a
+  concluded episode needs no future boundary.
+- **building the convergence plumbing**, which by construction cannot activate
+  a Kit attempt without a finite boundary — the CHECK is what makes it safe to
+  build before the answer arrives.
+
+`application_outreach_attempts_kit_boundary_check` is what makes this a wall
+rather than a note:
+
+    check (status <> 'active' or executor <> 'kit'
+           or externally_managed_until is not null)
+
+**Do not weaken this constraint to get around the prerequisite.** A
+boundary-less Kit attempt is precisely the permanent-Interested-card failure
+this authority exists to prevent, and the schema refusing to store one is the
+feature. The missing fact is a real-world fact about Leif's Kit sequences; it
+has to be supplied, not designed around.
+
+### The canonical backfill rule — write to the rule, not to today's counts
+
+**EVERY delivered pre-Outreach waitlist invitation eventually gets Application
+Outreach provenance.** That is the rule. It keys on the **delivered
+invitation**, not on the waitlist entry and not on the Contact, because the
+invitation is the thing that actually happened to somebody.
+
+**Do not hard-code a population size.** The numbers below were true at the last
+audit and will keep moving organically before the backfill runs — people apply,
+and new batches go out. At execution time, **classify every delivered
+historical invitation by current same-offer truth**, and the classification
+decides which of two shapes it gets:
+
+| Current same-offer truth | Attempt written | Needs the Kit duration? |
+|---|---|---|
+| still `invited` | **ACTIVE**, `executor = 'kit'`, with a finite `externally_managed_until` | **YES — blocked** |
+| already application-submitted / `converted` | **CLOSED**, `end_reason = 'application_submitted'`, `resulting_application_id` linked, `ended_at` from the submission fact | **NO — the episode is already over** |
+
+A closed attempt needs no future boundary because it has no future: that is why
+`active_has_a_future_check` and `kit_boundary_check` are both written as
+`status <> 'active' or ...`. **So the historical half of the backfill is not
+blocked at all** — only the still-invited half is.
+
+**Snapshot at the last audit (illustrative, NOT the contract):** 78 delivered
+invitations — **75 still `invited`** (22 individual/LE, 53 group/GYU) and **3
+already converted**, all three individual/LE:
+
+    entry 12  contact 179  invitation 5   opportunity 356   converted 10-13 19:54 UTC
+    entry 13  contact 180  invitation 6   opportunity 351   converted 10-11 20:39 UTC
+    entry 27  contact 194  invitation 19  opportunity 353   converted 10-12 18:57 UTC
+
+**One nuance the rule depends on:** production holds **4** converted entries
+but only **3** of them hold a delivered invitation. The fourth converted by
+another path, so it is correctly outside this rule's scope. Keying the backfill
+on waitlist entries instead of invitations would have invented provenance for
+an invitation that was never sent.
+
+For context, not as input: 40 still `waiting` on LE, 0 on GYU, and the 39
+Interested Opportunities are all terminal (18 lost, 21 nurture, 0 without an
+outcome, 0 active) — so Phase 2B starts from a clean Interested surface.
 
 ## 8r. A waitlist place is spent when the sale starts — DEPLOYED 2026-10-13
 
@@ -4512,7 +4712,7 @@ different claims and this slice is a good example of why they are kept apart:
 |---|---|---|
 | **CODE GREEN** | YES | the committed artifact passed every repo gate, including a real-Postgres suite and an executed sensitivity run |
 | **SYSTEM GREEN** | YES | migration `20261012100000` applied exactly once, total **167**, and `pg_get_functiondef` read back from production carries the stage gate |
-| **PRODUCTION-EXERCISED** | **NO** | no real Opportunity has been written in production since the deploy, so the narrowed boundary has not actually fired |
+| **PRODUCTION-EXERCISED** | **YES, as of 2026-10-13** | `tualaz@gmail.com` (contact 179, LE rank 5) applied at 13:54:51 MDT, creating Opportunity 356 at `application_received`; LE waitlist entry 12 converted at **exactly that same instant**, under the stage-gated trigger deployed that morning. The 75 entries still `invited` (22 LE + 53 GYU) are precisely the ones the old rule would wrongly have converted, and they are untouched. |
 
 **We did not manufacture one.** A synthetic Opportunity purely to watch a
 trigger run would be fabricated production data, and the clean-room suite
@@ -7326,32 +7526,53 @@ The next Claude session should, in order:
 8. **Surface disagreements rather than silently resolving them.**
 9. **STOP before implementation and report readiness.**
 
-**The exact next action as of 2026-10-11:** `origin/main` = `9510906e`,
-production at **165 migrations**, working tree clean, nothing unpushed.
+**The exact next action as of 2026-10-13:** `origin/main` = `88cc77cb`,
+production at **168 migrations**, nothing unpushed. Phase 2 work happens in the
+stable worktree `/Users/NatashaMKraus/Projects/leif-crm-phase2` on branch
+`phase2a0-waitlist-conversion` — **not** under `/tmp`, which purged tracked
+files four times in one session (§8s, and the `tmp-worktree-files-can-vanish`
+memory).
 
 **The waitlist invitation slice is COMPLETE and sealed.** 55 real invitations
 went out on 11 Oct — LE 25 (batch 1, preflight 9) and GYU 30 (batch 2,
 preflight 7) — all 55 Kit operations succeeded, no failures, no collateral queue
 work (§8h). The `9510906e` snapshot-stability repair was accepted in production
-the same evening with a zero-send test (§8p). The first conversion has already
-landed on its own.
+the same evening with a zero-send test (§8p). A further 23 went out in batch 3
+on 13 Oct. At the last audit production held **78 delivered invitations: 75
+still `invited`** (22 LE, 53 GYU) **and 3 already converted** — a snapshot
+that keeps moving, not a population to code against.
 
-**§4b Phase 1 is PRODUCTION ACCEPTED** (§8q, tip `4c6ea71b`, production at
-166 migrations). Active waitlist means waiting, on the programme pages and in
-the Contacts filter alike: LE 38, GYU 23, Contacts 61, with every historical
-row intact.
+**§4b Phase 1, Phase 2A0 and Phase 2A are all PRODUCTION ACCEPTED:**
 
-**The next slice is §4b Phase 2.** §4b is canonical — read it before touching
-invitations, follow-ups or pipeline stages:
+| | | |
+|---|---|---|
+| **Phase 1** — active waitlist means waiting | §8q, `4c6ea71b` | LE 38, GYU 23, Contacts 61 |
+| **Phase 2A0** — a place is spent when the sale starts | §8r, `b19a23df` | now production-EXERCISED by a real application |
+| **Phase 2A** — the Application Outreach authority | §8s, `88cc77cb` | catalog-verified, **0 rows by design** |
 
-1. ~~Active Waitlist means `waiting` only.~~ **Done.**
-2. **NEXT:** create/reuse the same-offer Interested Opportunity on a confirmed
-   invitation, introduce the durable **Application Outreach** authority, and
-   backfill the 55 people invited on 11 Oct **without resending anything**.
-3. Interested derives from a live outreach; exhausted outreach falls to Nurture.
-4. Unify every invitation entry point — waitlist, Instagram, manual — onto that
+**The next slice is §4b Phase 2B**, and it has a hard prerequisite that is a
+real-world fact, not a design choice:
+
+> **BLOCKED ON LEIF: the exact LE and GYU Kit automation durations** (or a CRM
+> follow-up window Leif chooses). It blocks the **active** half of the backfill
+> and the activation of every future Kit-managed invitation. It does **not**
+> block the closed historical half, nor building the convergence plumbing. Do
+> not weaken `application_outreach_attempts_kit_boundary_check` to get around
+> it — §8s explains why that constraint is the feature.
+
+1. ~~Active Waitlist means `waiting` only.~~ **Done** (§8q).
+2. ~~The durable **Application Outreach** authority.~~ **Done** (§8s) — schema,
+   invariants, immutable history and security, writing no rows.
+3. **NEXT (2B):** create/reuse the same-offer Interested Opportunity on a
+   confirmed invitation, and give **every delivered pre-Outreach invitation**
+   Application Outreach provenance **without resending anything** — closed
+   attempts for those who already applied, active `kit` attempts for those
+   still invited. Classify at execution time by current same-offer truth; do
+   not hard-code today's counts. Only the active half needs the Kit duration.
+4. Interested derives from a live outreach; exhausted outreach falls to Nurture.
+5. Unify every invitation entry point — waitlist, Instagram, manual — onto that
    one lifecycle.
-5. Only then the 13-week client-opening buffer, deposits (LE $500 / GYU $400)
+6. Only then the 13-week client-opening buffer, deposits (LE $500 / GYU $400)
    and the Sales Call Workflow; then the Integration Readiness Gate, then Gmail,
    then Instagram.
 
