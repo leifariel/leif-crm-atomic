@@ -4393,7 +4393,34 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8r. A waitlist place is spent when the sale starts — BUILT, NOT YET DEPLOYED (2026-10-12)
+## 8r. A waitlist place is spent when the sale starts — DEPLOYED 2026-10-13
+
+**DEPLOYED and SYSTEM GREEN; not yet PRODUCTION-EXERCISED.** Those are three
+different claims and this slice is a good example of why they are kept apart:
+
+| Claim | State | What it rests on |
+|---|---|---|
+| **CODE GREEN** | YES | the committed artifact passed every repo gate, including a real-Postgres suite and an executed sensitivity run |
+| **SYSTEM GREEN** | YES | migration `20261012100000` applied exactly once, total **167**, and `pg_get_functiondef` read back from production carries the stage gate |
+| **PRODUCTION-EXERCISED** | **NO** | no real Opportunity has been written in production since the deploy, so the narrowed boundary has not actually fired |
+
+**We did not manufacture one.** A synthetic Opportunity purely to watch a
+trigger run would be fabricated production data, and the clean-room suite
+already proves the behaviour against real Postgres. Phase 2A may proceed.
+
+**Pre- and post-deploy production snapshots are identical** — LE 38/23/3/1,
+GYU 23/30/0/1, 39 interested rows with 0 active, 2 batches, 55 invitations,
+197 deals — with nothing created in the deploy window: 0 deals, 0
+applications, 0 batches, 0 invitations, 0 Kit operations, 0 `invited_at` and
+0 `converted_at` transitions.
+
+**On the two real conversions, precisely.** shimes06's deal 351 entered
+`application_received` on 10-11 14:39 and Levi Booth's deal 353 on 10-12
+12:57 — **both before this deploy**. They prove the application_received path
+is canonical domain behaviour; they are NOT evidence that the new trigger
+executed. Levi's conversion was organic, not migration fallout.
+
+
 
 §4b **Phase 2A0**, and a prerequisite for the rest of Phase 2.
 
@@ -4437,6 +4464,14 @@ Production holds **zero active Opportunities at stage `interested`** — all 39
 interested rows are concluded (18 lost, 21 nurture). Verified before and after
 writing it. No existing waitlist entry can change when the function is
 replaced.
+
+### Which test proves which contract
+
+| | Path | Proof |
+|---|---|---|
+| **K** | explicit Convert to Opportunity | `waitlistActions.test.ts` — "marks the entry converted, with converted_at and the linked Opportunity id", "also converts from Invited", "reuses an existing active Opportunity…". They create an Opportunity at `interested` and still expect conversion, so they fail if the explicit path is ever gated |
+| **L** | public application | `submitApplication.test.ts` — "converts a matching active Waitlist entry (§13 sync invariant)" |
+| **M** | manual application | **structural only.** `contracts/waitlist/aPlaceIsSpentWhenTheSaleStarts.test.ts` pins that `createManualApplication.ts` calls `convertCompatibleWaitlistEntries`, but **no behavioural test asserts that a manual application converts a compatible waitlist entry.** Its reuse branch — an existing Opportunity still at `interested` — is the uncovered case. Worth closing in Phase 2A |
 
 ### Still open for Phase 2
 
