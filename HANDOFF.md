@@ -753,16 +753,24 @@ The same lifecycle runs regardless of how the person arrived:
 
 ### The sequence, and why its timing is configurable
 
-Current product intent — spacing configurable, not hard-coded:
+**DECIDED 2026-10-13 — `application_outreach_v1`.** This replaces the
+illustrative Day 3 / 7 / 14 / 21 sketch that previously sat here:
 
-    Day 0    initial application invitation
-    Day 3    reminder 1
-    Day 7    reminder 2
-    Day 14   reminder 3
-    Day 21   outreach exhausted -> Nurture
+    Day 0    initial application invitation    email
+    Day 3    reminder 1                        email
+    Day 10   reminder 2                        email
+    Day 24   final reminder                    email
+    Day 31   no application -> close, Nurture  lifecycle, not an email
 
-**This example is not a frozen timing specification.** The architecture must
-support changing it without a migration of meaning.
+**Gmail owns every send, Day 0 included; the CRM owns the lifecycle.** Offsets
+are absolute from the Day-0 delivery, never chained to when a reminder
+actually went out.
+
+**The spacing is versioned, not configurable in place.** Changing it means a
+new `schedule_key` (`application_outreach_v2`), because a historical attempt
+has to stay interpretable under the calendar it actually ran on — editing v1
+would silently reinterpret everybody's history. §8t has the authority, the
+`step` semantics and the catch-up rule.
 
 **The moment an application is submitted:** cancel every remaining reminder,
 close the outreach with `application_submitted`, move or reuse the Opportunity
@@ -888,10 +896,22 @@ canonical Opportunity rules, and the outreach provenance. LE 25 and GYU 30
 alike.
 
 **Do not resend an invitation merely because an outreach record was
-backfilled.** Kit automations are already running their current email journey
-for these people. The cutover needs explicit semantics — historical Kit-driven
-provenance, future Gmail-driven Communication Events, and **no double execution
-across both systems.**
+backfilled.** Their Day 0 was already delivered.
+
+**Corrected 2026-10-13:** this paragraph used to say Kit automations were
+"already running their current email journey" for these people, and that the
+cutover had to avoid double execution across two systems. **That was wrong.
+Kit delivered Day 0 and nothing else** — there is no Kit reminder journey, so
+there is no competing executor to de-conflict and no Kit duration to discover.
+
+The cutover semantics are therefore simpler than feared: `started_at` is
+anchored to the confirmed Day-0 invitation delivery, Gmail picks up the
+remaining calendar from that anchor, Day 0 is never resent, and `executor`
+reads `gmail` because it describes who owns the **future** — the Day-0
+delivery provenance stays on the `waitlist_invitations` row the attempt
+points at. **Never blast the backlog**: somebody invited before Gmail exists
+may have passed several nominal milestones, and the authority deliberately
+offers no way to express "send all of these" (§8t).
 
 ### Phasing
 
@@ -901,7 +921,8 @@ across both systems.**
 | **1** | ~~Correct active Waitlist semantics~~ — **PRODUCTION ACCEPTED 2026-10-11** (§8q). |
 | **2A0** | ~~A waitlist place is spent when the sale starts, not when interest is noted~~ — **PRODUCTION ACCEPTED and EXERCISED 2026-10-13** (§8r). |
 | **2A** | ~~The durable Application Outreach authority: schema, invariants, immutable history, security~~ — **PRODUCTION ACCEPTED 2026-10-13** (§8s), 0 rows by design. |
-| **2B** | Create/reuse the same-offer Interested Opportunity on confirmed invitation. Give **every delivered pre-Outreach invitation** Outreach provenance, without resending anything — closed attempts for those who already applied, active `kit` attempts for those still invited. The **active half only** is blocked on the Kit automation duration (§6, §8s); the closed half and the plumbing are not. |
+| **2B-i** | ~~The canonical versioned cadence (Day 0 / 3 / 10 / 24, Day 31 to Nurture), exact `step` semantics, deterministic next-action authority, immutable `schedule_key` provenance~~ — **BUILT 2026-10-13** (§8t), awaiting deploy. |
+| **2B-ii** | Create/reuse the same-offer Interested Opportunity on confirmed invitation, and give **every delivered pre-Outreach invitation** Outreach provenance without resending anything — closed attempts for those who already applied, active Gmail attempts for those still invited. Needs Gmail execution for the sending half only. |
 | **3** | Interested derives from a live Application Outreach / actionable next step. Expired outreach leaves Interested for Nurture. |
 | **4** | Unify every application-invitation entry point — waitlist, Instagram/manual, future referral/email — onto the one lifecycle. |
 | **5** | The other queued CRM work: 13-week client-opening buffer; deposits (LE $500 / GYU $400); Sales Call Workflow. |
@@ -992,37 +1013,17 @@ classes. **Full record, and the tooling debt carried forward, in §8.**
 
 ## 6. Waiting on Leif — do not guess these
 
-**KIT AUTOMATION DURATION — OPEN, AND IT BLOCKS §4b PHASE 2B (§8s).** The one
-missing fact: **how long do the LE and GYU Kit invitation automations run?**
-Either the exact sequence durations, or a CRM follow-up window Leif chooses
-instead.
+**KIT AUTOMATION DURATION — CLOSED 2026-10-13, BECAUSE THE QUESTION WAS
+WRONG.** This entry asked how long the LE and GYU Kit invitation automations
+run, and treated the answer as a prerequisite for §4b Phase 2B. **There is no
+Kit reminder sequence to measure.** Kit delivered Day 0 and nothing else.
+The blocker was an artefact of assuming Kit owned a follow-up journey it never
+owned, and it is removed rather than left open — see §8t for the canonical
+cadence that replaced it.
 
-**The rule it serves:** every delivered pre-Outreach waitlist invitation
-eventually gets Application Outreach provenance. At backfill time each one is
-classified by current same-offer truth, and only one of the two classes needs
-this answer (§8s has the table).
-
-It blocks:
-
-1. the **ACTIVE** half of the backfill — delivered invitations whose person is
-   still `invited` (75 at the last audit: 22 LE, 53 GYU), and
-2. **activating any future confirmed waitlist invitation** as a live
-   Kit-managed outreach — every new send hits the same wall on the day it goes.
-
-It does **not** block:
-
-- the **CLOSED** half — anybody who already applied (3 at the last audit) gets
-  a closed historical attempt, `end_reason = 'application_submitted'`, needing
-  no future boundary, or
-- building the convergence plumbing, which cannot activate a Kit attempt
-  without a finite boundary anyway.
-
-`application_outreach_attempts_kit_boundary_check` refuses to store an active
-`executor = 'kit'` attempt without an `externally_managed_until`, deliberately:
-a Kit attempt with no CRM-owned end is the permanent-Interested-card failure the
-authority exists to prevent. **The constraint is not to be weakened to route
-around this question** — the answer is a fact about Leif's Kit sequences and has
-to come from Leif. Nothing else in Phase 2B is blocked by anything else.
+Nothing is waiting on Leif for Phase 2B. The remaining dependency is ours:
+**Gmail execution is not implemented**, which blocks sending, not the cadence
+and lifecycle work.
 
 **SNAPSHOT-STABILITY ACCEPTANCE — CLOSED 2026-10-11 (§8p).** Leif ran the
 zero-send test on the deployed bundle and confirmed the human fact the database
@@ -4427,6 +4428,169 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8t. The schedule that governs an episode is recorded — BUILT, NOT YET DEPLOYED (2026-10-13)
+
+§4b **Phase 2B**, part one: the canonical outreach cadence, and the authority
+that computes it. **Zero external side effects** — nothing sends, nothing
+connects to Gmail, no attempt row is created, no Opportunity moves.
+
+### The cadence Leif decided
+
+| | | |
+|---|---|---|
+| **Day 0** | initial application invitation | email |
+| **Day 3** | reminder 1 | email |
+| **Day 10** | reminder 2 | email |
+| **Day 24** | final reminder | email |
+| **Day 31** | no same-offer application → close the episode, Opportunity leaves for **Nurture** | **lifecycle, not an email** |
+
+**Gmail owns every send, Day 0 included.** The CRM owns the lifecycle
+throughout.
+
+### Kit is Day-0 provenance, not the future executor
+
+The previous "Kit automation duration" blocker (§6, §8s) rested on a product
+assumption that was simply false: **Kit delivered Day 0 and nothing else.**
+There is no Kit reminder journey, so there was never a duration to wait for.
+The blocker is removed, not deferred.
+
+For the people invited before Gmail exists: their Day 0 **was already
+delivered** and is never resent. `started_at` will eventually be anchored to
+the confirmed invitation delivery timestamp, and Gmail picks up the remaining
+follow-up from that same Day-0 anchor. `executor` says who owns the
+**future**, so those attempts become `executor = 'gmail'`; the Day-0 delivery
+provenance stays on the `waitlist_invitations` row the attempt points at,
+which is where it actually happened.
+
+### The gap this slice closes
+
+Phase 2A gave an attempt a `step` and a `next_action_at` and never recorded
+**which calendar those belong to**. One global schedule forever was an
+assumption, not a fact. The moment Leif changes the sequence, every historical
+attempt would be reinterpreted under the new calendar and the record of what
+was actually planned for somebody would be gone.
+
+`schedule_key` closes it. Migration `20261014120000` takes the chain to
+**169**.
+
+    schedule_key text not null                       -- no default, on purpose
+    check (schedule_key in ('application_outreach_v1'))
+
+**No default**, because a default is exactly how a v2 writer silently records
+v1. Every writer states the calendar it is running. The table holds 0 rows, so
+this costs nothing today and fails closed forever after.
+
+**Immutable provenance**, added to `guard_outreach_attempt_mutation()`
+alongside `source` and `started_at`. A historical attempt must never drift
+from v1 to v2 because the current default moved on — which is the whole reason
+the column exists. The behavioural proof (`P4`) leans on trigger ordering: a
+BEFORE UPDATE trigger runs before CHECK evaluation, so an attempt to move a
+row onto another calendar comes back as the guard's immutability error rather
+than the value check — and that is what will still protect these rows on the
+day a v2 exists and the CHECK would accept it.
+
+### Why a checked key and not a version table
+
+The calendar is four day offsets and a terminal rule. It is not row data:
+nobody edits it at runtime, nothing joins to it, and execution will live in a
+Gmail worker reading `step` and `started_at`. A table would have added a
+join and an FK protecting no invariant the CHECK does not already protect,
+while giving the calendar a second home to drift in. Adding a version is a
+migration either way, which is the reviewed act it should be.
+
+**The authority boundary, stated once:** the database owns schedule
+**identity** (a known key), its **immutability**, and the generic shape
+invariants. [applicationOutreachSchedule.ts](src/components/atomic-crm/outreach/applicationOutreachSchedule.ts)
+owns the **arithmetic**. There is deliberately no SQL copy of the offsets, and
+`contracts/outreach/oneOutreachScheduleAuthority.test.ts` keeps it that way by
+scanning `src/`, `supabase/` and `e2e/` for a second calendar — SQL day
+intervals included.
+
+One naming note, because it would be easy to get wrong: **"cadence" was
+already taken.** It means client *session* cadence in roughly twenty files
+under `sessions/`. This is `schedule_key`, following the repo's existing
+`form_key` / `requirement_key` / `source_key` convention.
+
+### `step` means confirmed delivery, and only that
+
+| `step` | What has happened | Next lifecycle action |
+|---|---|---|
+| 0 | the Day-0 invitation was **successfully delivered** | reminder 1, Day 3 |
+| 1 | reminder 1 was successfully delivered | reminder 2, Day 10 |
+| 2 | reminder 2 was successfully delivered | final reminder, Day 24 |
+| 3 | the final reminder was successfully delivered | **close to Nurture**, Day 31 |
+
+**Becoming due does not advance the step. A failed send does not advance the
+step.** The step is the only evidence of delivery anywhere in this design, and
+nothing infers it from the clock.
+
+The valid ceiling is a property of the **governing schedule**, not of the
+table, so it is not a CHECK: `step >= 0` stays in SQL, and a step past the end
+of its own schedule is refused by the domain authority
+(`step_beyond_schedule`). Putting `step <= 3` in SQL would have been the
+calendar leaking into the database.
+
+### The offsets are absolute, measured from Day 0
+
+Every stop is `started_at + N days`. Chaining — "seven days after reminder 1
+actually went" — lets one retry, queue delay or outage push the whole
+remaining calendar back, and two people invited the same morning drift apart.
+Proved as a behaviour, not asserted as a comment: a reminder that went out
+five days late leaves reminder 2 on Day 10, not Day 15.
+
+### Catch-up: one action, however far behind
+
+A person invited on 11 Oct will have passed several nominal milestones before
+Gmail execution exists. The authority can say exactly where they stand —
+`applicationOutreachSchedulePosition()` returns every milestone with
+`completed` (from the step) and `overdue` (from the clock) — **and there is
+deliberately no function anywhere that returns a list of sends.** `next` is
+singular. Four missed milestones still produce one action.
+
+**NEVER blast the backlog.** A date passing is not a send, so nothing in this
+slice marks a missed milestone delivered, and no helper can express "send all
+of these". Cutover behaviour itself is finalised in the Gmail slice.
+
+### Application always wins
+
+Unchanged and reinforced: a closed attempt returns `{ kind: "none" }` for
+every step, so once convergence closes an episode — `ended_at` from the
+application's own timestamp, `end_reason = 'application_submitted'`,
+`resulting_application_id` linked — no reminder can ever be computed for it
+again. This slice did not implement convergence; it made certain the calendar
+cannot outlive it.
+
+### Day 31 is a lifecycle contract, not a worker
+
+The rule is recorded and tested (`close_no_response`, `delivery:
+"lifecycle"`), and **nothing executes it yet**: no cron, no worker, no
+production write. A reconciler will eventually perform the close and the move
+to Nurture atomically. `end_reason = 'sequence_exhausted'` is the existing
+canonical value; no new vocabulary was needed.
+
+### Security, unchanged
+
+No new write surface. `authenticated` is still read-only on this table,
+`anon` and PUBLIC still hold nothing, `service_role` still owns writes. The
+two `securityPosture` refusals were updated to send a **well-formed** row —
+with `schedule_key` — so what they prove is still a missing grant rather than
+a missing column.
+
+### What deploying this will do to production
+
+Nothing observable. It adds a column to a table holding **0 rows**, one CHECK,
+and one clause inside a guard. Expected after deploy: migration total **169**,
+`application_outreach_attempts` row count still **0**, and 0 Opportunities, 0
+applications, 0 waitlist mutations, 0 invitations, 0 Kit operations, 0 emails.
+
+### Still ahead
+
+**Gmail execution is not implemented.** That blocks automated sending — not
+the cadence, not the lifecycle contracts, not the historical classification
+design. The canonical backfill rule in §8s is unchanged and still stands:
+every delivered pre-Outreach invitation eventually gets Outreach provenance,
+classified at execution time against current same-offer truth.
+
 ## 8s. An invitation to apply is an episode, and it has to end — PRODUCTION ACCEPTED 2026-10-13
 
 **Three claims, kept apart as always:**
@@ -4627,40 +4791,33 @@ belong in authoritative functions that can check these invariants, not in
 arbitrary client UPDATEs. Proved behaviourally in `securityPosture.spec.ts`
 rather than by reading grant text.
 
-### Still blocked — and it blocks TWO things, not one
+### What was blocked here, and why it no longer is
 
-The **exact LE and GYU Kit automation durations** (or a CRM follow-up window
-Leif chooses) are a prerequisite for BOTH:
+This section used to say the **LE and GYU Kit automation durations** were a
+prerequisite for activating any `executor = 'kit'` attempt. The constraint
+reasoning was right; the product assumption underneath it was wrong. **Kit
+delivered Day 0 and nothing else** — there was never a Kit follow-up journey
+whose length could be measured.
 
-**A. the ACTIVE half of the backfill** — every delivered invitation whose
-person is **still `invited`** must become an `executor = 'kit'` attempt, and
-cannot without a finite `externally_managed_until`.
+Gmail owns the whole sequence, so a normal active attempt is
+`executor = 'gmail'` and satisfies the active-future invariant through
+`next_action_at`, which the CRM itself owns. §8t is the canonical cadence.
 
-**B. activating any FUTURE confirmed waitlist invitation** as an active
-`executor = 'kit'` Outreach attempt. This is the part easy to miss: it is not
-only about history. Every new confirmed invitation that converges on a
-Kit-managed journey hits the same wall on the day it is sent.
-
-**What it does NOT block**, and this matters for sequencing Phase 2B:
-
-- **the CLOSED half of the backfill** — anybody who already applied gets a
-  closed historical attempt with `end_reason = 'application_submitted'`, and a
-  concluded episode needs no future boundary.
-- **building the convergence plumbing**, which by construction cannot activate
-  a Kit attempt without a finite boundary — the CHECK is what makes it safe to
-  build before the answer arrives.
-
-`application_outreach_attempts_kit_boundary_check` is what makes this a wall
-rather than a note:
+`application_outreach_attempts_kit_boundary_check` **stays exactly as it
+is.** It is correct infrastructure for an episode that genuinely is driven
+from outside, and nothing about the Gmail decision makes a boundary-less
+external sequence acceptable. It is simply no longer on the normal path:
 
     check (status <> 'active' or executor <> 'kit'
            or externally_managed_until is not null)
 
-**Do not weaken this constraint to get around the prerequisite.** A
-boundary-less Kit attempt is precisely the permanent-Interested-card failure
-this authority exists to prevent, and the schema refusing to store one is the
-feature. The missing fact is a real-world fact about Leif's Kit sequences; it
-has to be supplied, not designed around.
+Also unchanged: `executor` describes **who owns execution of future automated
+outreach**, not who delivered Day 0. A historical attempt whose Day 0 came
+through Kit is `executor = 'gmail'` the moment Gmail takes over the follow-up,
+and the Day-0 delivery provenance lives where it actually happened — on the
+`waitlist_invitations` row the attempt points at. Recording
+`executor = 'kit'` to commemorate a past send would be a lie about the
+future.
 
 ### The canonical backfill rule — write to the rule, not to today's counts
 
@@ -7550,31 +7707,39 @@ that keeps moving, not a population to code against.
 | **Phase 2A0** — a place is spent when the sale starts | §8r, `b19a23df` | now production-EXERCISED by a real application |
 | **Phase 2A** — the Application Outreach authority | §8s, `88cc77cb` | catalog-verified, **0 rows by design** |
 
-**The next slice is §4b Phase 2B**, and it has a hard prerequisite that is a
-real-world fact, not a design choice:
+**§4b Phase 2B part one is BUILT** (§8t, migration `20261014120000` → **169**,
+awaiting deploy): the canonical cadence is **Gmail-owned Day 0 / 3 / 10 / 24,
+with Day 31 closing the episode to Nurture**, `schedule_key` records which
+calendar governs an attempt and cannot be rewritten, and the arithmetic lives
+in one module.
 
-> **BLOCKED ON LEIF: the exact LE and GYU Kit automation durations** (or a CRM
-> follow-up window Leif chooses). It blocks the **active** half of the backfill
-> and the activation of every future Kit-managed invitation. It does **not**
-> block the closed historical half, nor building the convergence plumbing. Do
-> not weaken `application_outreach_attempts_kit_boundary_check` to get around
-> it — §8s explains why that constraint is the feature.
+> **NOTHING IS WAITING ON LEIF.** The old "Kit automation duration" blocker is
+> **removed, because the question was wrong**: Kit delivered Day 0 and nothing
+> else, so there was never a Kit follow-up journey to measure. The remaining
+> dependency is ours — **Gmail execution is not implemented**, which blocks
+> automated sending, not cadence or lifecycle work.
 
 1. ~~Active Waitlist means `waiting` only.~~ **Done** (§8q).
 2. ~~The durable **Application Outreach** authority.~~ **Done** (§8s) — schema,
    invariants, immutable history and security, writing no rows.
-3. **NEXT (2B):** create/reuse the same-offer Interested Opportunity on a
+3. ~~The canonical versioned cadence, `step` semantics and next-action
+   authority.~~ **Done** (§8t) — built, not yet deployed.
+4. **NEXT (2B-ii):** create/reuse the same-offer Interested Opportunity on a
    confirmed invitation, and give **every delivered pre-Outreach invitation**
    Application Outreach provenance **without resending anything** — closed
-   attempts for those who already applied, active `kit` attempts for those
-   still invited. Classify at execution time by current same-offer truth; do
-   not hard-code today's counts. Only the active half needs the Kit duration.
-4. Interested derives from a live outreach; exhausted outreach falls to Nurture.
-5. Unify every invitation entry point — waitlist, Instagram, manual — onto that
+   attempts for those who already applied, active Gmail attempts for those
+   still invited, anchored to the confirmed Day-0 delivery and **never
+   resending Day 0**. Classify at execution time by current same-offer truth;
+   do not hard-code today's counts.
+5. Interested derives from a live outreach; exhausted outreach falls to Nurture.
+6. Unify every invitation entry point — waitlist, Instagram, manual — onto that
    one lifecycle.
-6. Only then the 13-week client-opening buffer, deposits (LE $500 / GYU $400)
-   and the Sales Call Workflow; then the Integration Readiness Gate, then Gmail,
-   then Instagram.
+7. Gmail executes the cadence §8t defines. **Never blast the backlog** — the
+   catch-up rule is already built and tested; the cutover behaviour is that
+   slice's to finalise.
+8. Only then the 13-week client-opening buffer, deposits (LE $500 / GYU $400)
+   and the Sales Call Workflow; then the Integration Readiness Gate, then
+   Instagram.
 
 **Gmail is not next, and it is not independent.** It executes §4b. Building it
 first builds the lifecycle inside the mail provider.

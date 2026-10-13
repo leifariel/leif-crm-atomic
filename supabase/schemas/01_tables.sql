@@ -2660,7 +2660,17 @@ create table if not exists public.application_outreach_attempts (
     status text not null default 'active',
 
     started_at timestamp with time zone not null default now(),
-    -- 0 is the initial invitation; 1, 2, 3 the reminders after it.
+    -- WHICH CALENDAR GOVERNS THIS EPISODE. Immutable provenance: a
+    -- historical attempt must stay interpretable after the sequence changes,
+    -- so a new calendar is a new key, never an edit to an existing one. No
+    -- default, because a default is how a v2 writer silently records v1.
+    -- The arithmetic lives in
+    -- src/components/atomic-crm/outreach/applicationOutreachSchedule.ts.
+    schedule_key text not null,
+    -- 0 is the initial invitation; 1, 2, 3 the reminders after it. The step
+    -- advances only on CONFIRMED delivery -- a date passing is not a send,
+    -- and a failed send is not a step. The valid ceiling is a property of
+    -- the governing schedule, not of the table, so it is not a CHECK here.
     step smallint not null default 0,
     -- When the CRM should act next. Null while somebody else is driving.
     next_action_at timestamp with time zone,
@@ -2686,6 +2696,10 @@ create table if not exists public.application_outreach_attempts (
         check (executor in ('kit', 'gmail', 'none')),
     constraint application_outreach_attempts_status_check
         check (status in ('active', 'closed')),
+    -- A new calendar is a deliberate, reviewed act: adding a version means a
+    -- migration, and an unknown value is refused rather than guessed at.
+    constraint application_outreach_attempts_schedule_key_check
+        check (schedule_key in ('application_outreach_v1')),
     constraint application_outreach_attempts_step_check
         check (step >= 0),
 

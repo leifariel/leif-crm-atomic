@@ -71,6 +71,9 @@ const activeAttempt = (
   channel: "email",
   executor: "gmail",
   status: "active",
+  // Which calendar governs the episode. There is no database default on
+  // purpose, so every writer states it.
+  schedule_key: "application_outreach_v1",
   step: 0,
   next_action_at: SOON,
   ...over,
@@ -649,5 +652,115 @@ test.describe("an attempt's identity and history cannot be rewritten", () => {
     expect(data![0]!.status).toBe("closed");
     expect(data![0]!.end_reason).toBe("sequence_exhausted");
     expect(data![1]!.status).toBe("active");
+  });
+});
+
+// WHICH CALENDAR GOVERNS THE EPISODE (Phase 2B).
+//
+// The arithmetic is proved in
+// contracts/outreach/applicationOutreachSchedule.test.ts. What only real
+// Postgres can prove is that the governing schedule is RECORDED, CHECKED and
+// IMMUTABLE — so a historical attempt stays interpretable after Leif changes
+// the sequence.
+test.describe("the governing schedule is durable provenance", () => {
+  test("P1. Gmail needs no external boundary, only a next moment", async () => {
+    const { opportunityId } = await seedOpportunity(40);
+
+    // Gmail is the CRM's own executor: the CRM knows when it will act, so
+    // next_action_at IS the future the active-shape invariant requires and
+    // externally_managed_until stays null. The Kit side — an external
+    // sequence, which must state when its window ends — is test M, and this
+    // slice deliberately did not relax it.
+    ok(
+      "a Gmail attempt with a next moment and no external window",
+      await insert({
+        ...activeAttempt(opportunityId),
+        executor: "gmail",
+        next_action_at: SOON,
+        externally_managed_until: null,
+      }),
+    );
+
+    const { data } = await db()
+      .from("application_outreach_attempts")
+      .select("executor, schedule_key, externally_managed_until")
+      .eq("opportunity_id", opportunityId)
+      .single();
+    expect(data!.executor).toBe("gmail");
+    expect(data!.externally_managed_until).toBeNull();
+    expect(data!.schedule_key).toBe("application_outreach_v1");
+  });
+
+  test("P2. an unknown schedule is refused by the database", async () => {
+    const { opportunityId } = await seedOpportunity(41);
+
+    const unknown = await insert({
+      ...activeAttempt(opportunityId),
+      schedule_key: "application_outreach_v2",
+    });
+    expect(unknown.error?.message ?? "").toContain("schedule_key_check");
+
+    // A new calendar is a migration, not a string somebody passes.
+    const invented = await insert({
+      ...activeAttempt(opportunityId),
+      schedule_key: "whatever_was_typed",
+    });
+    expect(invented.error?.message ?? "").toContain("schedule_key_check");
+  });
+
+  test("P3. an attempt cannot be written without saying which schedule governs it", async () => {
+    const { opportunityId } = await seedOpportunity(42);
+
+    const row = activeAttempt(opportunityId) as Record<string, unknown>;
+    delete row.schedule_key;
+
+    // There is no database default, so this is a null violation rather than
+    // a silent v1 — which is the whole reason the default was left off.
+    const silent = await insert(row);
+    expect(silent.error?.message ?? "").toMatch(/null value in column/i);
+    expect(silent.error?.message ?? "").toContain("schedule_key");
+  });
+
+  test("P4. the governing schedule cannot be rewritten after insert", async () => {
+    const { opportunityId } = await seedOpportunity(43);
+    ok("the attempt", await insert(activeAttempt(opportunityId)));
+
+    const { data: before } = await db()
+      .from("application_outreach_attempts")
+      .select("id, schedule_key")
+      .eq("opportunity_id", opportunityId)
+      .single();
+    expect(before!.schedule_key).toBe("application_outreach_v1");
+
+    // Moving a historical attempt onto a different calendar is refused by
+    // the GUARD, not merely by the value CHECK: a BEFORE UPDATE trigger runs
+    // before constraints are evaluated, so the immutability message is what
+    // comes back. That ordering is what will still protect these rows on the
+    // day a v2 exists and the CHECK would accept it.
+    const { error } = await db()
+      .from("application_outreach_attempts")
+      .update({ schedule_key: "application_outreach_v2" })
+      .eq("id", before!.id);
+
+    expect(error?.message ?? "").toContain("immutable");
+    expect(error?.message ?? "").not.toContain("schedule_key_check");
+
+    const { data: after } = await db()
+      .from("application_outreach_attempts")
+      .select("schedule_key")
+      .eq("id", before!.id)
+      .single();
+    expect(after!.schedule_key).toBe("application_outreach_v1");
+
+    // And ordinary progress still works, so the guard froze the calendar
+    // rather than the row.
+    ok("advancing the step", {
+      error: (
+        await db()
+          .from("application_outreach_attempts")
+          .update({ step: 1 })
+          .eq("id", before!.id)
+      ).error,
+    });
   });
 });

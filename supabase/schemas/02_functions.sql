@@ -5310,12 +5310,13 @@ begin
      or new.opportunity_id is distinct from old.opportunity_id
      or new.source is distinct from old.source
      or new.started_at is distinct from old.started_at
+     or new.schedule_key is distinct from old.schedule_key
      or new.waitlist_invitation_id is distinct from old.waitlist_invitation_id
      or new.created_at is distinct from old.created_at
   then
     raise exception
       'application_outreach_attempts: identity and provenance are immutable'
-      using hint = 'id, opportunity_id, source, started_at, waitlist_invitation_id and created_at describe an episode that already happened. A different Opportunity, source or invitation is a different episode: insert a new attempt.';
+      using hint = 'id, opportunity_id, source, started_at, schedule_key, waitlist_invitation_id and created_at describe an episode that already happened. A different Opportunity, source, schedule or invitation is a different episode: insert a new attempt.';
   end if;
 
   if old.status = 'closed' then

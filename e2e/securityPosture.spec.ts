@@ -420,6 +420,7 @@ test.describe("application outreach attempts", () => {
         channel: "email",
         executor: "gmail",
         status: "active",
+        schedule_key: "application_outreach_v1",
         next_action_at: "2026-12-01T09:00:00.000Z",
       }),
       "INSERT into application_outreach_attempts",
@@ -455,6 +456,7 @@ test.describe("application outreach attempts", () => {
           channel: "email",
           executor: "gmail",
           status: "active",
+          schedule_key: "application_outreach_v1",
           next_action_at: "2026-12-01T09:00:00.000Z",
         })
       ).error,

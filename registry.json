@@ -866,6 +866,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/outreach/applicationOutreachSchedule.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/offers/paymentOptionActions.ts",
           "type": "registry:component"
         },
