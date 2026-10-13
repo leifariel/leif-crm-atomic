@@ -40,6 +40,9 @@ const TABLES = [
   "scholarship_slots",
   "tasks",
   "enrollments",
+  // An Outreach attempt points at an invitation and an application with
+  // RESTRICT, and its provenance is immutable, so it must go before both.
+  "application_outreach_attempts",
   // Waiting list, before contacts and deals
   "waitlist_invitations",
   "waitlist_invitation_batches",

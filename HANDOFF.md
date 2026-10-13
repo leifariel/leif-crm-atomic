@@ -4393,6 +4393,116 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8s. An invitation to apply is an episode, and it has to end — BUILT, NOT YET DEPLOYED (2026-10-13)
+
+§4b **Phase 2A**: the durable Application Outreach authority.
+`application_outreach_attempts`. Schema, invariants, security and contracts
+only — it creates no rows, no Opportunities, and changes no sales lifecycle
+state.
+
+**Nothing existing could own this**, confirmed against current main:
+`waitlist_invitations` is one delivery of one batch, `kit_sync_operations` is
+one external side effect, `deals` carries a single current stage, and §4b
+forbids modelling outreach as Tasks.
+
+### The shape
+
+One episode belongs to one **Opportunity** — never Contact+Offer, because the
+same person may run an LE and a GYU journey at once and a concluded cycle must
+stay concluded. Many historical attempts per Opportunity; **at most one
+active**, enforced by a partial unique index rather than by hope.
+
+Three concepts kept apart, so an Instagram-origin lead can later be emailed:
+
+| | Values | Meaning |
+|---|---|---|
+| `source` | waitlist · instagram · manual · referral · other | how the episode started; immutable |
+| `channel` | email · instagram · manual | how the next message reaches them; mutable |
+| `executor` | kit · gmail · none | who runs the follow-up; `none` means a human does |
+
+### The invariant that stops a permanent Interested card
+
+**An active attempt always has a future moment** — `next_action_at` when the
+CRM drives the sequence, or `externally_managed_until` when something else
+does. A CHECK enforces it, because it is a row-local fact and nothing should
+have to remember it.
+
+And when the executor is Kit, `externally_managed_until` is **required**, not
+merely allowed. That is the Kit-managed journey's CRM-owned end. It is
+enforced at schema level deliberately: a boundary-less Kit attempt is now
+impossible to write, rather than depending on the future backfill to remember
+to set one.
+
+### End reasons stay materially different
+
+`application_submitted` · `sequence_exhausted` · `not_now` · `explicit_no` ·
+`already_a_client` · `email_unreachable` · `unsubscribed` · `do_not_engage`.
+Not responding is not saying no, which is not unsubscribing, which is not
+applying. Active rows carry no `ended_at`/`end_reason`; closed rows must carry
+both.
+
+### Provenance, and why the backfill will be idempotent
+
+`waitlist_invitation_id` is **unique where not null**, so replaying the 11 Oct
+backfill reaches the same rows instead of inviting anybody twice. The
+delivered invitation is the strongest stable key — stronger than the waitlist
+entry, which can be invited more than once over its life.
+
+`opportunity_id` cascades, following `deal_stage_events` / `sales_calls` /
+`applications`. The two provenance pointers — `waitlist_invitation_id` and
+`resulting_application_id` — are `on delete set null`, following
+`waitlist_entries.converted_opportunity_id`: losing a pointer must never
+delete the episode, because "we asked this person and they never replied"
+stays true regardless.
+
+### History does not change its mind
+
+CHECK constraints are row-local — they see NEW and nothing else — so they
+cannot say "this column may not change" or "closed may not become active
+again". Those are OLD-versus-NEW questions, and
+`guard_outreach_attempt_mutation()` answers them in the shape
+`reject_application_response_mutation()` already uses, escape hatch included.
+
+**Immutable after insert:** `id` · `opportunity_id` · `source` ·
+`started_at` · `waitlist_invitation_id` · `created_at`.
+**Mutable while active:** `channel` · `executor` · `step` ·
+`next_action_at` · `externally_managed_until`, and the close transaction
+may set `status` · `ended_at` · `end_reason` · `resulting_application_id`.
+**Once closed, nothing at all** — a closed attempt is history, and re-inviting
+somebody starts a NEW attempt beside it.
+
+**updated_at is set by the database**, in that trigger, and never taken from
+the caller. Everywhere else in this schema it is written by whoever happens to
+be doing the UPDATE, and `waitlist_entries.updated_at` shows how that ends:
+it still read 2026-09-17 on a row whose status had changed that same day, and
+a zero-mutation proof built on it was wrong. A column that looks authoritative
+and is not is worse than no column.
+
+**The provenance FKs are RESTRICT, not SET NULL.** Immutable provenance and a
+nulling cascade are incompatible: `resetDb` deleting a waitlist invitation
+tried to null the pointer, the guard refused, and the delete failed. The
+honest statement is that an invitation or application an episode points at
+cannot be deleted while the episode exists. `e2e/fixtures.ts` now clears
+outreach attempts before both, which is exactly the "a table added in the
+future will fail loudly here" the reset harness was built for.
+
+### Security
+
+The conservative posture of `waitlist_invitation_preflights`, not the
+permissive one older CRM tables carry: RLS on, one read policy, `authenticated`
+holds **SELECT only**, `anon` and PUBLIC hold nothing, `service_role` full.
+**No write surface exists yet and that is deliberate** — lifecycle transitions
+belong in authoritative functions that can check these invariants, not in
+arbitrary client UPDATEs. Proved behaviourally in `securityPosture.spec.ts`
+rather than by reading grant text.
+
+### Still blocked
+
+The 11 Oct backfill still needs the **exact LE and GYU Kit automation
+durations**, or a CRM follow-up window Leif chooses. The schema does not
+require knowing them today — but it does require knowing them before any
+`executor = 'kit'` row can exist, which is exactly the point.
+
 ## 8r. A waitlist place is spent when the sale starts — DEPLOYED 2026-10-13
 
 **DEPLOYED and SYSTEM GREEN; not yet PRODUCTION-EXERCISED.** Those are three

@@ -389,3 +389,76 @@ test.describe("a Contact write does not need identity rights", () => {
     );
   });
 });
+
+// APPLICATION OUTREACH IS READABLE, AND WRITABLE BY NOBODY — §4b Phase 2A.
+//
+// This authority will eventually cause real emails to reach real people, so
+// it gets the conservative posture of waitlist_invitation_preflights rather
+// than the permissive one older CRM tables carry. Lifecycle transitions
+// belong in authoritative functions that can check the invariants, not in
+// arbitrary client UPDATEs, so no write surface is opened before one is
+// genuinely needed.
+test.describe("application outreach attempts", () => {
+  test("a signed-in client may read them and may not write them", async () => {
+    const admin = serviceRoleClient();
+    const client = await signedInClient(admin);
+
+    // Reading is the owner's own operational view — allowed.
+    const read = await client
+      .from("application_outreach_attempts")
+      .select("id")
+      .limit(1);
+    expect(
+      read.error,
+      `SELECT was denied, and the owner needs to be able to read these: ${read.error?.code} ${read.error?.message}`,
+    ).toBeNull();
+
+    expectDenied(
+      await client.from("application_outreach_attempts").insert({
+        opportunity_id: 1,
+        source: "waitlist",
+        channel: "email",
+        executor: "gmail",
+        status: "active",
+        next_action_at: "2026-12-01T09:00:00.000Z",
+      }),
+      "INSERT into application_outreach_attempts",
+    );
+    expectDenied(
+      await client
+        .from("application_outreach_attempts")
+        .update({ status: "closed" })
+        .eq("id", 1),
+      "UPDATE of application_outreach_attempts",
+    );
+    expectDenied(
+      await client.from("application_outreach_attempts").delete().eq("id", 1),
+      "DELETE from application_outreach_attempts",
+    );
+  });
+
+  test("anon cannot reach them at all", async () => {
+    const anon = anonClient();
+
+    const read = await anon
+      .from("application_outreach_attempts")
+      .select("id")
+      .limit(1);
+    // Either refused outright, or RLS shows an empty set — never a row.
+    expect(read.data ?? []).toHaveLength(0);
+
+    expect(
+      (
+        await anon.from("application_outreach_attempts").insert({
+          opportunity_id: 1,
+          source: "waitlist",
+          channel: "email",
+          executor: "gmail",
+          status: "active",
+          next_action_at: "2026-12-01T09:00:00.000Z",
+        })
+      ).error,
+      "anon INSERT was not refused",
+    ).not.toBeNull();
+  });
+});

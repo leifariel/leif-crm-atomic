@@ -315,3 +315,11 @@ drop trigger if exists on_testimonial_received on public.enrollments;
 create trigger on_testimonial_received
   after update of testimonial_received_at on public.enrollments
   for each row execute function public.handle_testimonial_received();
+
+-- An Outreach attempt is an historical episode: identity and provenance are
+-- immutable, a closed attempt never reopens, and updated_at is set here
+-- rather than trusted from the caller.
+drop trigger if exists guard_outreach_attempt_mutation on public.application_outreach_attempts;
+create trigger guard_outreach_attempt_mutation
+  before update on public.application_outreach_attempts
+  for each row execute function public.guard_outreach_attempt_mutation();

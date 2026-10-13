@@ -1026,7 +1026,7 @@ begin
   end if;
   return new;
 end;
-$;
+$$;
 
 CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
     LANGUAGE "plpgsql" SECURITY DEFINER
@@ -5266,5 +5266,66 @@ begin
   return jsonb_build_object(
     'status', 'set', 'option_id', p_option_id,
     'is_active', coalesce(p_is_active, false));
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- An episode is history, and history does not change its mind
+-- ---------------------------------------------------------------------------
+-- CHECK constraints are row-local: they see NEW and nothing else, so they
+-- cannot express "this column may not change" or "closed may not become
+-- active again". Those are OLD-versus-NEW questions, and in this schema that
+-- means a BEFORE UPDATE trigger — the shape
+-- reject_application_response_mutation() already uses for an immutable
+-- submission record, including its app.migration_mode escape hatch.
+--
+-- WHAT THIS PROTECTS. An Outreach attempt is the durable record of one
+-- invitation episode. If its Opportunity, its source, its start or its
+-- originating invitation could be rewritten, the history would say something
+-- that never happened. And if a closed attempt could be set active again, a
+-- second outreach cycle would overwrite the first instead of standing beside
+-- it — which is exactly what §4b says must not happen. A genuinely new cycle
+-- is a NEW row.
+--
+-- IT ALSO MAINTAINS updated_at. Everywhere else in this schema updated_at is
+-- written by whoever happens to be doing the UPDATE, and
+-- waitlist_entries.updated_at proves how that ends: it still read 2026-09-17
+-- on a row whose status had changed that same day, and a zero-mutation proof
+-- built on it was wrong. A column that looks authoritative and is not is
+-- worse than no column, so this one is set by the database on every update
+-- and never trusted from the caller.
+create or replace function public.guard_outreach_attempt_mutation()
+returns trigger
+language plpgsql
+set search_path to 'public'
+as $$
+begin
+  -- The backfill of the 11 Oct invitations runs as a migration and may need
+  -- to correct what it wrote; the same hatch every other guard here uses.
+  if current_setting('app.migration_mode', true) = 'true' then
+    return new;
+  end if;
+
+  if new.id is distinct from old.id
+     or new.opportunity_id is distinct from old.opportunity_id
+     or new.source is distinct from old.source
+     or new.started_at is distinct from old.started_at
+     or new.waitlist_invitation_id is distinct from old.waitlist_invitation_id
+     or new.created_at is distinct from old.created_at
+  then
+    raise exception
+      'application_outreach_attempts: identity and provenance are immutable'
+      using hint = 'id, opportunity_id, source, started_at, waitlist_invitation_id and created_at describe an episode that already happened. A different Opportunity, source or invitation is a different episode: insert a new attempt.';
+  end if;
+
+  if old.status = 'closed' then
+    raise exception
+      'application_outreach_attempts: a closed attempt is history and cannot be changed'
+      using hint = 'Re-inviting somebody starts a NEW attempt beside this one. Closed attempts are never reopened, so the record of what was tried before survives.';
+  end if;
+
+  -- Set by the database, never taken from the caller.
+  new.updated_at := now();
+  return new;
 end;
 $$;

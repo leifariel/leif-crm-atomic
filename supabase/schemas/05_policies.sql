@@ -347,3 +347,7 @@ drop policy if exists "Kit integration settings are readable" on public.kit_inte
 create policy "Kit integration settings are readable" on public.kit_integration_settings
   for select to authenticated using (true);
 -- No insert/update/delete policy on either, deliberately.
+
+-- Application Outreach — readable by the owner, writable through no client.
+alter table public.application_outreach_attempts enable row level security;
+create policy "Outreach attempts are readable" on public.application_outreach_attempts for select to authenticated using (true);

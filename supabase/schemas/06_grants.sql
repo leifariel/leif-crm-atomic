@@ -950,3 +950,11 @@ revoke all on function public.record_sales_call_reinstated(bigint) from public;
 revoke all on function public.record_sales_call_reinstated(bigint) from anon;
 grant execute on function public.record_sales_call_reinstated(bigint) to authenticated;
 grant execute on function public.record_sales_call_reinstated(bigint) to service_role;
+
+-- Application Outreach: the owner reads it; lifecycle transitions belong in
+-- authoritative functions, so no client write surface is granted.
+grant select on table public.application_outreach_attempts to authenticated;
+revoke insert, update, delete on table public.application_outreach_attempts from authenticated;
+revoke all on table public.application_outreach_attempts from anon;
+revoke all on table public.application_outreach_attempts from public;
+grant select, insert, update, delete on table public.application_outreach_attempts to service_role;
