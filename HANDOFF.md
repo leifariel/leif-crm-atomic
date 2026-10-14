@@ -4710,12 +4710,206 @@ declarative file can see the disagreement.
 migration, the Outreach schema, the schedule authority, the grants and every
 line of runtime code are byte-identical to `6dca002e`.
 
-### PRE-EXISTING DECLARATIVE FUNCTION PARITY DEBT — OPEN, AND IT GATES THE NEXT MIGRATION
+### PRE-EXISTING DECLARATIVE FUNCTION PARITY DEBT — CLOSED 2026-10-14
 
-A second, separate finding from the same audit. **Do not confuse it with the
-`delivery_method` drift above, which is closed.** These live functions exist
-**only in migrations** and are absent from
-`supabase/schemas/02_functions.sql`:
+**Closed in `02_functions.sql` with no migration and no production change.
+The next database migration is no longer gated on it.**
+
+**The debt was TEN functions, not three, and one of the named three was never
+missing.** The original audit was done by eye with a case-sensitive grep for
+`function public.deal_is_active`, and the declaration is uppercase
+`FUNCTION public.deal_is_active` at line 1863. It had been declared all
+along. The scope was established properly this time, by diffing production's
+catalog against the file: **107 live functions, 97 declared.**
+
+**The accounting, stated exactly, because a first pass got it wrong:**
+
+    10  functions actually missing
+     =   2  of the originally named three
+            (invite_from_preflight, waitlist_invitation_candidates)
+     +   8  additional functions nobody had named
+     and  deal_is_active was NEVER missing, so it is not in either number
+
+A first write-up of this said "seven beyond the three" and then listed eight,
+which is two errors in one sentence: it counted `deal_is_active` as missing
+and undercounted the additions. 2 + 8 = 10.
+
+The ten that were genuinely absent — the **two** named ones first, then the
+**eight** that were not:
+
+    -- the 2 of the originally named three that really were missing
+    invite_from_preflight(p_preflight_id, p_label)
+    waitlist_invitation_candidates(p_offer_id, p_cohort_id)        sql, STABLE, DEFINER
+
+    -- the 8 additional ones the named list had not mentioned
+    waitlist_invitation_overlap(p_offer_a, p_limit_a, p_offer_b, p_limit_b)
+    waitlist_preflight_overlap(p_preflight_a, p_preflight_b)
+    offer_accepting_cohorts(p_offer_id)                            sql, STABLE, INVOKER
+    apply_waitlist_invitation_result()                             trigger
+    invite_oldest_waiting(...)                                     service_role only
+    rebuild_enrollment_expected_sessions(p_enrollment_id)
+    rebuild_all_expected_sessions()
+    rebuild_expected_sessions_on_start_change()                    trigger
+
+**No drift.** Each function's production body was compared byte-for-byte
+against the migration that last established it: **all ten identical.** So
+there was no question of choosing between two versions.
+
+**Each mirrored definition is production's own `pg_get_functiondef` output,
+verbatim** — the format AGENTS.md requires for this file — and all ten were
+verified byte-identical to production after insertion. Nothing was redesigned,
+tidied or renamed. **The grants were derived from production's `proacl`**,
+not transcribed from migration text, which is what caught that
+`invite_oldest_waiting` is service_role-only in production even though its
+creating migration granted `authenticated` too: `20261010140000` revoked it
+later. Production matches committed intent; the first migration alone did not.
+
+**One ordering trap, and it is a real one.** A `LANGUAGE sql` body is parsed
+and validated when the function is created, unlike plpgsql.
+`waitlist_invitation_overlap` is `LANGUAGE sql` and calls
+`waitlist_invitation_candidates`, so candidates is declared first — otherwise
+applying these files in order would fail. The contract pins that order and
+also pins that the dependency still exists, so the comment explaining it
+cannot quietly become false.
+
+#### ACL findings: no discrepancies, one posture note
+
+Production matches committed intent for all ten. Reported rather than
+touched, per the rule that an ACL difference is a stop-and-report:
+
+| | PUBLIC | anon | authenticated | service_role |
+|---|---|---|---|---|
+| `invite_from_preflight` | no | no | **yes** | **yes** |
+| `invite_oldest_waiting` | no | no | no | **yes** |
+| `waitlist_invitation_candidates` · `_overlap` · `waitlist_preflight_overlap` | no | no | **yes** | **yes** |
+| `offer_accepting_cohorts` | no | no | **yes** | **yes** |
+| `rebuild_all_expected_sessions` · `rebuild_enrollment_expected_sessions` | no | no | **yes** | **yes** |
+| `apply_waitlist_invitation_result` | no | no | no | no |
+| `rebuild_expected_sessions_on_start_change` | **yes** | no | no | no |
+
+**That last row is the note.** It holds `proacl = NULL`, which in Postgres
+means EXECUTE TO PUBLIC — the same mechanism that exposed
+`enqueue_kit_operation` on 10 Oct. Its migration is silent on ACLs, so
+production matches intent and nothing drifted. It is **not** reachable the way
+that one was: it returns `trigger`, and PostgREST does not expose
+trigger-returning functions, which is exactly why
+`protectedFunctionGrants` scopes itself to non-trigger functions. Left as
+production holds it, because changing intended authority is not a parity task.
+Worth a decision of its own some day.
+
+#### The real diff preflight, and why it could not be the documented command
+
+Run before claiming the next migration is safe to author.
+
+**The documented command cannot run in this repository at all.** Both
+invocations failed identically:
+
+    npx supabase db diff --local                       -> exit 1
+    npx supabase db diff --db-url <clean room>         -> exit 1
+    ShadowDbError: schema "cron" does not exist (SQLSTATE 3F000)
+      at migration 20260906070000_sync_year_planning_calendar_cron.sql
+
+`db diff` builds its shadow by **replaying migrations**, and that replay hits
+the same `pg_cron` environment prerequisite AGENTS.md documents for clean
+rooms — a prerequisite no migration can create for itself. `npx supabase
+start` fails at the same migration for the same reason. **So "generate
+migration 171 with `db diff -f`" is not currently an available workflow**,
+independently of anything in this parity work. That is worth knowing before
+somebody tries it.
+
+**What was verified instead.** The question the diff would have answered —
+does the committed chain still reproduce production's function authority? — was
+answered directly, by comparing the **migration-replayed clean room** (144
+deterministic migrations) against **production's catalog**, for all 107
+functions:
+
+| | |
+|---|---|
+| functions in both | **107 = 107**, none only in production, none only in the clean room |
+| signature · returns · language · volatility · security mode · `search_path` | **zero differences** |
+| ACL differences | **51, and ACL-only** |
+
+No MAIN-only migration declares a function (the replay-boundary audit asserts
+it, and it was re-checked here), so the clean room is a fair target for this
+comparison.
+
+**The 51, classified rather than waved away:**
+
+- **49 are the same shape and are not a difference in effect.** Production
+  holds `proacl = NULL` — Postgres's built-in default, which *is* EXECUTE to
+  PUBLIC — where the clean room holds an explicit `=X/postgres` (PUBLIC) plus
+  redundant named grants. PUBLIC may execute on both sides; the clean room
+  merely spells it out. Mostly trigger functions, which PostgREST does not
+  expose anyway.
+- **2 are a genuine production-vs-replay difference**, and production is the
+  **more restrictive** side:
+
+      materialize_application_responses(bigint)   clean: service_role   prod: NOT granted
+      record_deal_outcome_event()                 clean: service_role   prod: NOT granted
+
+  Read from `pg_proc.proacl` directly. Worth a decision because
+  `materialize_application_responses` is pinned in the `serviceRoleOnly` class
+  of `protectedFunctionGrants.json`, so the pin matches the clean room and
+  **not** production — if anything calls it as `service_role` in production it
+  would be refused. **Not touched here:** it is pre-existing, unrelated to
+  these ten functions, and an ACL change is a decision of its own.
+
+**None of the ten restored functions appears in those 51.** The only member of
+the wider Phase 2A–2C set that does is `deal_is_active`, in the 49-strong
+PUBLIC-equivalent class — an ACL shape, not a body, signature, volatility,
+security-mode or `search_path` difference, and nothing this repair introduced.
+`converge_delivered_invitation` does not appear at all.
+
+**`delivery_method` agrees on both sides**, so the §8t repair is not at risk
+of being narrowed by anything:
+
+    CHECK ((delivery_method = ANY (ARRAY['manual', 'gmail', 'kit_tag'])))
+
+#### The known enqueue noise: found, characterised, predates this
+
+The memory `declarative-schema-drifted-from-enqueue-signature` warned about
+this. Exactly what it is:
+
+`enqueue_kit_application_sync` and `enqueue_kit_application_receipt` are each
+declared **twice** in `02_functions.sql` — a superseded definition at lines
+3789 / 3865 and the current one at 4056 / 4137. **Both declarations carry the
+identical signature**, so no overload is created; applying the file in order
+simply replaces the first with the second, and the second's body is
+**byte-identical to the live function**. `enqueue_kit_operation` is declared
+once and also matches.
+
+It **predates this repair**: both duplicates are present at `f61f1639`, and
+the mirrored block added here starts at line 5626. No `enqueue_*` function
+appears among the 51 ACL differences. It is untidiness in the file, not a
+divergence from production — and, given the CLI finding above, not a diff
+hazard either.
+
+#### What now protects it
+
+`contracts/schema/liveFunctionsAreDeclared.test.ts` pins all ten by exact
+signature, plus `deal_is_active` and `converge_delivered_invitation`, plus
+the SQL ordering rule. Sensitivity executed, not reasoned: renaming
+`invite_from_preflight` in the declarative file fails its pin by name;
+renaming `waitlist_invitation_candidates` fails **two** tests — its pin and
+the ordering rule. Restored, green at 15/15.
+
+**One pre-existing observation, not repaired:** this file mixes two
+declaration styles — 40 in `pg_get_functiondef` form and 24 hand-written in
+lowercase, which spell `timestamptz` and `default null` where the former
+writes `timestamp with time zone` and `DEFAULT NULL::timestamp with time
+zone`. AGENTS.md warns that non-`pg_dump` formatting here causes phantom
+diffs. Twenty-two of those 24 pre-date this work; two are mine
+(`guard_outreach_attempt_mutation`, `converge_delivered_invitation`).
+Normalising 24 unrelated declarations is its own task, and whether they
+actually produce a phantom diff is unverified — it needs a real `db diff`
+run. The parity contract is therefore style-agnostic for those two rather
+than taking a side.
+
+### The original note, kept for the record
+
+A second, separate finding from the same audit, written when the scope was
+believed to be three functions. **Do not confuse it with the
+`delivery_method` drift above, which is also closed.** It read:
 
 - `invite_from_preflight` — the owner's invitation command
 - `deal_is_active` — the canonical active-sales predicate, which
@@ -4727,19 +4921,33 @@ removes nor alters any of them; deployed production function truth is intact
 and was read back directly; and Phase 2C's own migration already exists and
 deployed cleanly.
 
-**But it is a loaded gun pointed at the next migration.** `db diff` computes a
-desired state from the declarative schema. A function that is live in
-production and absent from that file is, to the generator, a function that
-should not exist — so a diff could silently propose **DROPping or altering
-live authority**, including the predicate this slice's command depends on.
-The `delivery_method` repair showed the same mechanism in its milder form: a
-stale declaration became a narrowing proposal.
+**The reason first given for urgency was WRONG, and the correction matters
+more than the repair.** This section claimed `db diff` computes a desired
+state from the declarative schema, so a missing function could be proposed for
+DROP. **It does not.** `supabase db diff --help` (CLI 2.121.0) says it
+compares *"a shadow built from `supabase/migrations` with a live database"*
+and that *"declarative files under `supabase/schemas` are not part of this
+baseline"*. There is no `schema_paths` in `supabase/config.toml`, so the diff
+never reads these files. AGENTS.md's "auto-generated" framing does not describe
+what this CLI version does.
+
+So the DROP risk was imaginary, and the same goes for the `delivery_method`
+repair's stated danger: a narrowing migration could not have been generated
+from that stale declaration either. **Both repairs are still right**, for the
+reason that actually holds: this file is the documented source of truth and
+the human reference a reviewer trusts. A live function missing from it is a
+lie in that source, and the next person editing a neighbouring definition
+cannot see that the authority exists. Documentation integrity is reason
+enough; inventing a mechanism it does not have is not.
 
 > **SEQUENCING RULE, recorded deliberately: close this parity debt BEFORE the
 > next database migration after Phase 2C is authored or generated.** Not
 > before the next slice, not before Gmail — before the next **migration**. The
 > order matters because the damage happens at generation time, not at review
 > time.
+
+**That rule has been satisfied** — the debt closed on 2026-10-14, before any
+migration after Phase 2C was authored. Migration total remains **170**.
 
 Scope when it is picked up: transcribe those three functions into
 `02_functions.sql` exactly as production holds them (`pg_get_functiondef`,
@@ -8091,12 +8299,32 @@ stable worktree `/Users/NatashaMKraus/Projects/leif-crm-phase2` on branch
 files four times in one session (§8s, and the `tmp-worktree-files-can-vanish`
 memory).
 
-> **BEFORE THE NEXT DATABASE MIGRATION IS AUTHORED OR GENERATED: close the
-> declarative function parity debt** (§8u). `invite_from_preflight`,
-> `deal_is_active` and `waitlist_invitation_candidates` are live in production
-> and absent from `supabase/schemas/02_functions.sql`, so a `db diff` could
-> propose DROPping live authority — including the predicate Phase 2C's command
-> calls. Not a Phase 2C blocker; a gate on the next migration.
+> **The declarative function parity gate is CLOSED** (§8u, 2026-10-14). It was
+> **ten** live functions absent from `supabase/schemas/02_functions.sql` — two
+> of the three originally named plus eight nobody had named — and
+> `deal_is_active` was never among them; it had been declared in uppercase all
+> along. Production's catalog and the file now agree exactly: **107 live, 107
+> declared, nothing declared that is not live.** No migration was needed;
+> production was already correct. **The next migration is no longer gated by
+> this.**
+>
+> **Two things found while proving that, both worth knowing before you write
+> migration 171:**
+>
+> 1. **`supabase db diff` does not read `supabase/schemas/`** in this repo —
+>    its own help says declarative files "are not part of this baseline", and
+>    there is no `schema_paths` configured. AGENTS.md's "auto-generated"
+>    framing does not match the CLI. Write migration 171 **by hand**, as most
+>    of this chain already is.
+> 2. **`db diff` cannot run here at all right now**, in any mode: its shadow
+>    replays migrations and dies at `20260906070000` on the `pg_cron`
+>    prerequisite, exactly as `supabase start` does. Not caused by the parity
+>    work; it just has never been exercised.
+>
+> One unrelated ACL item surfaced and was deliberately left alone:
+> `materialize_application_responses` and `record_deal_outcome_event` are
+> granted to `service_role` in the replayed clean room but **not** in
+> production, and the first is pinned `serviceRoleOnly`. See §8u.
 
 **The waitlist invitation slice is COMPLETE and sealed.** 55 real invitations
 went out on 11 Oct — LE 25 (batch 1, preflight 9) and GYU 30 (batch 2,

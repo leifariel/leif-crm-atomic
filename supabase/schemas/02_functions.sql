@@ -5621,3 +5621,802 @@ revoke all on function public.converge_delivered_invitation(bigint, timestamptz)
 revoke all on function public.converge_delivered_invitation(bigint, timestamptz) from anon;
 revoke all on function public.converge_delivered_invitation(bigint, timestamptz) from authenticated;
 grant execute on function public.converge_delivered_invitation(bigint, timestamptz) to service_role;
+
+-- ============================================================================
+-- LIVE FUNCTION AUTHORITY MIRRORED FROM PRODUCTION (2026-10-14)
+--
+-- These ten functions were live in production and absent from this file.
+--
+-- WHY IT MATTERS, stated accurately after actually checking. AGENTS.md calls
+-- this directory the source of truth and says migrations are "auto-generated"
+-- from it, and a first pass here claimed `supabase db diff` would therefore
+-- propose DROPping a function missing from this file. **That is not what the
+-- CLI does.** `supabase db diff --help` (2.121.0) says it compares "a shadow
+-- built from supabase/migrations with a live database" and that "declarative
+-- files under supabase/schemas are not part of this baseline" -- there is no
+-- `schema_paths` configured, and the diff never reads this file. So the DROP
+-- risk is not real in this configuration.
+--
+-- What is real: this file is the human reference for what the database
+-- contains, the thing a reader and a reviewer trust, and the place anyone
+-- following AGENTS.md will look and edit. A live function missing from it is
+-- a lie in the documented source of truth, and the next person to edit a
+-- neighbouring definition has no way to see that the authority exists.
+--
+-- Nothing here is new, redesigned or tidied. Each definition is production's
+-- own `pg_get_functiondef` output, and each body was verified byte-identical
+-- to the migration that last established it before being copied. The grants
+-- are derived from production's `proacl`, not transcribed from migration text.
+--
+-- The clean room could never have caught this, because it replays MIGRATIONS
+-- rather than this file. `contracts/schema/liveFunctionsAreDeclared.test.ts`
+-- is what catches it now.
+-- ============================================================================
+
+-- The invitation eligibility authority. Every exclusion reason the preflight shows comes from here, which is why invite_from_preflight re-asks it at consume time.
+CREATE OR REPLACE FUNCTION public.waitlist_invitation_candidates(p_offer_id bigint, p_cohort_id bigint DEFAULT NULL::bigint)
+ RETURNS TABLE(waitlist_entry_id bigint, contact_id bigint, contact_name text, email text, joined_at timestamp with time zone, cohort_id bigint, eligible boolean, exclusion_reason text, rank_if_eligible bigint)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  with waiting as (
+    select w.*
+      from waitlist_entries w
+     where w.offer_id = p_offer_id
+       and (p_cohort_id is null or w.cohort_id = p_cohort_id)
+       and w.status in ('waiting', 'invited')
+  ),
+  -- A person may hold more than one place for the same programme: a general
+  -- one and a round's. That is two records of intent and one person, and
+  -- inviting both would tag them twice. The oldest place is the one that
+  -- carries the invitation.
+  oldest_per_person as (
+    select distinct on (w.contact_id) w.*
+      from waiting w
+     order by w.contact_id, w.joined_at asc, w.id asc
+  ),
+  judged as (
+    select
+      w.id as waitlist_entry_id,
+      w.contact_id,
+      btrim(coalesce(c.first_name, '') || ' ' || coalesce(c.last_name, ''))
+        as contact_name,
+      (select a.normalized_email
+         from contact_email_addresses a
+        where a.contact_id = w.contact_id
+        order by a.normalized_email
+        limit 1) as email,
+      w.joined_at,
+      w.cohort_id,
+      case
+        -- Already holding an invitation for this programme. Re-inviting is a
+        -- real workflow, but it is a decision rather than part of "the
+        -- oldest N who have not been asked".
+        when w.status = 'invited' then 'already-invited'
+        when exists (
+          select 1 from waitlist_invitations i
+           where i.waitlist_entry_id = w.id and i.status = 'sent'
+        ) then 'already-invited'
+        -- An invitation already on its way. Asking again before Kit has
+        -- answered is how somebody gets tagged twice.
+        when exists (
+          select 1 from waitlist_invitations i
+            join kit_sync_operations o on o.waitlist_invitation_id = i.id
+           where i.waitlist_entry_id = w.id
+             and o.status in ('pending', 'processing')
+        ) then 'invitation-in-flight'
+        when c.id is null then 'contact-missing'
+        when c.sales_eligibility = 'do_not_engage' then 'do-not-engage'
+        when not exists (
+          select 1 from contact_email_addresses a where a.contact_id = w.contact_id
+        ) then 'no-email'
+        -- Inviting somebody to apply who has already applied is nonsense,
+        -- whatever became of the application afterwards.
+        when exists (
+          select 1 from applications ap
+           where ap.contact_id = w.contact_id and ap.offer_id = p_offer_id
+        ) then 'already-applied'
+        -- Sold, or in the programme. Either way they are past being asked.
+        when exists (
+          select 1 from deals d
+           where d.contact_id = w.contact_id and d.offer_id = p_offer_id
+             and (d.stage = 'won' or exists (
+                   select 1 from enrollments e
+                    where e.opportunity_id = d.id
+                      and e.status in ('onboarding', 'active', 'offboarding')))
+        ) then 'already-a-client'
+        -- Kit refused this address before. 'rejected' is the class that means
+        -- Kit will say the same thing again — a suppression, a bounce, a
+        -- complaint — so repeating the call is not a retry, it is the same
+        -- refusal twice.
+        when exists (
+          select 1 from kit_sync_operations o
+           where o.contact_id = w.contact_id
+             and o.status = 'failed'
+             and o.failure_class = 'rejected'
+        ) then 'kit-refused-this-address-before'
+        else null
+      end as exclusion_reason
+    from oldest_per_person w
+    left join contacts c on c.id = w.contact_id
+  )
+  select
+    j.waitlist_entry_id,
+    j.contact_id,
+    j.contact_name,
+    j.email,
+    j.joined_at,
+    j.cohort_id,
+    j.exclusion_reason is null as eligible,
+    j.exclusion_reason,
+    case
+      when j.exclusion_reason is null
+      then row_number() over (
+             partition by (j.exclusion_reason is null)
+             order by j.joined_at asc, j.waitlist_entry_id asc)
+    end as rank_if_eligible
+  from judged j
+  order by j.joined_at asc, j.waitlist_entry_id asc;
+$function$
+;
+
+revoke all on function public.waitlist_invitation_candidates(bigint, bigint) from public;
+grant execute on function public.waitlist_invitation_candidates(bigint, bigint) to authenticated, service_role;
+
+-- LANGUAGE sql and it calls waitlist_invitation_candidates, so it must be declared after it: a SQL body is parsed and validated when the function is created.
+CREATE OR REPLACE FUNCTION public.waitlist_invitation_overlap(p_offer_a bigint, p_limit_a integer, p_offer_b bigint, p_limit_b integer)
+ RETURNS TABLE(contact_id_a bigint, contact_id_b bigint, name text, email text, joined_a timestamp with time zone, joined_b timestamp with time zone)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  with a as (
+    select * from waitlist_invitation_candidates(p_offer_a, null)
+     where eligible and rank_if_eligible <= p_limit_a
+  ),
+  b as (
+    select * from waitlist_invitation_candidates(p_offer_b, null)
+     where eligible and rank_if_eligible <= p_limit_b
+  )
+  select a.contact_id, b.contact_id, a.contact_name, a.email,
+         a.joined_at, b.joined_at
+    from a
+    join b on b.contact_id = a.contact_id
+           or (a.email is not null and b.email is not null and b.email = a.email)
+   order by a.joined_at asc;
+$function$
+;
+
+revoke all on function public.waitlist_invitation_overlap(bigint, integer, bigint, integer) from public;
+grant execute on function public.waitlist_invitation_overlap(bigint, integer, bigint, integer) to authenticated, service_role;
+
+-- The same overlap question asked of two prepared preflights rather than two offer limits.
+CREATE OR REPLACE FUNCTION public.waitlist_preflight_overlap(p_preflight_a bigint, p_preflight_b bigint)
+ RETURNS TABLE(contact_id_a bigint, contact_id_b bigint, name text, email text, joined_a timestamp with time zone, joined_b timestamp with time zone)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select a.contact_id, b.contact_id, a.contact_name, a.email,
+         a.joined_at, b.joined_at
+    from waitlist_invitation_preflight_candidates a
+    join waitlist_invitation_preflight_candidates b
+      on b.preflight_id = p_preflight_b
+     and b.final_eligible
+     and (b.contact_id = a.contact_id
+          or (a.email is not null and b.email is not null and b.email = a.email))
+   where a.preflight_id = p_preflight_a
+     and a.final_eligible
+   order by a.joined_at;
+$function$
+;
+
+revoke all on function public.waitlist_preflight_overlap(bigint, bigint) from public;
+grant execute on function public.waitlist_preflight_overlap(bigint, bigint) to authenticated, service_role;
+
+-- Which cohorts of an Offer can still take somebody. Its grants live in 06_grants.sql, unlike the rest of this block.
+CREATE OR REPLACE FUNCTION public.offer_accepting_cohorts(p_offer_id bigint)
+ RETURNS SETOF cohorts
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'public'
+AS $function$
+  select c.*
+    from cohorts c
+   where c.offer_id = p_offer_id
+     and c.status = 'applications_open'
+     and (c.applications_open_at is null
+          or (now() at time zone 'America/Denver')::date >= c.applications_open_at)
+     and (c.applications_close_at is null
+          or (now() at time zone 'America/Denver')::date <= c.applications_close_at)
+   order by c.applications_close_at nulls last, c.id;
+$function$
+;
+
+-- EXECUTE grants for this function live in 06_grants.sql, which already
+-- declares them; they are deliberately not duplicated here.
+
+-- Turns a Kit operation's outcome into the invitation's own delivery truth -- this is what writes status 'sent' with delivery_method 'kit_tag' and a real sent_at.
+CREATE OR REPLACE FUNCTION public.apply_waitlist_invitation_result()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_entry_id bigint;
+begin
+  if new.origin <> 'waitlist_invitation' then
+    return new;
+  end if;
+
+  if new.status = 'succeeded' and old.status is distinct from 'succeeded' then
+    update waitlist_invitations
+       set status = 'sent',
+           sent_at = coalesce(new.succeeded_at, now()),
+           delivery_method = 'kit_tag',
+           failed_at = null,
+           failure_reason = null
+     where id = new.waitlist_invitation_id
+       and status <> 'sent'
+    returning waitlist_entry_id into v_entry_id;
+
+    -- Only a still-waiting place moves. An already-invited one is simply
+    -- invited again, and its status is already what it should be.
+    if v_entry_id is not null then
+      update waitlist_entries
+         set status = 'invited', invited_at = coalesce(new.succeeded_at, now())
+       where id = v_entry_id and status = 'waiting';
+    end if;
+
+  elsif new.status = 'failed' and old.status is distinct from 'failed' then
+    -- Recorded against the invitation so the batch can say who to try again,
+    -- and NOBODY's waitlist place moves.
+    update waitlist_invitations
+       set status = 'failed',
+           failed_at = coalesce(new.failed_at, now()),
+           failure_reason = left(coalesce(new.failure_reason, new.failure_class,
+                                          'Kit did not accept this'), 300)
+     where id = new.waitlist_invitation_id
+       and status <> 'sent';
+  end if;
+
+  return new;
+end;
+$function$
+;
+
+revoke all on function public.apply_waitlist_invitation_result() from public;
+
+-- The owner's bulk invitation command, service_role only.
+CREATE OR REPLACE FUNCTION public.invite_oldest_waiting(p_offer_id bigint, p_cohort_id bigint DEFAULT NULL::bigint, p_limit integer DEFAULT NULL::integer, p_entry_ids bigint[] DEFAULT NULL::bigint[], p_label text DEFAULT NULL::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_mapping kit_tag_mappings%rowtype;
+  v_batch_id bigint;
+  v_row record;
+  v_invitation_id bigint;
+  v_operation_id bigint;
+  v_requested_by text;
+  v_invited jsonb := '[]'::jsonb;
+  v_skipped jsonb := '[]'::jsonb;
+  v_taken integer := 0;
+begin
+  if p_limit is null and p_entry_ids is null then
+    return jsonb_build_object('status', 'nothing-asked-for');
+  end if;
+  if p_limit is not null and p_limit <= 0 then
+    return jsonb_build_object('status', 'nothing-asked-for');
+  end if;
+
+  -- No mapping, no invitation. A programme that has not been told which tag
+  -- it means by an invitation is not ready to send one, and guessing a tag
+  -- id is the one thing this architecture exists to prevent.
+  select * into v_mapping from kit_tag_mappings
+   where offer_id = p_offer_id and event = 'waitlist_invited';
+  if not found then
+    return jsonb_build_object('status', 'not-configured', 'offer_id', p_offer_id);
+  end if;
+
+  select coalesce(s.email, btrim(s.first_name || ' ' || s.last_name))
+    into v_requested_by
+    from sales s where s.user_id = auth.uid();
+
+  -- Lock the places being considered, so two people clicking Invite at once
+  -- cannot both claim the same person.
+  perform 1 from waitlist_entries w
+   where w.offer_id = p_offer_id
+     and (p_cohort_id is null or w.cohort_id = p_cohort_id)
+     and w.status in ('waiting', 'invited')
+   order by w.id
+   for update;
+
+  insert into waitlist_invitation_batches (offer_id, cohort_id, label, status)
+  values (p_offer_id, p_cohort_id,
+          coalesce(nullif(btrim(p_label), ''), 'Invite to apply'), 'prepared')
+  returning id into v_batch_id;
+
+  for v_row in
+    select c.*
+      from waitlist_invitation_candidates(p_offer_id, p_cohort_id) c
+     where (p_entry_ids is null or c.waitlist_entry_id = any (p_entry_ids))
+     order by c.joined_at asc, c.waitlist_entry_id asc
+  loop
+    -- An asked-for person who cannot be invited is REPORTED, never silently
+    -- dropped; and they do not consume one of the requested N, because the
+    -- request was for N people to be invited rather than N rows to be read.
+    if not v_row.eligible then
+      v_skipped := v_skipped || jsonb_build_object(
+        'waitlist_entry_id', v_row.waitlist_entry_id,
+        'contact_id', v_row.contact_id,
+        'name', v_row.contact_name,
+        'email', v_row.email,
+        'joined_at', v_row.joined_at,
+        'reason', v_row.exclusion_reason);
+      continue;
+    end if;
+
+    exit when p_limit is not null and v_taken >= p_limit;
+
+    insert into waitlist_invitations
+      (batch_id, waitlist_entry_id, contact_id, status, prepared_at)
+    values (v_batch_id, v_row.waitlist_entry_id, v_row.contact_id,
+            'prepared', now())
+    returning id into v_invitation_id;
+
+    v_operation_id := public.enqueue_kit_operation(
+      v_row.contact_id, null, 'waitlist_invited', 'waitlist_invitation',
+      v_mapping.kit_tag_id, v_mapping.kit_tag_name,
+      coalesce(v_requested_by, 'owner'), v_invitation_id);
+
+    if v_operation_id is null then
+      -- enqueue refuses without a usable address. The candidate list already
+      -- checks that, so reaching here means the address disappeared between
+      -- the two — recorded as a skip rather than an invitation nobody can
+      -- deliver.
+      update waitlist_invitations
+         set status = 'failed', failed_at = now(),
+             failure_reason = 'No usable email address at the moment of sending'
+       where id = v_invitation_id;
+      v_skipped := v_skipped || jsonb_build_object(
+        'waitlist_entry_id', v_row.waitlist_entry_id,
+        'contact_id', v_row.contact_id,
+        'name', v_row.contact_name,
+        'reason', 'no-email');
+      continue;
+    end if;
+
+    v_taken := v_taken + 1;
+    v_invited := v_invited || jsonb_build_object(
+      'waitlist_entry_id', v_row.waitlist_entry_id,
+      'contact_id', v_row.contact_id,
+      'name', v_row.contact_name,
+      'email', v_row.email,
+      'joined_at', v_row.joined_at,
+      'invitation_id', v_invitation_id,
+      'operation_id', v_operation_id);
+  end loop;
+
+  -- A batch that claimed nobody is not a batch. Removing it keeps the
+  -- history readable: every row in it is an invitation somebody actually
+  -- made.
+  if v_taken = 0 then
+    delete from waitlist_invitation_batches where id = v_batch_id;
+    v_batch_id := null;
+  end if;
+
+  return jsonb_build_object(
+    'status', case when v_taken = 0 then 'nobody-eligible' else 'queued' end,
+    'batch_id', v_batch_id,
+    'offer_id', p_offer_id,
+    'cohort_id', p_cohort_id,
+    'kit_tag_id', v_mapping.kit_tag_id,
+    'kit_tag_name', v_mapping.kit_tag_name,
+    'requested', coalesce(p_limit, coalesce(array_length(p_entry_ids, 1), 0)),
+    'queued', v_taken,
+    'invited', v_invited,
+    'skipped', v_skipped);
+end;
+$function$
+;
+
+revoke all on function public.invite_oldest_waiting(bigint, bigint, integer, bigint[], text) from public;
+grant execute on function public.invite_oldest_waiting(bigint, bigint, integer, bigint[], text) to service_role;
+
+-- The command that consumes an approved preflight. Calls waitlist_invitation_candidates and enqueue_kit_operation, both declared above.
+CREATE OR REPLACE FUNCTION public.invite_from_preflight(p_preflight_id bigint, p_label text DEFAULT NULL::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_pre waitlist_invitation_preflights%rowtype;
+  v_mapping kit_tag_mappings%rowtype;
+  v_batch_id bigint;
+  v_row record;
+  v_invitation_id bigint;
+  v_operation_id bigint;
+  v_requested_by text;
+  v_invited jsonb := '[]'::jsonb;
+  v_skipped jsonb := '[]'::jsonb;
+  v_taken integer := 0;
+begin
+  select * into v_pre from waitlist_invitation_preflights
+   where id = p_preflight_id for update;
+  if not found then
+    return jsonb_build_object('status', 'preflight-missing');
+  end if;
+  if v_pre.status <> 'open' then
+    -- Already used is a SUCCESS to report, not an error to retry: the batch
+    -- it made is the answer.
+    return jsonb_build_object('status', 'preflight-already-used',
+      'batch_id', v_pre.batch_id, 'used_at', v_pre.used_at);
+  end if;
+  if v_pre.expires_at < now() then
+    update waitlist_invitation_preflights set status = 'expired' where id = v_pre.id;
+    return jsonb_build_object('status', 'preflight-expired',
+      'checked_at', v_pre.created_at);
+  end if;
+
+  select * into v_mapping from kit_tag_mappings
+   where offer_id = v_pre.offer_id and event = 'waitlist_invited';
+  if not found then
+    return jsonb_build_object('status', 'not-configured', 'offer_id', v_pre.offer_id);
+  end if;
+
+  select coalesce(s.email, btrim(s.first_name || ' ' || s.last_name))
+    into v_requested_by from sales s where s.user_id = auth.uid();
+
+  insert into waitlist_invitation_batches (offer_id, cohort_id, label, status)
+  values (v_pre.offer_id, v_pre.cohort_id,
+          coalesce(nullif(btrim(p_label), ''), 'Invite to apply'), 'prepared')
+  returning id into v_batch_id;
+
+  for v_row in
+    select c.*
+      from waitlist_invitation_preflight_candidates c
+     where c.preflight_id = v_pre.id and c.final_eligible
+     order by c.final_rank
+  loop
+    -- The database's own answer, now. Kit is re-asked at delivery by the
+    -- worker; this is the CRM half, and it has to be current.
+    if not exists (
+      select 1 from waitlist_invitation_candidates(v_pre.offer_id, v_pre.cohort_id) j
+       where j.waitlist_entry_id = v_row.waitlist_entry_id and j.eligible
+    ) then
+      v_skipped := v_skipped || jsonb_build_object(
+        'waitlist_entry_id', v_row.waitlist_entry_id,
+        'contact_id', v_row.contact_id,
+        'name', v_row.contact_name,
+        'reason', 'changed-since-preflight');
+      continue;
+    end if;
+
+    insert into waitlist_invitations
+      (batch_id, waitlist_entry_id, contact_id, status, prepared_at)
+    values (v_batch_id, v_row.waitlist_entry_id, v_row.contact_id, 'prepared', now())
+    returning id into v_invitation_id;
+
+    v_operation_id := public.enqueue_kit_operation(
+      v_row.contact_id, null, 'waitlist_invited', 'waitlist_invitation',
+      v_mapping.kit_tag_id, v_mapping.kit_tag_name,
+      coalesce(v_requested_by, 'owner'), v_invitation_id);
+
+    if v_operation_id is null then
+      update waitlist_invitations
+         set status = 'failed', failed_at = now(),
+             failure_reason = 'No usable email address at the moment of sending'
+       where id = v_invitation_id;
+      v_skipped := v_skipped || jsonb_build_object(
+        'waitlist_entry_id', v_row.waitlist_entry_id,
+        'contact_id', v_row.contact_id,
+        'name', v_row.contact_name,
+        'reason', 'no-email');
+      continue;
+    end if;
+
+    v_taken := v_taken + 1;
+    v_invited := v_invited || jsonb_build_object(
+      'waitlist_entry_id', v_row.waitlist_entry_id,
+      'contact_id', v_row.contact_id,
+      'name', v_row.contact_name,
+      'email', v_row.email,
+      'joined_at', v_row.joined_at,
+      'invitation_id', v_invitation_id,
+      'operation_id', v_operation_id);
+  end loop;
+
+  if v_taken = 0 then
+    delete from waitlist_invitation_batches where id = v_batch_id;
+    v_batch_id := null;
+  end if;
+
+  update waitlist_invitation_preflights
+     set status = 'used', used_at = now(), batch_id = v_batch_id
+   where id = v_pre.id;
+
+  return jsonb_build_object(
+    'status', case when v_taken = 0 then 'nobody-eligible' else 'queued' end,
+    'preflight_id', v_pre.id,
+    'batch_id', v_batch_id,
+    'offer_id', v_pre.offer_id,
+    'kit_tag_id', v_mapping.kit_tag_id,
+    'kit_tag_name', v_mapping.kit_tag_name,
+    'requested', v_pre.requested,
+    'queued', v_taken,
+    'invited', v_invited,
+    'skipped', v_skipped);
+end;
+$function$
+;
+
+revoke all on function public.invite_from_preflight(bigint, text) from public;
+grant execute on function public.invite_from_preflight(bigint, text) to authenticated, service_role;
+
+-- Rebuilds one enrollment's expected session slots. Called by the two below.
+CREATE OR REPLACE FUNCTION public.rebuild_enrollment_expected_sessions(p_enrollment_id bigint)
+ RETURNS TABLE(required_weeks integer, canonical_weeks integer, kept integer, renumbered integer, inserted integer, retired_with_history integer, discarded integer)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_start date;
+  v_offer_id bigint;
+  v_extensions int;
+  v_required int;
+  v_stale int;
+begin
+  canonical_weeks := 0; required_weeks := 0; kept := 0; renumbered := 0;
+  inserted := 0; retired_with_history := 0; discarded := 0;
+
+  select e.start_date, d.offer_id
+    into v_start, v_offer_id
+    from enrollments e
+    join deals d on d.id = e.opportunity_id
+   where e.id = p_enrollment_id;
+
+  -- One eligible week per cross-week reschedule, on top of the twelve.
+  -- A cadence issue exists only for a week that closed with NO session
+  -- inside it, so a same-week time change never produces one and can never
+  -- reach this count. A known skip, a no-show and a ghosted session are all
+  -- forfeited under the no-rollover rule and extend nothing.
+  select count(*)
+    into v_extensions
+    from client_session_cadence_issues i
+   where i.enrollment_id = p_enrollment_id
+     and i.classification = 'rescheduled';
+
+  v_required := 12 + coalesce(v_extensions, 0);
+
+  -- The canonical schedule: the eligible `1:1s` weeks from this
+  -- Enrollment's own Start Date, in order. Session Week #1 is the week the
+  -- Start Date falls IN — window_end is exclusive, so that is exactly
+  -- `window_end > start_date`.
+  --
+  -- DISTINCT ON the week itself, because what is being counted is weeks
+  -- Leif is open, not calendar entries. Two identical events for one week
+  -- are one week; counting them twice spends two of a client's twelve
+  -- sessions on a week that can only hold one, and leaves a slot nothing
+  -- can ever fulfil.
+  create temporary table _canonical on commit drop as
+  with distinct_weeks as (
+    select distinct on (w.window_start, w.window_end)
+           w.id as window_id, w.window_start, w.window_end, w.raw_title
+      from expected_session_windows w
+     where v_start is not null
+       and w.offer_id = v_offer_id
+       and w.deleted_at is null
+       and w.window_end > v_start
+     order by w.window_start, w.window_end, w.id
+  )
+  select window_id,
+         row_number() over (
+           order by window_start, window_end, window_id
+         )::int as ordinal,
+         window_start,
+         window_end,
+         raw_title
+    from distinct_weeks
+   order by window_start, window_end, window_id
+   limit v_required;
+
+  -- Retire every live slot whose week is no longer in the schedule. Done
+  -- FIRST so those ordinals leave the unique index before anything is
+  -- renumbered into them.
+  update enrollment_expected_sessions s
+     set retired_at = now()
+   where s.enrollment_id = p_enrollment_id
+     and s.retired_at is null
+     and not exists (
+       select 1 from _canonical c where c.window_id = s.source_window_id
+     );
+  get diagnostics retired_with_history = row_count;
+
+  -- A retired slot with nothing historical attached is a pure projection
+  -- and is simply wrong now; keeping it would clutter the record with a
+  -- week that never meant anything. One with a cadence issue stays, and is
+  -- reported.
+  delete from enrollment_expected_sessions s
+   where s.enrollment_id = p_enrollment_id
+     and s.retired_at is not null
+     and not exists (
+       select 1 from client_session_cadence_issues i
+        where i.enrollment_expected_session_id = s.id
+     );
+  get diagnostics discarded = row_count;
+  retired_with_history := retired_with_history - discarded;
+
+  -- And stop asking about the survivors.
+  --
+  -- The slot stays — something historical points at it and that is the
+  -- whole reason it was kept. But a week that is no longer part of the
+  -- schedule is not a week Leif owes anyone a decision about, and leaving
+  -- the issue open leaves a Needs Attention item he cannot clear by any
+  -- honest answer. `classification` is left null on purpose: nobody
+  -- decided anything, and recording a decision that was never made would
+  -- be worse than the stale task.
+  with retired_issues as (
+    update client_session_cadence_issues i
+       set resolved_at = now()
+      from enrollment_expected_sessions s
+     where s.id = i.enrollment_expected_session_id
+       and s.enrollment_id = p_enrollment_id
+       and s.retired_at is not null
+       and i.resolved_at is null
+    returning i.id
+  ),
+  logged as (
+    insert into client_session_cadence_issue_events (cadence_issue_id, kind)
+    select id, 'retired' from retired_issues
+    returning 1
+  )
+  select count(*)::int into v_stale from logged;
+
+  -- The Task is the surface Leif actually sees, so it closes with the
+  -- issue. Same shape as the app's own completeResolveCadenceIssueTask.
+  update tasks t
+     set done_date = now(), status = 'completed'
+    from client_session_cadence_issues i
+    join enrollment_expected_sessions s
+      on s.id = i.enrollment_expected_session_id
+   where t.cadence_issue_id = i.id
+     and t.done_date is null
+     and s.enrollment_id = p_enrollment_id
+     and s.retired_at is not null;
+
+  -- Park the survivors out of the way so a renumber can never collide with
+  -- an ordinal it is about to take. The check constraint no longer caps
+  -- the value, which is what makes this legal.
+  update enrollment_expected_sessions s
+     set ordinal = s.ordinal + 1000
+   where s.enrollment_id = p_enrollment_id
+     and s.retired_at is null;
+
+  -- Renumber what survives to its canonical position, and refresh the
+  -- snapshot: if Leif moved a `1:1s` week in Google Calendar, the slot's
+  -- displayed dates should follow it. The slot's IDENTITY — and therefore
+  -- every issue, note and event hanging off it — is untouched.
+  with parked as (
+    select s.id, s.ordinal - 1000 as previous_ordinal
+      from enrollment_expected_sessions s
+     where s.enrollment_id = p_enrollment_id and s.retired_at is null
+  ),
+  applied as (
+    update enrollment_expected_sessions s
+       set ordinal = c.ordinal,
+           window_start = c.window_start,
+           window_end = c.window_end,
+           raw_title = c.raw_title
+      from _canonical c
+     where s.enrollment_id = p_enrollment_id
+       and s.retired_at is null
+       and s.source_window_id = c.window_id
+    returning s.id, c.ordinal as new_ordinal
+  )
+  select count(*)::int,
+         count(*) filter (where a.new_ordinal <> p.previous_ordinal)::int
+    into kept, renumbered
+    from applied a join parked p on p.id = a.id;
+
+  -- And add the weeks that were not assigned before.
+  with added as (
+    insert into enrollment_expected_sessions
+      (enrollment_id, source_window_id, ordinal, window_start, window_end, raw_title)
+    select p_enrollment_id, c.window_id, c.ordinal, c.window_start, c.window_end, c.raw_title
+      from _canonical c
+     where not exists (
+       select 1 from enrollment_expected_sessions s
+        where s.enrollment_id = p_enrollment_id
+          and s.retired_at is null
+          and s.source_window_id = c.window_id
+     )
+    returning 1
+  )
+  select count(*)::int into inserted from added;
+
+  select count(*)::int into canonical_weeks from _canonical;
+  required_weeks := v_required;
+
+  drop table if exists _canonical;
+  return next;
+end;
+$function$
+;
+
+revoke all on function public.rebuild_enrollment_expected_sessions(bigint) from public;
+grant execute on function public.rebuild_enrollment_expected_sessions(bigint) to authenticated, service_role;
+
+-- Calls rebuild_enrollment_expected_sessions for every enrollment.
+CREATE OR REPLACE FUNCTION public.rebuild_all_expected_sessions()
+ RETURNS TABLE(enrollments_rebuilt integer, slots_inserted integer, slots_renumbered integer, slots_retired_with_history integer, slots_discarded integer)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_row record;
+  v_result record;
+begin
+  enrollments_rebuilt := 0;
+  slots_inserted := 0;
+  slots_renumbered := 0;
+  slots_retired_with_history := 0;
+  slots_discarded := 0;
+
+  for v_row in
+    select e.id
+      from enrollments e
+      join deals d on d.id = e.opportunity_id
+      join offers o on o.id = d.offer_id
+     -- Branch on the PROGRAM TYPE, never on a name or an id. Any 1:1
+     -- program schedules this way; a group program runs to its
+     -- cohort's own published dates and must never reach here.
+     where o.type = 'individual'
+       and e.status in ('onboarding', 'active', 'offboarding')
+       and e.start_date is not null
+     order by e.id
+  loop
+    select * into v_result
+      from public.rebuild_enrollment_expected_sessions(v_row.id);
+    enrollments_rebuilt := enrollments_rebuilt + 1;
+    slots_inserted := slots_inserted + coalesce(v_result.inserted, 0);
+    slots_renumbered := slots_renumbered + coalesce(v_result.renumbered, 0);
+    slots_retired_with_history :=
+      slots_retired_with_history + coalesce(v_result.retired_with_history, 0);
+    slots_discarded := slots_discarded + coalesce(v_result.discarded, 0);
+  end loop;
+
+  return next;
+end;
+$function$
+;
+
+revoke all on function public.rebuild_all_expected_sessions() from public;
+grant execute on function public.rebuild_all_expected_sessions() to authenticated, service_role;
+
+-- Trigger wrapper around the same rebuild. NOTE: production holds proacl = NULL for this one, so no grant or revoke is mirrored here -- see HANDOFF for why that is reported rather than quietly changed.
+CREATE OR REPLACE FUNCTION public.rebuild_expected_sessions_on_start_change()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if new.start_date is distinct from old.start_date then
+    perform public.rebuild_enrollment_expected_sessions(new.id);
+  end if;
+  return new;
+end;
+$function$
+;
+
+-- No ACL statements: production holds proacl = NULL for this function.
+-- Mirrored as-is rather than tightened, because changing intended authority
+-- is not this task.
