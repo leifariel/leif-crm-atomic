@@ -855,9 +855,12 @@ create table public.waitlist_invitations (
     -- 'failed'    delivery attempted and failed; remains retryable.
     -- 'cancelled' removed from the batch before delivery.
     status text not null default 'prepared',
-    -- How it reached them. 'manual' = Leif sent it himself and is recording
-    -- that fact; 'gmail' = delivered by the future Gmail integration. Never
-    -- guessed — only set alongside a real send.
+    -- How it reached them. 'manual' = Leif sent it and is recording that
+    -- fact; 'kit_tag' = delivered by the Kit invitation path, which is how
+    -- every historical pre-Gmail Day-0 invitation went out (§8t: Kit is Day-0
+    -- provenance, never the future executor); 'gmail' = delivered by the
+    -- future Gmail integration. Never guessed — only set alongside a real
+    -- send, which waitlist_invitations_sent_evidence_check enforces.
     delivery_method text,
     prepared_at timestamp with time zone not null default now(),
     sent_at timestamp with time zone,
@@ -873,8 +876,12 @@ create table public.waitlist_invitations (
     updated_at timestamp with time zone not null default now(),
     constraint waitlist_invitations_status_check
         check (status in ('prepared', 'sent', 'failed', 'cancelled')),
+    -- Must match production exactly. This declaration went stale when
+    -- 20261010120000 widened the live constraint to admit 'kit_tag', and
+    -- because migrations are generated FROM this file a diff could have
+    -- emitted a narrowing migration that fails on the real rows using it.
     constraint waitlist_invitations_delivery_method_check
-        check (delivery_method in ('manual', 'gmail')),
+        check (delivery_method in ('manual', 'gmail', 'kit_tag')),
     -- A sent invitation must say when and how it was sent: this is the
     -- structural guarantee that nothing is ever marked delivered without
     -- real delivery evidence.

@@ -4593,17 +4593,56 @@ the `serviceRoleOnly` class of
 `protectedFunctionGrants.spec.ts` asserts against the live catalog, and the
 refusal is proved behaviourally for both reachable roles.
 
-### One drift found while auditing, reported not fixed
+### One drift found while auditing, and REPAIRED before Phase 2C was pushed
 
-`supabase/schemas/01_tables.sql` says
+Found while auditing the delivery path for this slice, and closed in its own
+commit on top of the Phase 2C behavioural commit rather than mixed into it.
+
+**What was wrong.** `supabase/schemas/01_tables.sql` declared
 `check (delivery_method in ('manual', 'gmail'))`. Production — and migration
-`20261010120000` — say `('manual', 'gmail', 'kit_tag')`, and **all 78 real
-invitations use `kit_tag`**. The declarative file is the documented source of
-truth that migrations are generated from, so the next `db diff` could emit a
-constraint-narrowing migration that fails on live data. The clean room has
-never caught it because it replays migrations, not the declarative file. Out
-of scope for this slice (`.claude/rules/coding-style.md`: an adjacent problem
-is reported, never fixed in the same change) and raised as its own task.
+`20261010120000`, which widened the live constraint on 10 Oct — say
+`('manual', 'gmail', 'kit_tag')`, and **all 78 historical invitations use
+`kit_tag`**, stamped by the Kit worker on a real delivery.
+
+**Why it mattered.** That file is the documented source of truth and the file
+`supabase db diff` GENERATES MIGRATIONS FROM. A diff taken from the stale
+definition could have emitted a constraint-NARROWING migration that fails on
+the live rows using the value it had forgotten — or, worse, been "fixed" by
+somebody rewriting real delivery provenance.
+
+**Why nothing caught it, which decided where the test had to go.** The clean
+room replays MIGRATIONS, not the declarative file, so it built the correct
+constraint and every behavioural test passed. Only a static read of the
+declarative file can see the disagreement.
+
+**What was done.**
+
+- The declarative constraint now reads
+  `check (delivery_method in ('manual', 'gmail', 'kit_tag'))`, matching
+  production exactly, and the column comment explains `kit_tag` instead of
+  listing two of three values.
+- **No production migration**, because production was already correct. This
+  was source-of-truth reconciliation only.
+- **No production row was touched.** All 78 historical invitations remain
+  valid, `status = 'sent'` with `delivery_method = 'kit_tag'`.
+- `contracts/waitlist/howAnInvitationWasDelivered.test.ts` pins the vocabulary
+  across the three places that must agree — the declarative CHECK, the
+  migration that widened it, and the writer that actually stamps `kit_tag` —
+  plus the `sent` evidence guarantee §8u depends on. Proved to catch this
+  exact regression: reintroducing the stale definition fails two of its tests
+  by name.
+- A future `db diff` therefore no longer risks narrowing this constraint from
+  a stale definition.
+
+**Phase 2C itself was not touched** — `converge_delivered_invitation`, its
+migration, the Outreach schema, the schedule authority, the grants and every
+line of runtime code are byte-identical to `6dca002e`.
+
+One related gap stays open and is NOT this: `invite_from_preflight`,
+`deal_is_active` and `waitlist_invitation_candidates` exist only in
+migrations and are absent from `supabase/schemas/02_functions.sql`. Nothing
+depends on it today, and backfilling the declarative function set is its own
+piece of work.
 
 ### Still ahead
 
