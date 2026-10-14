@@ -922,7 +922,8 @@ offers no way to express "send all of these" (§8t).
 | **2A0** | ~~A waitlist place is spent when the sale starts, not when interest is noted~~ — **PRODUCTION ACCEPTED and EXERCISED 2026-10-13** (§8r). |
 | **2A** | ~~The durable Application Outreach authority: schema, invariants, immutable history, security~~ — **PRODUCTION ACCEPTED 2026-10-13** (§8s), 0 rows by design. |
 | **2B-i** | ~~The canonical versioned cadence (Day 0 / 3 / 10 / 24, Day 31 to Nurture), exact `step` semantics, deterministic next-action authority, immutable `schedule_key` provenance~~ — **PRODUCTION ACCEPTED 2026-10-14** (§8t), production at 169, 0 rows by design. |
-| **2B-ii** | Create/reuse the same-offer Interested Opportunity on confirmed invitation, and give **every delivered pre-Outreach invitation** Outreach provenance without resending anything — closed attempts for those who already applied, active Gmail attempts for those still invited. Needs Gmail execution for the sending half only. |
+| **2C** | ~~The confirmed-delivery convergence authority: create/reuse the same-offer Opportunity, one active episode, or truthful closed history when they already applied~~ — **BUILT AND DORMANT 2026-10-14** (§8u). Nothing calls it. |
+| **2B-ii** | Run that authority over **every delivered pre-Outreach invitation** without resending anything, and wire it to the live delivery path. Needs Gmail execution for the sending half only; the classification and the command already exist. |
 | **3** | Interested derives from a live Application Outreach / actionable next step. Expired outreach leaves Interested for Nurture. |
 | **4** | Unify every application-invitation entry point — waitlist, Instagram/manual, future referral/email — onto the one lifecycle. |
 | **5** | The other queued CRM work: 13-week client-opening buffer; deposits (LE $500 / GYU $400); Sales Call Workflow. |
@@ -4428,6 +4429,190 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8u. A delivered invitation becomes a sales cycle — BUILT AND DORMANT (2026-10-14)
+
+§4b **Phase 2C**. One authoritative command,
+`converge_delivered_invitation(p_invitation_id, p_next_action_at)`, turns a
+**confirmed** Day-0 delivery into lifecycle truth: the right same-offer
+Opportunity, and exactly one Application Outreach episode on the
+`application_outreach_v1` calendar.
+
+**DORMANT ON PURPOSE, AND THAT IS THE POINT.** Nothing calls it — no waitlist
+worker, no Kit processor, no UI, no cron, no webhook, no Gmail. It is proved
+here and wired in a later slice, so deploying it leaves production at **0
+`application_outreach_attempts` rows**. Migration `20261014140000` takes the
+chain to **170**.
+
+### Delivery truth was already structural, so nothing had to be invented
+
+`waitlist_invitations.status = 'sent'` is the input fact, and
+`waitlist_invitations_sent_evidence_check` already guarantees a sent row
+carries both a `sent_at` and a `delivery_method` — "the structural guarantee
+that nothing is ever marked delivered without real delivery evidence". So
+`sent_at` is Day 0.
+
+A button click, a queued Kit operation, an attempted send, preflight
+membership and a waitlist status are **none of them delivery**, and the
+command reads none of them as such. An undelivered invitation comes back
+`invitation-not-delivered` — a status, not an exception, because the same call
+is the retry once delivery really happens.
+
+### Business truth chooses the result — there is no caller mode
+
+Deliberately **no `force` parameter and no mode flag**. Whether this opens an
+active episode or records a concluded historical one is decided by what is
+true about the person *right now*, re-read inside the transaction rather than
+taken from whenever they were judged eligible. That is what makes the same
+command safe for the future live path and for the eventual historical
+backfill.
+
+| Current same-offer truth | Result | Episode |
+|---|---|---|
+| nothing | `created` — new Opportunity at `interested` | one **active**, step 0 |
+| active `interested` | `reused` — no duplicate | one **active**, step 0 |
+| active `interested` already running an episode | `already-converged` | the existing one |
+| active `application_received` / `approved` / `call_booked` / `decision`, with an application | `application-already-submitted` | one **closed**, `application_submitted`, application linked |
+| the same, without an application | `already-later-stage` | **none** |
+| won, `onboarding`, or any enrollment | `already-client` | **none** |
+| terminal (`nurture`/`lost`/`not_fit`/`workshops_only`) | `created` — a NEW Opportunity beside it | one **active** |
+| `do_not_engage` | `do-not-engage` | **none** |
+| application predating the delivery | `ambiguous` | **none** |
+| already converged | `already-converged` | the existing one |
+
+No `success = true` for materially different outcomes, and **no false IDs**:
+a result only carries an `outreach_attempt_id` when an episode actually
+exists.
+
+### The won-Opportunity trap this slice had to close
+
+`deal_is_active()` calls a **won** Opportunity INACTIVE — `archived_at is null
+and stage is distinct from 'won' and outcome is null`. So the canonical active
+lookup does not find a closed sale, and a command that relied on it alone
+would cheerfully open an Interested cycle beside a client. The
+`already-client` check is explicit for exactly that reason, and it also
+catches an enrollment hanging off an earlier-stage Opportunity.
+
+### A terminal cycle is never resurrected
+
+Any non-null outcome makes an Opportunity inactive, so the active lookup
+simply does not find it and a genuinely new invitation gets a **new
+Opportunity beside the concluded one**, which is never touched. That is the
+repo's existing rule rather than a new one: *"A terminal attempt is never
+silently reactivated"* (`deals/dealActivity.ts`). Nurture and Lost therefore
+need no special case, and neither do `not_fit` or `workshops_only` — all four
+are proved.
+
+### The other programme's journey is its own
+
+The lookup is scoped to the entry's offer and cohort, so an active GYU
+Opportunity does not block an LE cycle and is not mutated. LE and GYU are
+separate Opportunity lifecycles.
+
+### Interested does not spend the waitlist place
+
+Creating the Opportunity at `interested` cannot convert the waitlist entry,
+because `handle_deal_waitlist_sync` converts only from
+`application_received` onward (§8r). **The command adds no explicit
+conversion**, so being invited stays distinct from having started, and an
+already-converted entry's `converted_at` is never rewritten.
+
+### Idempotency has two independent layers, and each has its own test
+
+1. **The command returns early** when an episode already exists for the
+   invitation (`already-converged`), so a worker retry, a duplicate callback,
+   a lost response or an operator running reconciliation twice is cheap and
+   deterministic instead of a constraint violation.
+2. **The database refuses a second one** — the Phase 2A partial unique index
+   on `waitlist_invitation_id`.
+
+Worth recording because the sensitivity run showed it: dropping the index
+leaves the convergence idempotency tests **passing**, because layer 1 carries
+them. The index is pinned by Phase 2A's own test instead. Two layers, two
+tests; neither test proves the other's authority.
+
+Concurrency is `pg_advisory_xact_lock` on
+`contact:offer:cohort` — the same key shape `create_manual_application`
+uses — so two simultaneous deliveries cannot both read "no active
+Opportunity". Three concurrent calls produce one Opportunity, one episode,
+and one `created` with two `already-converged`.
+
+### The transaction boundary
+
+External delivery can never be inside a database transaction, so the boundary
+is: **the provider delivers Day 0, and THEN one convergence transaction**
+handles DNE, current application/client truth, the Opportunity decision,
+episode uniqueness and the episode itself — all of it committing together or
+not at all. If the provider succeeds and convergence fails, the delivered
+invitation stays durable and the command is replayable. Nothing invents a
+`sent = false` lie to buy atomicity.
+
+### Where the calendar lives, and where it does not
+
+The command **holds no day offset**. `p_next_action_at` is supplied by the
+caller from the one semantic authority
+([applicationOutreachSchedule.ts](src/components/atomic-crm/outreach/applicationOutreachSchedule.ts)),
+and the command enforces what it can without owning a calendar: the moment
+must exist and must lie strictly after Day 0, or it returns
+`invalid-next-action` rather than writing a row that would break
+`active_has_a_future_check`.
+
+**The honest limit:** a caller passing Day 5 instead of Day 3 would not be
+caught by the database, because catching it requires the calendar, and putting
+`interval '3 days'` into a second place is the drift this design exists to
+prevent. What protects the offsets is the contract test on the authority, plus
+the fact that this is a service-owned command with exactly one intended
+caller. Recorded so the choice is visible rather than discovered.
+
+### executor = 'gmail' is a claim about the future
+
+It says **Gmail owns future automated follow-up**. It does not claim Gmail
+sent Day 0. The Day-0 provider truth stays where it happened — on the
+invitation's own `delivery_method` and its Kit operation — and convergence
+does not overwrite it. Recording `executor = 'kit'` to commemorate a past
+send would be a lie about the future (§8t).
+
+### Schedule position is still not send authorization
+
+Converging an older delivered invitation can produce an episode whose Day-3
+action is **already overdue**. That is not permission to send. No command in
+this slice touches an email provider, and the distinction in §8t stands
+unchanged: position is what the calendar says; authorization is a Gmail
+execution decision that does not exist yet.
+
+### Security
+
+**service_role ALONE.** Unlike `create_manual_application` — a signed-in
+owner action that is SECURITY INVOKER because `authenticated` already holds
+the writes it makes — this command writes
+`application_outreach_attempts`, which `authenticated` deliberately cannot
+write at all, and it opens a sales cycle. So it is SECURITY DEFINER with
+`search_path` set, `revoke all` from PUBLIC, `anon` **and**
+`authenticated`, and EXECUTE granted only to `service_role`. It is pinned in
+the `serviceRoleOnly` class of
+`contracts/security/protectedFunctionGrants.json`, which
+`protectedFunctionGrants.spec.ts` asserts against the live catalog, and the
+refusal is proved behaviourally for both reachable roles.
+
+### One drift found while auditing, reported not fixed
+
+`supabase/schemas/01_tables.sql` says
+`check (delivery_method in ('manual', 'gmail'))`. Production — and migration
+`20261010120000` — say `('manual', 'gmail', 'kit_tag')`, and **all 78 real
+invitations use `kit_tag`**. The declarative file is the documented source of
+truth that migrations are generated from, so the next `db diff` could emit a
+constraint-narrowing migration that fails on live data. The clean room has
+never caught it because it replays migrations, not the declarative file. Out
+of scope for this slice (`.claude/rules/coding-style.md`: an adjacent problem
+is reported, never fixed in the same change) and raised as its own task.
+
+### Still ahead
+
+**Gmail is NOT integrated.** This slice built the command the Gmail layer will
+call after Gmail confirms a delivery, and the path the historical backfill
+will use. Neither is wired, and the canonical backfill rule in §8s is
+unchanged: every delivered pre-Outreach invitation eventually gets Outreach
+provenance, classified at execution time against current same-offer truth.
+
 ## 8t. The schedule that governs an episode is recorded — PRODUCTION ACCEPTED 2026-10-14
 
 §4b **Phase 2B**, part one: the canonical outreach cadence, and the authority
@@ -7799,21 +7984,23 @@ module. **0 production rows, by design** — no runtime writer exists yet, and
 2. ~~The durable **Application Outreach** authority.~~ **Done** (§8s) — schema,
    invariants, immutable history and security, writing no rows.
 3. ~~The canonical versioned cadence, `step` semantics and next-action
-   authority.~~ **Done** (§8t) — built, not yet deployed.
-4. **NEXT (2B-ii):** create/reuse the same-offer Interested Opportunity on a
-   confirmed invitation, and give **every delivered pre-Outreach invitation**
-   Application Outreach provenance **without resending anything** — closed
-   attempts for those who already applied, active Gmail attempts for those
-   still invited, anchored to the confirmed Day-0 delivery and **never
-   resending Day 0**. Classify at execution time by current same-offer truth;
-   do not hard-code today's counts.
-5. Interested derives from a live outreach; exhausted outreach falls to Nurture.
-6. Unify every invitation entry point — waitlist, Instagram, manual — onto that
-   one lifecycle.
-7. Gmail executes the cadence §8t defines. **Never blast the backlog** — the
-   catch-up rule is already built and tested; the cutover behaviour is that
-   slice's to finalise.
-8. Only then the 13-week client-opening buffer, deposits (LE $500 / GYU $400)
+   authority.~~ **Done** (§8t) — production accepted.
+4. ~~The confirmed-delivery convergence command.~~ **BUILT AND DORMANT**
+   (§8u) — `converge_delivered_invitation`, service-role only, nothing calls
+   it. Deploying it leaves production at 0 outreach rows.
+5. **NEXT:** run that command over **every delivered pre-Outreach
+   invitation** and wire it to the live delivery path — **without resending
+   anything**, anchored to the confirmed Day-0 delivery, and **never resending
+   Day 0**. Classify at execution time by current same-offer truth; do not
+   hard-code today's counts.
+6. Interested derives from a live outreach; exhausted outreach falls to Nurture.
+7. Unify every invitation entry point — waitlist, Instagram, manual — onto that
+   one lifecycle. The command already takes `source` for exactly this.
+8. Gmail executes the cadence §8t defines, calling §8u's command once Gmail
+   confirms a delivery. **Never blast the backlog** — the catch-up rule is
+   already built and tested, and **schedule position is not send
+   authorization**; the cutover behaviour is that slice's to finalise.
+9. Only then the 13-week client-opening buffer, deposits (LE $500 / GYU $400)
    and the Sales Call Workflow; then the Integration Readiness Gate, then
    Instagram.
 

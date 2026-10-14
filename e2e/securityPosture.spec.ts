@@ -464,3 +464,37 @@ test.describe("application outreach attempts", () => {
     ).not.toBeNull();
   });
 });
+
+// §4b Phase 2C. The convergence command opens a sales cycle and writes the
+// one table a signed-in client deliberately cannot write at all. It runs from
+// the delivery path, there is no UI caller, and there is not meant to be one —
+// so unlike create_manual_application (a signed-in owner action) EXECUTE is
+// granted to service_role ALONE.
+//
+// protectedFunctionGrants.spec.ts pins the whole service-role-only class from
+// the live catalog. This proves the refusal behaviourally, from the two roles
+// that actually reach the API.
+test.describe("only the service may converge a delivered invitation", () => {
+  const CONVERGE_ARGS = {
+    p_invitation_id: 1,
+    p_next_action_at: "2026-12-01T09:00:00.000Z",
+  };
+
+  test("T. a signed-in client cannot execute it", async () => {
+    const client = await signedInClient(serviceRoleClient());
+
+    expectDenied(
+      await client.rpc("converge_delivered_invitation", CONVERGE_ARGS),
+      "EXECUTE of converge_delivered_invitation by authenticated",
+    );
+  });
+
+  test("T. anon cannot execute it", async () => {
+    const anon = anonClient();
+
+    expect(
+      (await anon.rpc("converge_delivered_invitation", CONVERGE_ARGS)).error,
+      "anon EXECUTE of converge_delivered_invitation was not refused",
+    ).not.toBeNull();
+  });
+});

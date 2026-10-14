@@ -94,9 +94,17 @@ describe("the outreach calendar lives in one module", () => {
     }
   });
 
-  test("no component or worker recomputes a reminder date", () => {
+  // Tests are exempt from this one check, and only this one. A test that
+  // derives the expected Day-3 instant for itself is a CROSS-CHECK on the
+  // authority -- the opposite of a drifting copy -- and making it ask the
+  // authority for its own expected value would leave it comparing the
+  // authority to itself. A test that drifts fails loudly against the
+  // authority; a shipped module that drifts is the bug this file exists for.
+  const isTest = (path: string) => /\.(spec|test)\.tsx?$/.test(path);
+
+  test("no shipped component or worker recomputes a reminder date", () => {
     const offenders = SOURCES.filter((path) => {
-      if (path === AUTHORITY) return false;
+      if (path === AUTHORITY || isTest(path)) return false;
       const source = read(path);
       if (!/outreach/i.test(source)) return false;
       // Millisecond day arithmetic next to outreach: the shape of a second
@@ -104,5 +112,19 @@ describe("the outreach calendar lives in one module", () => {
       return /24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/.test(source);
     });
     expect(offenders).toEqual([]);
+  });
+
+  test("and the exemption is not a hole: no shipped module holds a day offset", () => {
+    // The dayOffset check above applies to EVERY file, tests included, so
+    // the declared calendar itself still lives in exactly one place.
+    const shipped = SOURCES.filter(
+      (path) => path !== AUTHORITY && !isTest(path) && !path.endsWith(".sql"),
+    );
+    expect(shipped.length).toBeGreaterThan(0);
+    for (const path of shipped) {
+      expect(read(path), `${path} declares a schedule stop`).not.toMatch(
+        /afterStep|initialInvitationDayOffset/,
+      );
+    }
   });
 });
