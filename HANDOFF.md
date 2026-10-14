@@ -921,7 +921,7 @@ offers no way to express "send all of these" (§8t).
 | **1** | ~~Correct active Waitlist semantics~~ — **PRODUCTION ACCEPTED 2026-10-11** (§8q). |
 | **2A0** | ~~A waitlist place is spent when the sale starts, not when interest is noted~~ — **PRODUCTION ACCEPTED and EXERCISED 2026-10-13** (§8r). |
 | **2A** | ~~The durable Application Outreach authority: schema, invariants, immutable history, security~~ — **PRODUCTION ACCEPTED 2026-10-13** (§8s), 0 rows by design. |
-| **2B-i** | ~~The canonical versioned cadence (Day 0 / 3 / 10 / 24, Day 31 to Nurture), exact `step` semantics, deterministic next-action authority, immutable `schedule_key` provenance~~ — **BUILT 2026-10-13** (§8t), awaiting deploy. |
+| **2B-i** | ~~The canonical versioned cadence (Day 0 / 3 / 10 / 24, Day 31 to Nurture), exact `step` semantics, deterministic next-action authority, immutable `schedule_key` provenance~~ — **PRODUCTION ACCEPTED 2026-10-14** (§8t), production at 169, 0 rows by design. |
 | **2B-ii** | Create/reuse the same-offer Interested Opportunity on confirmed invitation, and give **every delivered pre-Outreach invitation** Outreach provenance without resending anything — closed attempts for those who already applied, active Gmail attempts for those still invited. Needs Gmail execution for the sending half only. |
 | **3** | Interested derives from a live Application Outreach / actionable next step. Expired outreach leaves Interested for Nurture. |
 | **4** | Unify every application-invitation entry point — waitlist, Instagram/manual, future referral/email — onto the one lifecycle. |
@@ -4428,11 +4428,60 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8t. The schedule that governs an episode is recorded — BUILT, NOT YET DEPLOYED (2026-10-13)
+## 8t. The schedule that governs an episode is recorded — PRODUCTION ACCEPTED 2026-10-14
 
 §4b **Phase 2B**, part one: the canonical outreach cadence, and the authority
 that computes it. **Zero external side effects** — nothing sends, nothing
 connects to Gmail, no attempt row is created, no Opportunity moves.
+
+| Claim | State | What it rests on |
+|---|---|---|
+| **CODE GREEN** | YES | every repo gate on the committed bytes, plus the clean-room browser suite **449 passed / 14 skipped / 0 failed** from an empty database |
+| **SYSTEM GREEN** | YES | migration `20261014120000` applied **exactly once**, total **169**, and the column, CHECK and guard read back from the production catalog |
+| **PRODUCTION-EXERCISED** | **NO** | `application_outreach_attempts` holds **0 rows**, and no runtime writer exists yet. Correct by design — nothing was manufactured to change it. |
+
+**CI: `✅ Check` GREEN on attempt 1** — e2e-test ✅ Typecheck ✅ Test ✅
+Build ✅ ESLint ✅ Prettier ✅. No rerun was needed this time.
+
+**`🚀 Deploy` failed in the same two jobs as always, and the classification is
+now very well evidenced: 11 consecutive runs on main** (`9510906e` through
+`b4b6f7b4`, 11–14 Oct) show **doc ✓ / demo ✗ / supabase ✗** — spanning five
+independently production-accepted slices, during which the migration chain
+advanced 164 → 169 with every migration applied exactly once. The failing step
+is the unguarded `npx gh-pages --remote production` push to the external
+mirror repos, which is the LAST step of exactly those two jobs and absent from
+the one that passes. `📡 Push supabase migrations` runs before it and
+demonstrably succeeded. Step-level logs still need an authenticated API, so the
+supabase job's failing step is not pinned to Pages versus
+`📡 Deploy supabase functions`; the demo job has no Supabase steps at all and
+fails identically, which points at the shared gh-pages push.
+
+**Read back from the production catalog on 2026-10-14, not inferred from the
+migration:**
+
+    schedule_key   type=text   is_nullable=NO   column_default=NULL (no default)
+    CHECK ((schedule_key = 'application_outreach_v1'::text))
+    guard immutable set: id, opportunity_id, source, started_at,
+                         schedule_key, waitlist_invitation_id, created_at
+    closed-history refusal: still present
+    row count: 0
+
+One harmless normalisation worth knowing before somebody reports a phantom
+diff: the migration writes `check (schedule_key in ('application_outreach_v1'))`
+and Postgres stores a single-element `IN` as an equality. The declarative
+schema keeps the `IN` form deliberately, because that is where the second
+version will be added; both normalise identically, so `db diff` sees no drift.
+
+**Zero side effects, anchored absolutely.** Baseline captured at
+**2026-10-14 00:12:30 UTC**, while production was still at 168 with the column
+absent. Rows **created** after it: 0 Opportunities · 0 applications · 0
+invitations · 0 batches · 0 Kit operations · 0 waitlist entries · 0 outreach
+attempts. Rows **mutated** after it: 0 `deals.updated_at` · 0
+`applications.updated_at` · 0 `invited_at` · 0 `converted_at`. Every total
+unchanged: 199 Opportunities, 39 Interested (18 lost / 21 nurture), 194
+applications, 78 invitations, 3 batches, 142 Kit operations, 121 waitlist rows.
+**No organic activity occurred during the deploy window at all**, so nothing
+had to be separated out.
 
 ### The cadence Leif decided
 
@@ -4550,6 +4599,30 @@ singular. Four missed milestones still produce one action.
 **NEVER blast the backlog.** A date passing is not a send, so nothing in this
 slice marks a missed milestone delivered, and no helper can express "send all
 of these". Cutover behaviour itself is finalised in the Gmail slice.
+
+#### SCHEDULE POSITION IS NOT SEND AUTHORIZATION
+
+The distinction the Gmail slice has to respect, stated here because it is the
+easiest thing in this design to get wrong:
+
+| | |
+|---|---|
+| **Schedule position** | what the calendar *says* — which milestones are complete, which are nominally overdue, and what comes next. Pure, derived, decides nothing. |
+| **Send authorization** | a future Gmail execution decision: may this message actually go, to this person, now. |
+
+`applicationOutreachSchedulePosition().next` answers the first question only.
+**It must never be read on its own as "send this overdue email now."** A
+historical attempt can be weeks past a nominal milestone, and the correct
+behaviour there is a policy decision — suppress, resume from today, resume
+from the next future stop — that belongs to the Gmail slice and does not exist
+yet.
+
+The module enforces the half it can: `overdue` is documented as diagnostic and
+never a send list, and there is no function that returns several actions. It
+does **not** currently carry this sentence about `next` itself; a consumer that
+reads `next` as permission is the failure mode to watch for, and the Gmail
+slice should put the authorization check between them rather than teach the
+calendar about sending.
 
 ### Application always wins
 
@@ -4842,9 +4915,10 @@ A closed attempt needs no future boundary because it has no future: that is why
 `status <> 'active' or ...`. **So the historical half of the backfill is not
 blocked at all** — only the still-invited half is.
 
-**Snapshot at the last audit (illustrative, NOT the contract):** 78 delivered
-invitations — **75 still `invited`** (22 individual/LE, 53 group/GYU) and **3
-already converted**, all three individual/LE:
+**Snapshot, re-read from production 2026-10-14 (illustrative, NOT the
+contract — and unchanged since 13 Oct, with no further organic conversions):**
+78 delivered invitations — **75 still `invited`** (22 individual/LE, 53
+group/GYU) and **3 already converted**, all three individual/LE:
 
     entry 12  contact 179  invitation 5   opportunity 356   converted 10-13 19:54 UTC
     entry 13  contact 180  invitation 6   opportunity 351   converted 10-11 20:39 UTC
@@ -7707,11 +7781,13 @@ that keeps moving, not a population to code against.
 | **Phase 2A0** — a place is spent when the sale starts | §8r, `b19a23df` | now production-EXERCISED by a real application |
 | **Phase 2A** — the Application Outreach authority | §8s, `88cc77cb` | catalog-verified, **0 rows by design** |
 
-**§4b Phase 2B part one is BUILT** (§8t, migration `20261014120000` → **169**,
-awaiting deploy): the canonical cadence is **Gmail-owned Day 0 / 3 / 10 / 24,
-with Day 31 closing the episode to Nurture**, `schedule_key` records which
-calendar governs an attempt and cannot be rewritten, and the arithmetic lives
-in one module.
+**§4b Phase 2B part one is PRODUCTION ACCEPTED** (§8t, tip `b4b6f7b4`,
+production at **169**): the canonical cadence is **`application_outreach_v1` —
+Gmail-owned Day 0 / 3 / 10 / 24, with Day 31 closing the episode to Nurture**,
+offsets absolute from `started_at`, `schedule_key` recording which calendar
+governs an attempt and immutable after insert, and the arithmetic in one
+module. **0 production rows, by design** — no runtime writer exists yet, and
+**schedule position is not send authorization** (§8t).
 
 > **NOTHING IS WAITING ON LEIF.** The old "Kit automation duration" blocker is
 > **removed, because the question was wrong**: Kit delivered Day 0 and nothing
