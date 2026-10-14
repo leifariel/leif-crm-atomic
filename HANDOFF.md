@@ -922,7 +922,7 @@ offers no way to express "send all of these" (§8t).
 | **2A0** | ~~A waitlist place is spent when the sale starts, not when interest is noted~~ — **PRODUCTION ACCEPTED and EXERCISED 2026-10-13** (§8r). |
 | **2A** | ~~The durable Application Outreach authority: schema, invariants, immutable history, security~~ — **PRODUCTION ACCEPTED 2026-10-13** (§8s), 0 rows by design. |
 | **2B-i** | ~~The canonical versioned cadence (Day 0 / 3 / 10 / 24, Day 31 to Nurture), exact `step` semantics, deterministic next-action authority, immutable `schedule_key` provenance~~ — **PRODUCTION ACCEPTED 2026-10-14** (§8t), production at 169, 0 rows by design. |
-| **2C** | ~~The confirmed-delivery convergence authority: create/reuse the same-offer Opportunity, one active episode, or truthful closed history when they already applied~~ — **BUILT AND DORMANT 2026-10-14** (§8u). Nothing calls it. |
+| **2C** | ~~The confirmed-delivery convergence authority: create/reuse the same-offer Opportunity, one active episode, or truthful closed history when they already applied~~ — **PRODUCTION ACCEPTED AND DORMANT 2026-10-14** (§8u), production at 170, 0 rows, zero runtime callers. |
 | **2B-ii** | Run that authority over **every delivered pre-Outreach invitation** without resending anything, and wire it to the live delivery path. Needs Gmail execution for the sending half only; the classification and the command already exist. |
 | **3** | Interested derives from a live Application Outreach / actionable next step. Expired outreach leaves Interested for Nurture. |
 | **4** | Unify every application-invitation entry point — waitlist, Instagram/manual, future referral/email — onto the one lifecycle. |
@@ -4429,7 +4429,7 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8u. A delivered invitation becomes a sales cycle — BUILT AND DORMANT (2026-10-14)
+## 8u. A delivered invitation becomes a sales cycle — PRODUCTION ACCEPTED AND DORMANT 2026-10-14
 
 §4b **Phase 2C**. One authoritative command,
 `converge_delivered_invitation(p_invitation_id, p_next_action_at)`, turns a
@@ -4439,9 +4439,81 @@ Opportunity, and exactly one Application Outreach episode on the
 
 **DORMANT ON PURPOSE, AND THAT IS THE POINT.** Nothing calls it — no waitlist
 worker, no Kit processor, no UI, no cron, no webhook, no Gmail. It is proved
-here and wired in a later slice, so deploying it leaves production at **0
-`application_outreach_attempts` rows**. Migration `20261014140000` takes the
-chain to **170**.
+here and wired in a later slice, so production holds **0
+`application_outreach_attempts` rows** after the deploy. Migration
+`20261014140000` took the chain to **170**.
+
+| Claim | State | What it rests on |
+|---|---|---|
+| **CODE GREEN** | YES | every repo gate on the committed bytes, plus the clean-room browser suite **503 passed / 14 skipped / 0 failed** from an empty database, and remote `✅ Check` green |
+| **SYSTEM GREEN** | YES | migration applied **exactly once**, total **170**, and the deployed function body **byte-identical** to the reviewed authority |
+| **PRODUCTION-EXERCISED** | **NO** | 0 rows, no runtime caller. Correct by design — nothing was manufactured to change it. |
+
+**CI: `✅ Check` GREEN on attempt 1** — e2e-test ✅ Typecheck ✅ Test ✅
+Build ✅ ESLint ✅ Prettier ✅. No rerun needed.
+
+**`🚀 Deploy` failed in the same two jobs as always — now 12 consecutive runs
+on main** (`9510906e` through `f410f0c9`, 11–14 Oct), doc ✓ / demo ✗ /
+supabase ✗, across six independently production-accepted slices while the
+chain advanced 164 → 170 with every migration applied exactly once. Same
+classification as §8s: the unguarded `npx gh-pages --remote production` push
+to the external mirror repos is the last step of exactly those two jobs and
+absent from the one that passes, and `📡 Push supabase migrations` runs before
+it and demonstrably succeeded. **No novel failure.** Still unpinned without
+authenticated logs: whether the supabase job fails at Pages or at
+`📡 Deploy supabase functions`; the demo job has no Supabase steps and fails
+identically.
+
+### Verified against the deployed function, not the migration text
+
+`pg_get_functiondef` was read back from production and its body compared to
+the reviewed migration: **byte-identical, 11,505 characters.** Then 25
+properties were asserted against that deployed text, including four
+*positional* ones — that the DNE gate precedes any lifecycle write, and that
+the later-stage check, the application re-read and the client/enrollment check
+all sit **after** `pg_advisory_xact_lock`, inside the protected section.
+Confirmed on the deployed body: canonical `deal_is_active()` for the active
+lookup, `schedule_key = 'application_outreach_v1'`, `step = 0`, the supplied
+`next_action_at`, the `status = 'sent'` delivery prerequisite, the closed
+historical episode with its application linked, the `ambiguous` refusal when
+an application predates delivery, **no `update deals`** anywhere (so no
+terminal cycle can be reactivated) and **no `update waitlist_entries`**
+anywhere (so creating Interested cannot spend the waitlist place).
+
+### Production ACLs
+
+    EXECUTE: public=false  anon=false  authenticated=false  service_role=true
+    proacl:  postgres=X/postgres | service_role=X/postgres
+
+No generic authenticated writer. And
+`application_outreach_attempts` keeps its restrictive posture unchanged —
+`authenticated = rDxtm` (read only), `anon` absent entirely.
+
+### Delivery truth, untouched
+
+    delivery_method CHECK: ('manual', 'gmail', 'kit_tag')
+    sent evidence CHECK:   status <> 'sent' or (sent_at is not null and delivery_method is not null)
+    all 78 historical invitations: status = 'sent', delivery_method = 'kit_tag'
+
+### Zero side effects, anchored absolutely
+
+Baseline captured at **2026-10-14 01:40:56 UTC**, genuinely pre-deploy —
+production was still at 169 with the function absent. The migration landed at
+01:42:37 UTC. Rows **created** after the baseline: 0 Opportunities · 0
+applications · 0 invitations · 0 batches · 0 Kit operations · 0 waitlist
+entries · 0 outreach attempts. Rows **mutated**: 0 `deals.updated_at` · 0
+`applications.updated_at` · 0 `invitations.updated_at` · 0 `invited_at` · 0
+`converted_at`. Every total unchanged: 199 / 39 / 194 / 78 / 3 / 142 / 121.
+**No organic activity occurred in the window**, so nothing had to be separated
+out.
+
+### Still dormant — counted, not assumed
+
+Runtime callers: **zero.** Grepped across `src/`, `supabase/functions/`,
+`scripts/` and `.github/` — nothing. The only invocations anywhere are **3
+test call sites** (one in `convergeDeliveredInvitation.spec.ts`, two in
+`securityPosture.spec.ts`). Asked of the database too: `cron.job` holds **no**
+job mentioning it, and **no other function** in `public` references it.
 
 ### Delivery truth was already structural, so nothing had to be invented
 
@@ -4638,11 +4710,42 @@ declarative file can see the disagreement.
 migration, the Outreach schema, the schedule authority, the grants and every
 line of runtime code are byte-identical to `6dca002e`.
 
-One related gap stays open and is NOT this: `invite_from_preflight`,
-`deal_is_active` and `waitlist_invitation_candidates` exist only in
-migrations and are absent from `supabase/schemas/02_functions.sql`. Nothing
-depends on it today, and backfilling the declarative function set is its own
-piece of work.
+### PRE-EXISTING DECLARATIVE FUNCTION PARITY DEBT — OPEN, AND IT GATES THE NEXT MIGRATION
+
+A second, separate finding from the same audit. **Do not confuse it with the
+`delivery_method` drift above, which is closed.** These live functions exist
+**only in migrations** and are absent from
+`supabase/schemas/02_functions.sql`:
+
+- `invite_from_preflight` — the owner's invitation command
+- `deal_is_active` — the canonical active-sales predicate, which
+  `converge_delivered_invitation` itself calls
+- `waitlist_invitation_candidates` — the invitation eligibility authority
+
+**It is NOT a Phase 2C blocker**, for three specific reasons: Phase 2C neither
+removes nor alters any of them; deployed production function truth is intact
+and was read back directly; and Phase 2C's own migration already exists and
+deployed cleanly.
+
+**But it is a loaded gun pointed at the next migration.** `db diff` computes a
+desired state from the declarative schema. A function that is live in
+production and absent from that file is, to the generator, a function that
+should not exist — so a diff could silently propose **DROPping or altering
+live authority**, including the predicate this slice's command depends on.
+The `delivery_method` repair showed the same mechanism in its milder form: a
+stale declaration became a narrowing proposal.
+
+> **SEQUENCING RULE, recorded deliberately: close this parity debt BEFORE the
+> next database migration after Phase 2C is authored or generated.** Not
+> before the next slice, not before Gmail — before the next **migration**. The
+> order matters because the damage happens at generation time, not at review
+> time.
+
+Scope when it is picked up: transcribe those three functions into
+`02_functions.sql` exactly as production holds them (`pg_get_functiondef`,
+matching the `pg_dump` formatting rule in AGENTS.md so no phantom diff
+appears), then sweep for any others in the same position rather than fixing
+only the three that happened to surface here.
 
 ### Still ahead
 
@@ -7981,12 +8084,19 @@ The next Claude session should, in order:
 8. **Surface disagreements rather than silently resolving them.**
 9. **STOP before implementation and report readiness.**
 
-**The exact next action as of 2026-10-13:** `origin/main` = `88cc77cb`,
-production at **168 migrations**, nothing unpushed. Phase 2 work happens in the
+**The exact next action as of 2026-10-14:** `origin/main` = `f410f0c9`,
+production at **170 migrations**, nothing unpushed. Phase 2 work happens in the
 stable worktree `/Users/NatashaMKraus/Projects/leif-crm-phase2` on branch
 `phase2a0-waitlist-conversion` — **not** under `/tmp`, which purged tracked
 files four times in one session (§8s, and the `tmp-worktree-files-can-vanish`
 memory).
+
+> **BEFORE THE NEXT DATABASE MIGRATION IS AUTHORED OR GENERATED: close the
+> declarative function parity debt** (§8u). `invite_from_preflight`,
+> `deal_is_active` and `waitlist_invitation_candidates` are live in production
+> and absent from `supabase/schemas/02_functions.sql`, so a `db diff` could
+> propose DROPping live authority — including the predicate Phase 2C's command
+> calls. Not a Phase 2C blocker; a gate on the next migration.
 
 **The waitlist invitation slice is COMPLETE and sealed.** 55 real invitations
 went out on 11 Oct — LE 25 (batch 1, preflight 9) and GYU 30 (batch 2,
@@ -8012,6 +8122,18 @@ offsets absolute from `started_at`, `schedule_key` recording which calendar
 governs an attempt and immutable after insert, and the arithmetic in one
 module. **0 production rows, by design** — no runtime writer exists yet, and
 **schedule position is not send authorization** (§8t).
+
+**§4b Phase 2C is PRODUCTION ACCEPTED AND DORMANT** (§8u, tip `f410f0c9`,
+production at **170**): `converge_delivered_invitation` turns a **confirmed**
+Day-0 delivery into the right same-offer Opportunity and exactly one Outreach
+episode. `service_role` EXECUTE only; application and client truth win;
+terminal cycles are never resurrected; other-offer journeys stay independent;
+creating Interested does not spend the waitlist place; replayable,
+idempotent and concurrency-safe. **Deployed function body byte-identical to
+the reviewed authority, 0 production rows, and zero runtime callers** — it is
+dormant until a later slice wires it. The `delivery_method` declarative drift
+found during its audit is **CLOSED** (`f410f0c9`); the declarative **function**
+parity debt is **OPEN** and gates the next migration.
 
 > **NOTHING IS WAITING ON LEIF.** The old "Kit automation duration" blocker is
 > **removed, because the question was wrong**: Kit delivered Day 0 and nothing
