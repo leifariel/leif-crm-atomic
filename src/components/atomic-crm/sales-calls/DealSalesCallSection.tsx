@@ -17,6 +17,7 @@ import type { Deal, Offer, SalesCall } from "../types";
 import { salesCallAttendances } from "./salesCallConstants";
 import { formatSalesCallScheduleWithPrecision } from "./salesCallSchedule";
 import { CompleteSalesCallDialog } from "./CompleteSalesCallDialog";
+import { CorrectSalesCallDialog } from "./CorrectSalesCallDialog";
 import { LogSalesCallDialog } from "./LogSalesCallDialog";
 import { salesCallDecisionOwed } from "./salesCallDecisionOwed";
 import { describeBookedVsSold } from "./salesCallBookedProgramme";
@@ -85,6 +86,7 @@ export const DealSalesCallSection = () => {
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
   const [recordOutcomeOpen, setRecordOutcomeOpen] = useState(false);
   const [logDialogOpen, setLogDialogOpen] = useState(false);
+  const [correctDialogOpen, setCorrectDialogOpen] = useState(false);
 
   const { data: salesCalls, isPending } = useGetList<SalesCall>(
     "sales_calls",
@@ -254,14 +256,46 @@ export const DealSalesCallSection = () => {
               })}
             </span>
           )}
-          <div className="flex items-center gap-2 text-sm">
-            {salesCall.attendance === "attended" ? (
-              <CheckCircle2 className="size-4 text-primary" />
-            ) : (
-              <XCircle className="size-4 text-muted-foreground" />
-            )}
-            {findLabel(salesCallAttendances, salesCall.attendance)}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm">
+              {salesCall.attendance === "attended" ? (
+                <CheckCircle2 className="size-4 text-primary" />
+              ) : (
+                <XCircle className="size-4 text-muted-foreground" />
+              )}
+              {findLabel(salesCallAttendances, salesCall.attendance)}
+            </div>
+            {/* The recorded result is editable, and saying so is the only
+                way Leif discovers he can fix it. Not offered on a cancelled
+                call (there is no result) and not on the convergence card
+                above, where the decision has never landed at all. */}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setCorrectDialogOpen(true)}
+            >
+              {translate("resources.deals.sales_call.correct_action_short", {
+                _: "Edit result",
+              })}
+            </Button>
           </div>
+
+          {/* Part 1 could write an impression and nothing could read one
+              back. Shown here because it is the thing Leif actually
+              remembers about the call, and because a correction he cannot
+              see is one he cannot make. */}
+          {salesCall.impressions && (
+            <div className="flex flex-col gap-1 rounded-lg border bg-muted/40 p-3">
+              <span className="text-xs text-muted-foreground tracking-wide">
+                {translate("resources.deals.sales_call.impressions_heading", {
+                  _: "Impressions",
+                })}
+              </span>
+              <span className="text-sm whitespace-pre-wrap">
+                {salesCall.impressions}
+              </span>
+            </div>
+          )}
 
           {decisionOwed && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary p-3">
@@ -342,6 +376,16 @@ export const DealSalesCallSection = () => {
         contactName={contactName}
         decisionOnly
       />
+
+      {salesCall.attendance && (
+        <CorrectSalesCallDialog
+          open={correctDialogOpen}
+          onOpenChange={setCorrectDialogOpen}
+          salesCall={salesCall}
+          deal={record}
+          contactName={contactName}
+        />
+      )}
     </div>
   );
 };

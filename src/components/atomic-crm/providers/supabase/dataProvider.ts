@@ -355,6 +355,47 @@ const getDataProviderWithCustomMethods = () => {
       }
       return data as Record<string, unknown>;
     },
+    // Correcting an already-recorded result. A SEPARATE command from the
+    // completion above, on purpose: completion is the first authoritative
+    // resolution of a call episode and keeps refusing a materially
+    // different re-completion, so a stale tab or a replayed webhook can
+    // never rewrite a recorded answer. A correction is a human saying
+    // "that is wrong", and it writes its own audit event.
+    //
+    // Everything that decides whether a correction is SAFE lives in the
+    // function: which episode may correct the Opportunity's current truth,
+    // what internal state is reconciled, and what is refused outright
+    // because reversing it is ambiguous. See correctCompletedSalesCall.ts.
+    async correctCompletedSalesCall(input: {
+      salesCallId: Identifier;
+      attendance?: string | null;
+      ownerDecision?: string | null;
+      prospectDecision?: string | null;
+      followUpDate?: string | null;
+      impressions?: string | null;
+      impressionsMode: "unchanged" | "set" | "clear";
+    }) {
+      const { data, error } = await getSupabaseClient().rpc(
+        "correct_completed_sales_call",
+        {
+          p_sales_call_id: input.salesCallId,
+          p_attendance: input.attendance ?? null,
+          p_owner_decision: input.ownerDecision ?? null,
+          p_prospect_decision: input.prospectDecision ?? null,
+          p_follow_up_date: input.followUpDate || null,
+          // Tri-state, so the text travels only with "set". The function
+          // refuses a contradictory pair rather than guessing.
+          p_impressions:
+            input.impressionsMode === "set" ? input.impressions || null : null,
+          p_impressions_mode: input.impressionsMode,
+        },
+      );
+      if (error) {
+        console.error("correct_completed_sales_call.error", error);
+        throw new Error("Failed to correct the sales call result");
+      }
+      return data as Record<string, unknown>;
+    },
     // The prospect accepted, recorded from a Decision control rather than
     // from a call. Same primitive underneath as the sales-call path —
     // accept_sale() — so there is one place a sale is accepted and not

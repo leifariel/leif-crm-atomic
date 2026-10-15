@@ -131,7 +131,9 @@ export const CompleteSalesCallDialog = ({
         ) {
           notify("resources.deals.sales_call.cancelled", {
             type: "info",
-            _: "Sales call cancelled. The Opportunity needs a new booking.",
+            messageArgs: {
+              _: "Sales call cancelled. The Opportunity needs a new booking.",
+            },
           });
           handleOpenChange(false);
           refresh();
@@ -155,7 +157,7 @@ export const CompleteSalesCallDialog = ({
       if (result.status === "completed") {
         notify("resources.deals.sales_call.completed", {
           type: "info",
-          _: "Sales call completed.",
+          messageArgs: { _: "Sales call completed." },
         });
         handleOpenChange(false);
         refresh();
@@ -164,7 +166,7 @@ export const CompleteSalesCallDialog = ({
         // the first time it has been recorded, not a repeat.
         notify("resources.deals.sales_call.outcome_recorded", {
           type: "info",
-          _: "Outcome recorded.",
+          messageArgs: { _: "Outcome recorded." },
         });
         handleOpenChange(false);
         refresh();
@@ -180,7 +182,7 @@ export const CompleteSalesCallDialog = ({
       } else if (result.status === "already-completed") {
         notify("resources.deals.sales_call.already_completed", {
           type: "warning",
-          _: "This call's outcome was already recorded.",
+          messageArgs: { _: "This call's outcome was already recorded." },
         });
         handleOpenChange(false);
         refresh();

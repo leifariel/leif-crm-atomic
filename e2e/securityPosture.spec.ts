@@ -498,3 +498,115 @@ test.describe("only the service may converge a delivered invitation", () => {
     ).not.toBeNull();
   });
 });
+
+// Sales Call Workflow Part 2. The correction command rewrites a recorded
+// business result, so its posture is the completion command's exactly: the
+// owner's browser and the service role, nobody else. The two reconcilers
+// behind it are internal and reachable by no role at all.
+//
+// protectedFunctionGrants.spec.ts pins the classes from the live catalog;
+// this turns the handle from the two roles that reach the API.
+test.describe("who may correct a recorded sales-call result", () => {
+  const CORRECT_ARGS = {
+    p_sales_call_id: 1,
+    p_attendance: null,
+    p_owner_decision: null,
+    p_prospect_decision: null,
+    p_follow_up_date: null,
+    p_impressions: null,
+    p_impressions_mode: "unchanged",
+  };
+
+  test("T. the owner's signed-in browser may execute it", async () => {
+    const client = await signedInClient(serviceRoleClient());
+
+    const { error } = await client.rpc(
+      "correct_completed_sales_call",
+      CORRECT_ARGS,
+    );
+    // The call reaches the function and answers about sales call 1, which
+    // does not exist in a reset clean room. What matters is that EXECUTE was
+    // not the thing that stopped it.
+    expect(error?.code ?? null, "authenticated lost EXECUTE").not.toBe("42501");
+    expect(error, "authenticated could not reach the function").toBeNull();
+  });
+
+  test("U. anon cannot execute it", async () => {
+    const anon = anonClient();
+
+    expect(
+      (await anon.rpc("correct_completed_sales_call", CORRECT_ARGS)).error,
+      "anon EXECUTE of correct_completed_sales_call was not refused",
+    ).not.toBeNull();
+  });
+
+  test("V. the Decision-Task reconciler is reachable by nobody", async () => {
+    const signedIn = await signedInClient(serviceRoleClient());
+    const args = { p_opportunity_id: 1 };
+
+    expectDenied(
+      await signedIn.rpc("reconcile_decision_follow_up_task", args),
+      "EXECUTE of reconcile_decision_follow_up_task by authenticated",
+    );
+    expect(
+      (await anonClient().rpc("reconcile_decision_follow_up_task", args)).error,
+      "anon EXECUTE of reconcile_decision_follow_up_task was not refused",
+    ).not.toBeNull();
+    // Even the service role: this one is only ever reached by the trigger
+    // and by the correction command, both of which run as the owner.
+    expectDenied(
+      await serviceRoleClient().rpc("reconcile_decision_follow_up_task", args),
+      "EXECUTE of reconcile_decision_follow_up_task by service_role",
+    );
+  });
+
+  test("W. the correction command widened no direct table access", async () => {
+    const client = await signedInClient(serviceRoleClient());
+    const service = serviceRoleClient();
+
+    // UNCHANGED, and stated honestly rather than wishfully: a signed-in
+    // browser already held INSERT on sales_call_events and
+    // deal_stage_events before this slice, under RLS policies named for
+    // the authenticated role. Part 2 added a COLUMN to the first of those
+    // and no grant to either. The posture worth asserting is therefore the
+    // one that is actually closed, plus the fact that the new column
+    // cannot be abused where the table is writable.
+    //
+    // (That standing browser-writable audit surface is a real finding, not
+    // something this slice introduced. It belongs to the Health Sweep.)
+    expectDenied(
+      await client.from("deal_outcome_events").insert({
+        opportunity_id: 1,
+        new_outcome: "lost",
+        occurred_at: new Date().toISOString(),
+      }),
+      "INSERT into deal_outcome_events by authenticated",
+    );
+
+    // anon reaches none of it.
+    expect(
+      (
+        await anonClient().from("sales_call_events").insert({
+          sales_call_id: 1,
+          kind: "outcome_corrected",
+          occurred_at: new Date().toISOString(),
+        })
+      ).error,
+      "anon INSERT into sales_call_events was not refused",
+    ).not.toBeNull();
+
+    // The new column is constrained, not merely conventionally documented:
+    // a correction payload on an unrelated event kind is refused even for
+    // the service role, which certainly has INSERT.
+    const { error } = await service.from("sales_call_events").insert({
+      sales_call_id: 1,
+      kind: "booked",
+      occurred_at: new Date().toISOString(),
+      correction: { before: {}, after: {} },
+    });
+    expect(
+      error?.message ?? "",
+      "a correction payload was accepted on a non-correction event",
+    ).toContain("sales_call_events_correction_kind_check");
+  });
+});

@@ -110,7 +110,7 @@ export const SalesCallResolutionModal = ({
         setJustResolved(true);
         notify("resources.sales_calls.resolve.attached", {
           type: "info",
-          _: "Attached to the Opportunity.",
+          messageArgs: { _: "Attached to the Opportunity." },
         });
         await load();
       }
@@ -134,7 +134,7 @@ export const SalesCallResolutionModal = ({
         setJustResolved(true);
         notify("resources.sales_calls.resolve.created", {
           type: "info",
-          _: "Opportunity created.",
+          messageArgs: { _: "Opportunity created." },
         });
         await load();
       }

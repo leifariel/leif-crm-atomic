@@ -371,7 +371,15 @@ create table public.deals (
     -- "declined".
     constraint deals_outcome_check check (outcome in ('nurture', 'needs_higher_care', 'not_fit', 'lost', 'workshops_only')),
     constraint deals_owner_decision_check check (owner_decision in ('would_work_with', 'workshops_only', 'do_not_engage')),
-    constraint deals_prospect_decision_check check (prospect_decision in ('yes', 'thinking', 'no')),
+    -- 'ghosted' was added by 20260918090000 and 5 production Opportunities
+    -- carry it, but this declaration was never updated -- found while
+    -- auditing what a sales-call correction is allowed to write (Sales Call
+    -- Workflow Part 2). It is produced by the pipeline-exit authority
+    -- (deals/pipelineExit.ts) and never by a call outcome: staying silent is
+    -- not declining, and the difference decides whether Leif ever writes to
+    -- this person again. correct_completed_sales_call() refuses it for that
+    -- reason, with 'invalid-transition'.
+    constraint deals_prospect_decision_check check (prospect_decision in ('yes', 'thinking', 'no', 'ghosted')),
     constraint deals_source_check check (source in ('instagram', 'referral', 'podcast', 'workshop', 'substack', 'google', 'other')),
     -- 'application_form' is the native public intake route (Native
     -- Application Intake slice, §9) — distinct from 'sales_page' (an
@@ -1030,7 +1038,16 @@ create table public.sales_call_events (
     -- convention as attendance above.
     dismissal_reason text,
     created_at timestamp with time zone not null default now(),
-    constraint sales_call_events_kind_check check (kind in ('booked', 'rescheduled', 'cancelled', 'attendance_recorded', 'opportunity_attached', 'dismissed')),
+    -- Sales Call Workflow Part 2: only set for kind =
+    -- 'outcome_corrected' -- {"before": {...}, "after": {...}} over the
+    -- five correctable facts (attendance, owner_decision,
+    -- prospect_decision, follow_up_date, impressions). Deliberately a
+    -- fixed shape rather than a diff of arbitrary columns: this is still
+    -- not a generalized event log. The original attendance_recorded row
+    -- is never rewritten -- what was first recorded stays recorded.
+    correction jsonb,
+    constraint sales_call_events_kind_check check (kind in ('booked', 'rescheduled', 'cancelled', 'attendance_recorded', 'opportunity_attached', 'dismissed', 'outcome_corrected')),
+    constraint sales_call_events_correction_kind_check check (correction is null or kind = 'outcome_corrected'),
     constraint sales_call_events_attendance_check check (attendance in ('attended', 'no_show'))
 );
 

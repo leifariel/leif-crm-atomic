@@ -784,6 +784,21 @@ revoke all on function public.complete_attended_sales_call(bigint, text, text, d
 grant execute on function public.complete_attended_sales_call(bigint, text, text, date, text) to authenticated;
 grant execute on function public.complete_attended_sales_call(bigint, text, text, date, text) to service_role;
 
+-- Sales Call Workflow Part 2: the correction command sits beside the
+-- completion command and holds exactly the same posture -- the owner's
+-- browser and the service role, nobody else.
+revoke all on function public.correct_completed_sales_call(bigint, text, text, text, date, text, text) from public;
+revoke all on function public.correct_completed_sales_call(bigint, text, text, text, date, text, text) from anon;
+grant execute on function public.correct_completed_sales_call(bigint, text, text, text, date, text, text) to authenticated;
+grant execute on function public.correct_completed_sales_call(bigint, text, text, text, date, text, text) to service_role;
+
+-- Internal. reconcile_decision_follow_up_task() is reached from the
+-- correction command and from the trigger below it; PostgreSQL does not
+-- check EXECUTE on a trigger function when a trigger fires it, so neither
+-- of these needs to be reachable by any role.
+revoke all on function public.reconcile_decision_follow_up_task(bigint) from public, anon, authenticated, service_role;
+revoke all on function public.sync_decision_follow_up_task() from public, anon, authenticated, service_role;
+
 revoke all on function public.record_prospect_accepted(bigint) from public;
 revoke all on function public.record_prospect_accepted(bigint) from anon;
 grant execute on function public.record_prospect_accepted(bigint) to authenticated;

@@ -323,3 +323,17 @@ drop trigger if exists guard_outreach_attempt_mutation on public.application_out
 create trigger guard_outreach_attempt_mutation
   before update on public.application_outreach_attempts
   for each row execute function public.guard_outreach_attempt_mutation();
+
+-- Sales Call Workflow Part 2: the Decision follow-up Task is a PROJECTION
+-- of deals.follow_up_date on an active Opportunity at Decision, so it is
+-- reconciled here rather than by each authority that moves an Opportunity
+-- remembering to. The correction command, the completion, the pipeline-exit
+-- path (deals/pipelineExit.ts), a Kanban drag and an archive all reach it.
+-- Idempotent, and it coexists with sales-calls/followUpTask.ts by
+-- reconciling the DAY rather than the instant -- see
+-- reconcile_decision_follow_up_task() for why that matters.
+drop trigger if exists on_deal_decision_follow_up_task on public.deals;
+create trigger on_deal_decision_follow_up_task
+  after insert or update of stage, outcome, follow_up_date, archived_at
+  on public.deals
+  for each row execute function public.sync_decision_follow_up_task();

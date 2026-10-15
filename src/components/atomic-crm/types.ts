@@ -817,7 +817,10 @@ export type SalesCallEventKind =
   | "attendance_recorded"
   // Unmatched Sales Call Resolution slice.
   | "opportunity_attached"
-  | "dismissed";
+  | "dismissed"
+  // Sales Call Workflow Part 2: a human changed an already-recorded
+  // result. The original "attendance_recorded" row is never rewritten.
+  | "outcome_corrected";
 
 // The append-only lifecycle history a SalesCall's current-state row can't
 // hold on its own (Acuity/Sales Call Lifecycle slice, per Leif's own
@@ -837,8 +840,27 @@ export type SalesCallEvent = {
   attendance?: SalesCallAttendance | null;
   // Only set for kind = "dismissed".
   dismissal_reason?: string | null;
+  // Only set for kind = "outcome_corrected": the before/after facts of one
+  // correction, over attendance, owner_decision, prospect_decision,
+  // follow_up_date and impressions (plus the resulting stage/outcome).
+  correction?: SalesCallCorrectionAudit | null;
   created_at: string;
 } & Pick<RaRecord, "id">;
+
+export type SalesCallCorrectedFacts = {
+  attendance: SalesCallAttendance | null;
+  owner_decision: OpportunityOwnerDecision | null;
+  prospect_decision: OpportunityProspectDecision | null;
+  follow_up_date: string | null;
+  impressions: string | null;
+  stage: string | null;
+  outcome: OpportunityOutcome | null;
+};
+
+export type SalesCallCorrectionAudit = {
+  before: SalesCallCorrectedFacts;
+  after: SalesCallCorrectedFacts;
+};
 
 export type ClientSessionStatus = "booked" | "cancelled" | "completed";
 export type ClientSessionSource = "acuity" | "manual";

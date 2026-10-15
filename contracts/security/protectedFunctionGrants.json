@@ -22,6 +22,7 @@
     "materialize_application_responses(p_snapshot_id bigint)",
     "merge_contacts_safely(p_source bigint, p_destination bigint, p_actor text, p_evidence text, p_acknowledged_conflicts text[])",
     "reconcile_application_review_tasks()",
+    "reconcile_decision_follow_up_task(p_opportunity_id bigint)",
     "reconcile_sales_call_tasks()",
     "seed_enrollment_onboarding(p_enrollment_id bigint, p_due_at timestamp with time zone)"
   ],

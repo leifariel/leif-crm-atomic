@@ -77,7 +77,7 @@ export const LogSalesCallDialog = ({
       });
       notify("resources.deals.sales_call.logged", {
         type: "info",
-        _: "Sales call logged.",
+        messageArgs: { _: "Sales call logged." },
       });
       handleOpenChange(false);
       refresh();

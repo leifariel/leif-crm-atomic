@@ -4429,7 +4429,321 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8w. What he made of them — SALES CALL WORKFLOW PART 1, BUILT NOT YET DEPLOYED (2026-10-15)
+## 8x. A recorded result can be corrected — SALES CALL WORKFLOW PART 2, BUILT NOT DEPLOYED (2026-10-16)
+
+Part 1 gave a completed call an authoritative result and no way to change it.
+`complete_attended_sales_call()` answers a materially different re-completion
+with `conflicting-outcome`, deliberately — so "she actually said no" had no
+front door at all. This slice builds the front door.
+
+### Completion and correction are TWO commands, and that is the safety property
+
+| | what it is | what it does with a conflict |
+|---|---|---|
+| `complete_attended_sales_call()` | the FIRST authoritative resolution of a call episode | **still refuses** — `conflicting-outcome` |
+| `correct_completed_sales_call()` | a human changing an already-recorded resolution | applies it, and records that it did |
+
+Letting the completion command edit instead of refuse would have been the
+smaller change and the wrong one: a stale tab, a double-click or a replayed
+webhook would then be able to rewrite a recorded answer, and the audit trail
+would lose the ability to say whether a result was *recorded* or *revised*.
+`contracts/sales-calls/correctionIsNotCompletion.test.ts` is what notices if
+anybody loosens it later; `e2e/correctingARecordedResult.spec.ts` test X
+proves the refusal behaviourally against real Postgres.
+
+### Which episode may correct the Opportunity's current truth — DERIVED, not assumed
+
+**Only the latest ATTENDED episode.** Not the latest call, and not the latest
+completed call.
+
+The reason is in the existing authorities rather than in a new rule:
+`record_sales_call_cancelled()` and `record_sales_call_no_show()` both leave
+the Opportunity untouched on purpose ("a fact about the meeting, not a
+demotion of the sale"). So a newer cancelled or no-showed call has written
+*nothing* an older episode's correction could contradict. Only an attended
+call ever wrote lifecycle facts. Ordering mirrors the app's one
+call-selection model (`sales-calls/salesCallSelection.ts`): the call's
+instant descending, id as tiebreak, a call with no knowable time sorting
+earliest.
+
+A superseded episode may still have its **impressions** corrected, because
+impressions live on the call row and nothing derives from them. A lifecycle
+parameter on a superseded episode returns `superseded-call-episode` and names
+the newer call's id.
+
+**Production holds ZERO Opportunities with more than one attended episode**
+(16 attended-and-matched episodes in all), so this guard is forward-looking.
+Part 1's "20 Opportunities carry more than one completed call" is a different
+and still-true count — *completed*, most of which record no attendance at all.
+
+### The five correctable facts, and the tri-state that needed saying
+
+Editable: `attendance` (one direction only, below), `owner_decision`,
+`prospect_decision`, `follow_up_date`, `impressions`. Target results are
+exactly the five `complete_attended_sales_call()` already produces — no new
+outcome, no new transition.
+
+`prospect_decision = 'ghosted'` is **refused** with `invalid-transition`. It
+is a legal stored value, produced by the pipeline-exit authority
+(`deals/pipelineExit.ts`), and staying silent is not declining. Correcting a
+call's result must not become a second way to leave the pipeline.
+
+**Impressions are tri-state and say so.** Part 1 reads a blank impression on
+a converging completion as *unchanged*, because a replay must never erase what
+Leif wrote. A correction genuinely needs all three answers, so the mode is its
+own parameter rather than another meaning squeezed into the empty string:
+
+- `unchanged` — leave it exactly as it is (`p_impressions` must be null)
+- `set` — replace it (`p_impressions` must be non-blank)
+- `clear` — deliberately empty it (`p_impressions` must be null)
+
+A contradictory pair is a `validation-error`, never a guess. The dialog
+derives the mode from what Leif did to the box: untouched is unchanged,
+emptied is a clear, anything else is a replacement — and it says "Saving will
+remove what was written here" in the one case where a blank box is a decision.
+
+Every other parameter is "null = unchanged", which is unambiguous because
+none of them has a legal cleared state on a completed attended call:
+`prospect_decision` and `follow_up_date` are DERIVED from the target decision
+rather than independently clearable.
+
+### Attendance correction goes one way, and the refusal is derived
+
+- `no_show → attended`: **supported.** A no-show never touched the
+  Opportunity, so correcting away from one only ever adds facts. It requires
+  the decision the Opportunity never had. The Contact's durable **No-show tag
+  is removed only when no no-showed call remains** for that Contact — it is a
+  summary of history (`record_sales_call_no_show()`'s own words), and a
+  summary that is false is worse than no summary.
+- `attended → no_show`: **refused**, `ambiguous-downstream-state` /
+  `attendance_retraction`. It would have to retract a decision that already
+  moved the Opportunity's stage, and this schema has **no backward stage
+  transition** and no canonical command that reverses one.
+
+A passed time still never determines attendance. Nothing about this slice
+reads the clock.
+
+### What is refused BEFORE anything is written
+
+Checked before the first write, with the whole correction stopping rather
+than half-applying. Each refusal names a `category`, a `reason` written for
+Leif, and (where it has them) the `blockers`:
+
+| category | when |
+|---|---|
+| `won_opportunity` | the sale is Won and the target is not "they said yes". Blockers list `enrollment`, `payment`, `stripe_plan`, `offer_page_link`, `payment_setup`, `scholarship_slot`, and always `won_sale` |
+| `existing_enrollment` | ending a sale under a live Enrollment, even off Won |
+| `contact_sales_eligibility` | lifting a standing do-not-engage decision — a decision about the person, not about this call |
+| `archived_opportunity` | an archived Opportunity is not quietly brought back to life |
+| `attendance_retraction` | as above |
+
+Keyed on the target **decision**, not the derived stage: the completion's
+"no" branch leaves stage alone, so a Won deal corrected to "they said no"
+computed a target stage of `won` and slipped past a stage comparison while
+still writing `outcome = 'lost'` — a sale both won and lost. Caught by a
+smoke test before it could ship; the e2e now pins it.
+
+**Correcting forward is creating, not reversing**, and is allowed: a
+correction to "they actually said yes" delegates to `public.accept_sale()`,
+the same convergent primitive the completion uses, so there is still exactly
+one place a sale is accepted and exactly one Enrollment.
+
+### The Decision follow-up Task now has ONE authority, and it is a trigger
+
+The Task that says "follow up with this person on the 19th" is a PROJECTION
+of `deals.follow_up_date` on an active Opportunity at Decision. It was
+created by the app layer (`sales-calls/followUpTask.ts`) keyed on the
+**Contact** and carrying **no `opportunity_id`**, which had two consequences:
+
+- `close_tasks_for_terminal_opportunity()` filters on `opportunity_id`, so it
+  could never close one. **Production holds 2 pending `follow_up` Tasks, both
+  unlinked, and 1 is already stale** — Alice Giuliani's, due 2026-10-12, with
+  her Opportunity at Approved rather than Decision.
+- nothing reconciled the due date when the commitment moved.
+
+So `reconcile_decision_follow_up_task(opportunity_id)` is reached from a
+**trigger on `deals`** (`on_deal_decision_follow_up_task`, on `stage`,
+`outcome`, `follow_up_date`, `archived_at`) rather than from a step inside
+the correction command. Every authority that moves an Opportunity now
+reconciles it — the correction, the completion, the pipeline-exit path, a
+Kanban drag, an archive — instead of each one remembering to, and the
+correction gets its atomicity for free.
+
+Two decisions inside it are worth keeping:
+
+1. **It reconciles the DAY, not the instant.** `followUpTask.ts` builds its
+   timestamp at the **viewer's** local noon, which no server-side function can
+   reproduce. If the reconciler compared instants, the two would overwrite
+   each other forever. The commitment is a day; an existing Task already due
+   on the right calendar day (`America/Denver`) is left exactly as it is.
+2. **It adopts a legacy unlinked Task only when this Opportunity is
+   unambiguously the one it is about** — i.e. the Contact has no OTHER active
+   Opportunity. Otherwise it defers to it and creates nothing: guessing which
+   sale a commitment belongs to would move it between programmes, and adding a
+   second "Follow up with X" beside it is noise, not safety. No backfill;
+   production's two unlinked Tasks get linked the first time their
+   Opportunity is next touched.
+
+### Audit: the correction is recorded, and the original is not
+
+One new `sales_call_events` kind, `outcome_corrected`, and one new column,
+`correction jsonb`, holding `{"before": {...}, "after": {...}}` over the five
+correctable facts plus the resulting stage and outcome. Same "only set for
+kind = X" convention the table already uses for `attendance`,
+`previous/new_scheduled_at` and `dismissal_reason` — but with a CHECK
+constraint this time, so a correction payload cannot sit on an unrelated
+event. The original `attendance_recorded` row is never rewritten: what was
+first recorded stays recorded.
+
+Deliberately **not** a generalized event log and not a diff of arbitrary
+columns. The five facts are named, so the payload is a fixed shape anyone can
+read in six months.
+
+A repeated identical correction returns `no-change` and writes **no event** —
+a history row saying nothing changed is worse than no row.
+
+`deal_stage_events` is appended only when the stage genuinely changes, which
+`record_deal_stage_event()` already guaranteed; the e2e pins both directions.
+
+### Result contract
+
+`corrected` · `no-change` · `not-found` · `not-completed` · `no-opportunity`
+· `invalid-transition` · `missing-decision-date` ·
+`ambiguous-downstream-state` · `superseded-call-episode` ·
+`validation-error`. No generic `success`. The contract test asserts every
+status SQL can return is a case the TypeScript caller maps, because the
+caller's fallback turns an unmapped status into a *wrong sentence* rather
+than a failure.
+
+### UI
+
+A modal over the Opportunity (`CorrectSalesCallDialog`), reached from an
+"Edit result" button on the completed-call card — the operational-UX
+convention for an action that starts from the record being worked on, is
+bounded, and asks for a few choices. It opens on the episode's OWN recorded
+facts, never a blank form. No full-page route: a direct link to a correction
+is not useful, and a second entry point would be a second implementation.
+
+**Impressions are now readable.** Part 1 could write one and nothing could
+read one back; the completed-call card shows it. A correction Leif cannot see
+is one he cannot make.
+
+An attended call does not offer the no-show it would refuse — the fact is
+stated instead, pointing at Remove from pipeline for ending the sale.
+
+### Two defects found on the way, one of them in shipped Part 1 code
+
+1. **Toasts rendered the raw translation key.** `src/components/admin/
+   notification.tsx` translates with `notificationOptions.messageArgs` and
+   nothing else, so `notify(key, { _: "fallback" })` shows
+   `resources.deals.sales_call.completed` rather than "Sales call completed."
+   Proved with a browser probe, not inferred. **27 of the 43 `_` fallbacks in
+   the codebase already use the correct `messageArgs: { _: ... }` form**, so
+   this is the established convention and these were the stragglers: 4 in
+   `CompleteSalesCallDialog.tsx` (Part 1, shipped), 2 in
+   `SalesCallResolutionModal.tsx`, 1 in `LogSalesCallDialog.tsx`, and 2 in
+   this slice's own new dialog. **All nine on the sales-call surface are
+   fixed.** Still broken and NOT fixed here, reported for the Health Sweep:
+   `enrollments/ClientShow.tsx` (6) and `sessions/CadenceResolutionModal.tsx`
+   (1).
+2. **Part 1's "the 4-argument signature is gone" assertion was vacuous.** On
+   PostgreSQL 17 `pg_get_function_identity_arguments()` includes parameter
+   NAMES, so comparing it against a bare type list never matches anything.
+   Migration 173 carries the real check forward with `to_regprocedure`, which
+   resolves a signature or returns null. The deployed Part 1 migration is
+   **not** amended.
+
+### Declarative drift closed on the way
+
+`deals_prospect_decision_check` was declared as `('yes','thinking','no')` in
+`01_tables.sql` while production has held `('yes','thinking','no','ghosted')`
+since `20260918090000`, with **5 Opportunities carrying `ghosted`**. The
+declarative file was the stale side; it now matches. Declarative-only — no
+migration, no production change.
+
+### Production, read-only (2026-10-16)
+
+Nothing was mutated. 214 sales calls · 179 completed · **16 attended and
+matched to an Opportunity** · 1 carrying an impression (call 11 on
+Opportunity 210, written by Leif through Part 1 on 2026-10-15 — a **Won**
+sale, so its lifecycle is refused and its impressions are correctable, which
+is the useful real case).
+
+Correction-risk inventory: **0** Opportunities with >1 attended episode · 7
+attended episodes on Won deals with Enrollments · 3 with paid/Stripe money ·
+4 with an issued Offer Page link · 28 no-shows and 28 Contacts carrying the
+No-show tag · **1** Opportunity at Decision (211, Mads Bunch, follow-up
+2026-10-19).
+
+**The acceptance candidate is Opportunity 211 (Mads Bunch)**: at Decision,
+exactly one attended episode, no Enrollment, no money, no Offer Page link.
+Changing its follow-up date and adding an impression is a safe, reversible,
+genuinely useful real correction. Amy Hayes was **not** touched.
+
+Two further read-only findings, neither introduced here:
+
+- **5 ended sales still carry a Decision `follow_up_date`.** The Kanban only
+  shows active deals so nothing displays them today, but the field is stale
+  truth. The correction command clears it whenever the target is not
+  "thinking"; the pipeline-exit path does not, and the new trigger closes
+  their Tasks but does not clear the dates. A Health Sweep item.
+- **`deal_outcome_events` is SELECT-able by no API role** — not
+  `authenticated`, not `service_role`. The audit trail is write-only from
+  outside the database, which is why the e2e reads outcome history from the
+  correction event instead. Worth a decision during the Health Sweep: an
+  audit nobody can read is of limited use to Leif.
+- A signed-in browser already holds direct INSERT on `sales_call_events` and
+  `deal_stage_events` under RLS policies named for `authenticated`. Part 2
+  added a column to the first and **no grant to either**; the new column is
+  constrained so it cannot be abused where the table is writable. Standing
+  posture, Health Sweep material.
+
+### Proof
+
+- **23** real-Postgres regressions, `e2e/correctingARecordedResult.spec.ts`
+  (A–S, X, plus the no-show direction and the forward-to-Won case)
+- **7** built-CSS browser acceptances, `e2e/editingACallResult.spec.ts`
+- **4** security regressions appended to `e2e/securityPosture.spec.ts`
+  (T/U/V/W)
+- **17** FakeRest-mirror tests, **9** contract tests, **1** new guard on the
+  Won-writer inventory
+- **5 sensitivity breaks executed and each one caught**: a second
+  `sales_calls` row instead of an in-place edit (4 failures), reconciliation
+  disabled (5), the newer-episode check removed (1), every consequential
+  guard bypassed (5), the audit event deleted (4). Restored byte-identical
+  and green.
+- full browser suite **591 passed** in the clean room · replay boundary
+  **147 deterministic + 26 MAIN-only = 173** · migration **173** replays into
+  an empty database
+
+### State
+
+- migration **173** `20261016120000_a_recorded_result_can_be_corrected.sql` —
+  built, **not deployed**
+- deterministic chain **147** · MAIN-only **26**
+- Part 2 is **not production accepted**: it has not been pushed, and Leif has
+  not corrected a real record. Opportunity 211 is the candidate.
+- **Gmail: still blocked**, and still not next.
+
+### Roadmap from here
+
+1. Push Part 2, remote `✅ Check` green, deploy, **Leif corrects Opportunity
+   211 for real** → production accept.
+2. **Deposits**: LE $500, GYU $400 → production accept.
+3. **Full CRM Integration Readiness / Health Sweep.**
+4. Repair every REPAIR BEFORE GMAIL finding, including the three carried out
+   of this slice (the two remaining `notify` surfaces, the 5 stale Decision
+   dates, the unreadable outcome audit).
+5. Re-run the sweep until clear.
+6. **Only then Gmail.**
+
+## 8w. What he made of them — SALES CALL WORKFLOW PART 1, PRODUCTION ACCEPTED 2026-10-15
+
+**ACCEPTED.** Migration 172 applied; remote `✅ Check` green on `4e1b488c`;
+Leif verified the Call Booked ordering, the Call passed badges and Mads
+Bunch's Decision due date in production. The one repair the deploy needed was
+a pre-existing racy assertion in `kitConfigUx.test.tsx`, fixed in
+`4e1b488c` without weakening what it asserts. Part 2 is §8x.
 
 Four things the sales-call lifecycle was missing. **Most of it already
 existed** — the audit mattered more than the build here, because roughly half
@@ -8752,8 +9066,14 @@ parity debt is **OPEN** and gates the next migration.
    already built and tested, and **schedule position is not send
    authorization**; the cutover behaviour is that slice's to finalise.
 9. Only then the 13-week client-opening buffer, deposits (LE $500 / GYU $400)
-   and the Sales Call Workflow; then the Integration Readiness Gate, then
-   Instagram.
+   and the rest of the Sales Call Workflow; then the Integration Readiness
+   Gate, then Instagram.
+
+**Sales Call Workflow Part 1 is PRODUCTION ACCEPTED (§8w) and Part 2 is BUILT,
+NOT DEPLOYED (§8x).** The live queue is: push and accept Part 2 → deposits
+(LE $500 / GYU $400) → accept → the full Health Sweep → repair every REPAIR
+BEFORE GMAIL finding → re-run until clear → Gmail. Migration **173** is the
+current tip of the chain: **147 deterministic + 26 MAIN-only**.
 
 **Gmail is not next, and it is not independent.** It executes §4b. Building it
 first builds the lifecycle inside the mail provider.

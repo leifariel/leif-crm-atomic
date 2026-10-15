@@ -125,6 +125,22 @@ const AUTHORISED: Record<string, string> = {
 // again, a canonical sale path has gone back to writing Won by hand.
 const KNOWN_UNCONVERTED: string[] = [];
 
+/**
+ * Comments are prose, not writes.
+ *
+ * Sales Call Workflow Part 2 added a module whose COMMENT says, in as many
+ * words, that it deliberately does not write `stage: "won"` and routes
+ * through acceptSaleMirror() instead — and this inventory flagged it,
+ * because a text scan cannot tell an explanation from an assignment. The
+ * right answer is to measure the code: an inventory that forbids writing
+ * down WHY something is safe teaches people to stop writing it down.
+ *
+ * String literals are deliberately left in place. A `stage: "won"` inside a
+ * template or a string is still a payload heading for the database.
+ */
+const withoutComments = (source: string): string =>
+  source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+
 const clientWonWriters = (): string[] => {
   const roots = [
     "src/components/atomic-crm/sales-calls",
@@ -134,7 +150,7 @@ const clientWonWriters = (): string[] => {
   for (const root of roots) {
     for (const name of readdirSync(root)) {
       if (!/\.tsx?$/.test(name) || /\.test\./.test(name)) continue;
-      const source = readFileSync(`${root}/${name}`, "utf8");
+      const source = withoutComments(readFileSync(`${root}/${name}`, "utf8"));
       if (
         /stage:\s*["']won["']/.test(source) ||
         /stage:\s*"won"/.test(source)
@@ -161,6 +177,18 @@ describe("the inventory of browser-side Won writers", () => {
     ).toEqual([]);
   });
 
+  test("and it still catches a real one, comment-stripping notwithstanding", () => {
+    // The guard on the guard. Stripping comments is how this inventory
+    // stopped flagging an explanation; it must not also have stopped
+    // flagging an assignment.
+    expect(clientWonWriters()).toContain("deals/acceptSaleMirror.ts");
+    expect(clientWonWriters()).toContain(
+      "sales-calls/completeAttendedSalesCallMirror.ts",
+    );
+    expect(clientWonWriters()).not.toContain(
+      "sales-calls/correctCompletedSalesCallMirror.ts",
+    );
+  });
   test("nothing is left unconverted", () => {
     expect(KNOWN_UNCONVERTED).toEqual([]);
   });

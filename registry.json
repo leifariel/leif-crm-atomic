@@ -486,6 +486,14 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/sales-calls/correctCompletedSalesCallMirror.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/sales-calls/correctCompletedSalesCall.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/sales-calls/completeSalesCallOutcome.ts",
           "type": "registry:component"
         },
@@ -527,6 +535,10 @@
         },
         {
           "path": "src/components/atomic-crm/sales-calls/DealSalesCallSection.tsx",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/sales-calls/CorrectSalesCallDialog.tsx",
           "type": "registry:component"
         },
         {

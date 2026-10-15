@@ -53,6 +53,7 @@ import {
   setProgramKitTagMirror,
 } from "../../applications/kitTagActions";
 import { completeAttendedSalesCallMirror } from "../../sales-calls/completeAttendedSalesCallMirror";
+import { correctCompletedSalesCallMirror } from "../../sales-calls/correctCompletedSalesCallMirror";
 import { acceptSaleMirror } from "../../deals/acceptSaleMirror";
 import { transferClientOfferMirrorEntry } from "../../enrollments/transferClientOfferMirrorEntry";
 import { reconcileClientOnboardingMirrorEntry } from "../../enrollments/reconcileClientOnboardingMirrorEntry";
@@ -912,6 +913,12 @@ export const createDataProvider = ({
     // gets from its triggers.
     completeAttendedSalesCall: async (input) =>
       completeAttendedSalesCallMirror(dataProvider, input),
+    // Correcting an already-recorded result. A separate command, because
+    // completion is the FIRST resolution of a call episode and keeps
+    // refusing a conflicting re-completion. Same outer provider, so the
+    // lifecycle hooks production gets from its triggers fire here too.
+    correctCompletedSalesCall: async (input) =>
+      correctCompletedSalesCallMirror(dataProvider, input),
     // There is no Kit here, so these mirror only the half that is real: the
     // CRM's own durable records and an in-memory tag catalog. Nothing below
     // pretends a provider confirmed anything.
