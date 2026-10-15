@@ -4429,6 +4429,108 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8v. The privileged five were seven — BUILT, NOT YET DEPLOYED (2026-10-15)
+
+Two SECURITY DEFINER functions were more permissive in a replayed database
+than they have ever been on MAIN. **Production was the correct side for both,
+and neither gains any privilege here.** Migration `20261015120000` takes the
+chain to **171**; its effect on production is **nil**, because revoking an
+absent privilege is a no-op. What it fixes is the chain's ability to *reproduce*
+what MAIN already is.
+
+### Resolved separately, because they are different kinds of function
+
+#### `record_deal_outcome_event()` — PRODUCTION CORRECT
+
+**It returns `trigger`.** That is the whole answer, and it is why this one was
+never a risk. Its only caller is `on_deal_outcome_changed` on `public.deals`
+(`04_triggers.sql`), and **PostgreSQL does not check EXECUTE on a trigger
+function when a trigger fires it** — the writing role needs privileges on the
+TABLE. No direct caller exists anywhere: no `src/`, no Edge Function, no cron,
+no RPC wrapper.
+
+Proved rather than asserted, in the replayed clean room: acting **as**
+`service_role`, holding `has_function_privilege(...) = false`, an
+`update deals set outcome = 'lost', exit_reason = 'ghosted'` wrote **one**
+`deal_outcome_events` row with the right outcome and reason. The audit trail
+works with EXECUTE revoked from every client role — which is exactly how MAIN
+has run all along while Leif ends sales daily (§8, "A 403 from the database is
+not a logout").
+
+#### `materialize_application_responses(bigint)` — PRODUCTION CORRECT
+
+A directly-invokable RPC (`returns integer`), not a trigger. Called from
+exactly one place, and it is not a client: the historical backfill inside
+`20260919080000`, which runs as the migration role.
+
+**A previous slice already ruled on this one**, and the ruling stands.
+`20261010210000` says it verbatim: *"It names ONE signature and widens nothing
+else — `materialize_application_responses(bigint)` has the same divergence and
+is deliberately left alone, because nothing calls it."* So this is not a new
+product decision; it is the chain catching up with one already made.
+
+Proved in the clean room: a direct call as `service_role` is refused —
+`permission denied for function materialize_application_responses`.
+
+### Root cause: a list that was right and short
+
+`20260920120000` transcribed MAIN's hand-applied function hardening into the
+deterministic chain and told the truth about its own scope — it narrows *"the
+privileged five and nothing else"*:
+
+    merge_contacts_safely · record_external_identity · reconcile_sales_call_tasks
+    reconcile_application_review_tasks · seed_enrollment_onboarding
+
+Neither of these two is in it. They were tightened on MAIN by the same hand and
+never added to the transcription, so every clean room since has rebuilt them
+with `service_role` EXECUTE that MAIN does not grant. The only grant
+statements the chain ever ran for them —
+`revoke all ... from public, anon, authenticated` in `20260919070000` and
+`20260919180000` — never named `service_role`.
+
+This is category (C): **production became restrictive through a manual repair
+the chain failed to capture.** Not an accidental production loss, and not a
+clean-room bug; a gap in a transcription that was otherwise careful enough to
+state its own limits.
+
+### What changed, and what did not
+
+| | |
+|---|---|
+| production effective privileges | **unchanged** — both were already `postgres=X/postgres` |
+| production migration | **added** (`20261015120000`), a no-op on MAIN by construction |
+| function bodies | **untouched** |
+| PUBLIC · anon · authenticated | **unchanged** — already revoked, still revoked |
+| declarative source | `record_deal_outcome_event`'s revoke now names `service_role`; `materialize_application_responses` gains the revoke block it never had in `02_functions.sql` |
+| contract classification | `materialize_application_responses` moved **`serviceRoleOnly` → `internalOnly`**, because production grants `service_role` nothing and the old class said otherwise |
+
+**The contract was encoding stale replay state, not intent.** Its own
+definition of `serviceRoleOnly` is "executable by service_role"; production's
+function is executable by nobody but its owner, which is `internalOnly`. The
+clean-room test passed while contradicting production — the exact failure mode
+worth naming: *a passing test is not authority if it is pinned to the wrong
+database.*
+
+### Replay strategy, and why a migration at all
+
+Production needed no change, so one option was to touch nothing but the
+contract. That was rejected: the deterministic chain's promise is that a clean
+room **rebuilds MAIN's security posture from empty** (§8, Reliability Pass 1),
+and a clean room more permissive than MAIN for two SECURITY DEFINER functions
+is a hole in exactly that promise — `securityPosture.spec.ts` asserts posture
+against the clean room, so it could not have caught a regression here.
+
+So: a new deterministic corrective migration, revoking by identity (overload
+proof) and asserting the result, following `20260920120000`'s own precedent of
+statements that are "a no-op on MAIN". **Historical migrations were not
+rewritten.**
+
+### State preserved
+
+- declarative function parity: **CLOSED** (§8u)
+- §4b Phase 2C: **PRODUCTION ACCEPTED AND DORMANT** (§8u)
+- **Gmail: not started.**
+
 ## 8u. A delivered invitation becomes a sales cycle — PRODUCTION ACCEPTED AND DORMANT 2026-10-14
 
 §4b **Phase 2C**. One authoritative command,
@@ -8321,10 +8423,15 @@ memory).
 >    prerequisite, exactly as `supabase start` does. Not caused by the parity
 >    work; it just has never been exercised.
 >
-> One unrelated ACL item surfaced and was deliberately left alone:
-> `materialize_application_responses` and `record_deal_outcome_event` are
-> granted to `service_role` in the replayed clean room but **not** in
-> production, and the first is pinned `serviceRoleOnly`. See §8u.
+> **That ACL item is now RESOLVED** (§8v, migration `20261015120000` → **171**,
+> built not yet deployed). **Production was correct for both** and gains
+> nothing: `record_deal_outcome_event()` returns `trigger` and PostgreSQL does
+> not check EXECUTE when a trigger fires it, and
+> `materialize_application_responses(bigint)` has no caller outside a
+> historical migration — a ruling `20261010210000` had already made. The
+> migration is a **no-op on MAIN** that makes the chain reproduce MAIN's
+> posture, and the contract's `serviceRoleOnly` pin on the latter was stale
+> replay state, now `internalOnly`.
 
 **The waitlist invitation slice is COMPLETE and sealed.** 55 real invitations
 went out on 11 Oct — LE 25 (batch 1, preflight 9) and GYU 30 (batch 2,

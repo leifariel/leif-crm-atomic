@@ -1920,7 +1920,13 @@ $function$
 -- deal_outcome_events grants no role INSERT: an exit is recorded as a
 -- consequence of a Deal changing, never by a client asserting one. That is
 -- why the trigger is SECURITY DEFINER, and why nothing needs EXECUTE on it.
-revoke all on function public.record_deal_outcome_event() from public, anon, authenticated;
+-- service_role is named here too, which the original revoke
+-- (20260919180000) did not do. MAIN has held this function at
+-- postgres-only all along; the chain only caught up in 20261015120000.
+-- Its sole caller is the trigger on_deal_outcome_changed, and PostgreSQL
+-- does not check EXECUTE on a trigger function when a trigger fires it.
+revoke all on function public.record_deal_outcome_event()
+  from public, anon, authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.record_sales_call_reinstated(p_sales_call_id bigint)
  RETURNS jsonb
@@ -2343,6 +2349,15 @@ begin
 end;
 $function$
 ;
+
+-- No client role may call this. It is reached only from the historical
+-- backfill inside 20260919070000/20260919080000, which runs as the
+-- migration role. MAIN has held it at postgres-only by hand since then;
+-- 20261010210000 found the divergence and deliberately left production
+-- alone "because nothing calls it", and 20261015120000 finally brought the
+-- replay chain into line.
+revoke all on function public.materialize_application_responses(bigint)
+  from public, anon, authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.materialize_native_application_responses()
  RETURNS trigger
