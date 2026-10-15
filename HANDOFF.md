@@ -4429,14 +4429,68 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8v. The privileged five were seven — BUILT, NOT YET DEPLOYED (2026-10-15)
+## 8v. The privileged five were seven — PRODUCTION ACCEPTED 2026-10-15
 
 Two SECURITY DEFINER functions were more permissive in a replayed database
 than they have ever been on MAIN. **Production was the correct side for both,
-and neither gains any privilege here.** Migration `20261015120000` takes the
-chain to **171**; its effect on production is **nil**, because revoking an
-absent privilege is a no-op. What it fixes is the chain's ability to *reproduce*
-what MAIN already is.
+and neither gained any privilege.** Migration `20261015120000` took the chain
+to **171**; its effect on production was **nil**, because revoking an absent
+privilege is a no-op. What it fixed is the chain's ability to *reproduce* what
+MAIN already is.
+
+**Say it precisely: production's security posture was already correct. This
+migration makes deterministic replay reproduce that posture.** It did not
+tighten production, because there was nothing left to tighten.
+
+**CI: `✅ Check` GREEN on attempt 1** — e2e-test ✅ Typecheck ✅ Test ✅
+Build ✅ ESLint ✅ Prettier ✅. `🚀 Deploy` failed in the same two jobs as
+always — **13 consecutive runs** on main now show doc ✓ / demo ✗ /
+supabase ✗, the gh-pages push to the external mirrors (§8s has the full
+classification). The migration landed regardless, as it has every time. **No
+novel CI failure.**
+
+### Accepted against production, 2026-10-15
+
+Baseline read at **17:25:57 UTC** with production still at 170 and the
+migration unapplied; it landed at **17:27:13 UTC**.
+
+| | before | after |
+|---|---|---|
+| `materialize_application_responses(bigint)` proacl | `postgres=X/postgres` | `postgres=X/postgres` |
+| `record_deal_outcome_event()` proacl | `postgres=X/postgres` | `postgres=X/postgres` |
+| both: PUBLIC · anon · authenticated · service_role | false · false · false · false | false · false · false · false |
+
+**Effective production privileges: unchanged, as intended.** Migration applied
+**exactly once**, total **171**.
+
+**Bodies untouched, proved by hash rather than by eye** — `md5(pg_get_functiondef())`
+identical across the deploy:
+
+    materialize_application_responses   6017c08017fe8d6f8d2996b3f1f6f09e  (before and after)
+    record_deal_outcome_event           f3bf653df029bfed6a1c165b9922b319  (before and after)
+
+Signature, `RETURNS`, `LANGUAGE`, volatility, SECURITY mode and
+`search_path` all unchanged for both, and `on_deal_outcome_changed` is still
+attached to `public.deals`.
+
+**Replay authority repaired.** The clean room, rebuilt from empty at **145
+deterministic migrations** (171 total − 26 MAIN-only), now holds both at
+`postgres=X/postgres` with all four client roles false — **matching production
+exactly**, which is the whole point of the slice.
+
+**Zero business side effects.** Across the deploy window nothing was created
+(0 Opportunities · 0 applications · 0 Outreach rows · 0 waitlist entries · 0
+invitations · 0 Kit operations) and nothing mutated (0 `deals.updated_at` · 0
+`deal_outcome_events.recorded_at` · 0 `invited_at` · 0 `converted_at`). Every
+total identical to baseline: deals 203, outcomes 106, applications 198,
+outreach 0, waitlist 123, invitations 78, Kit operations 151, outcome events
+108. The only new row anywhere is the migration-history row.
+
+**Organic activity to keep separate:** between the Phase 2C acceptance read on
+14 Oct and this baseline, Leif used the CRM — deals 199 → 203, applications
+194 → 198, waitlist entries 121 → 123, Kit operations 142 → 151, invitations
+unchanged at 78. All of it **pre-dates** the 17:25:57 baseline, so none of it
+is inside the deploy window.
 
 ### Resolved separately, because they are different kinds of function
 
@@ -4525,10 +4579,46 @@ proof) and asserting the result, following `20260920120000`'s own precedent of
 statements that are "a no-op on MAIN". **Historical migrations were not
 rewritten.**
 
+### GMAIL DATABASE-AUTHORITY GATE — CLEAR
+
+A closure check against the known queue, not a new audit. Every
+database-authority finding raised across Phases 2A–2C and the two parity
+slices, with where it ended:
+
+| Finding | State | Where |
+|---|---|---|
+| Declarative **function** parity (10 live functions undeclared) | **CLOSED** — 107 live, 107 declared, nothing declared that is not live | §8u |
+| `delivery_method` declarative parity (`kit_tag` missing) | **CLOSED** — production and the declarative CHECK both `('manual','gmail','kit_tag')`, pinned by contract | §8t |
+| These two function **ACL** mismatches | **CLOSED** — production was authoritative; replay now reproduces it | §8v |
+| §4b Phase 2C convergence authority | **PRODUCTION ACCEPTED**, deployed body byte-identical, `service_role` EXECUTE only, **0 rows, dormant** | §8u |
+| `application_outreach` schedule authority | **PRODUCTION ACCEPTED** — `schedule_key` NOT NULL with no default, CHECKed, immutable in the guard | §8t |
+
+**No unresolved database-authority mismatch remains. Gmail is unblocked on the
+database side.**
+
+#### One classified non-blocker, named so nobody rediscovers it as a surprise
+
+The production-vs-clean-room catalog comparison in §8u found **49 further
+ACL-shape differences** beyond the two repaired here. They are **equal in
+effect**: production holds `proacl = NULL`, Postgres's built-in default, which
+*is* EXECUTE to PUBLIC; the clean room holds an explicit PUBLIC grant plus
+redundant named roles. PUBLIC may execute on both sides, so every client role
+can execute on both sides. Nothing is more permissive anywhere.
+
+It is **not** an authority mismatch and does not block Gmail. It would become
+one the day somebody revokes PUBLIC in production without adding the same
+revoke to the chain — the exact shape of the bug §8v just fixed for two
+functions. Mostly trigger functions, which PostgREST does not expose; the most
+notable is `rebuild_expected_sessions_on_start_change`. Worth a hygiene slice
+of its own, on its own evidence.
+
 ### State preserved
 
 - declarative function parity: **CLOSED** (§8u)
+- `delivery_method` parity: **CLOSED** (§8t)
 - §4b Phase 2C: **PRODUCTION ACCEPTED AND DORMANT** (§8u)
+- `application_outreach_v1` schedule authority: **PRODUCTION ACCEPTED** (§8t)
+- migration **171** deployed · deterministic chain **145** · MAIN-only **26**
 - **Gmail: not started.**
 
 ## 8u. A delivered invitation becomes a sales cycle — PRODUCTION ACCEPTED AND DORMANT 2026-10-14
@@ -8394,8 +8484,17 @@ The next Claude session should, in order:
 8. **Surface disagreements rather than silently resolving them.**
 9. **STOP before implementation and report readiness.**
 
-**The exact next action as of 2026-10-14:** `origin/main` = `f410f0c9`,
-production at **170 migrations**, nothing unpushed. Phase 2 work happens in the
+**The exact next action as of 2026-10-15:** `origin/main` = `a3ba6d3c`,
+production at **171 migrations**, nothing unpushed.
+
+> **THE GMAIL DATABASE-AUTHORITY GATE IS CLEAR** (§8v). Every known
+> database-authority finding from Phases 2A–2C and the parity slices is closed:
+> declarative function parity (§8u), `delivery_method` parity (§8t), the two
+> function ACL mismatches (§8v), Phase 2C's convergence authority (§8u) and the
+> `application_outreach_v1` schedule authority (§8t). **Gmail is the next
+> slice.** One classified non-blocker is named in §8v — 49 ACL-shape
+> differences that are equal in effect — so it is not rediscovered as a
+> surprise. Phase 2 work happens in the
 stable worktree `/Users/NatashaMKraus/Projects/leif-crm-phase2` on branch
 `phase2a0-waitlist-conversion` — **not** under `/tmp`, which purged tracked
 files four times in one session (§8s, and the `tmp-worktree-files-can-vanish`
@@ -8423,15 +8522,17 @@ memory).
 >    prerequisite, exactly as `supabase start` does. Not caused by the parity
 >    work; it just has never been exercised.
 >
-> **That ACL item is now RESOLVED** (§8v, migration `20261015120000` → **171**,
-> built not yet deployed). **Production was correct for both** and gains
-> nothing: `record_deal_outcome_event()` returns `trigger` and PostgreSQL does
-> not check EXECUTE when a trigger fires it, and
-> `materialize_application_responses(bigint)` has no caller outside a
-> historical migration — a ruling `20261010210000` had already made. The
-> migration is a **no-op on MAIN** that makes the chain reproduce MAIN's
-> posture, and the contract's `serviceRoleOnly` pin on the latter was stale
-> replay state, now `internalOnly`.
+> **That ACL item is RESOLVED and PRODUCTION ACCEPTED** (§8v, migration
+> `20261015120000`, production at **171**). **Production was correct for both
+> and gained nothing** — effective privileges identical before and after, both
+> `postgres=X/postgres` with all four client roles false, and both function
+> bodies hash-identical across the deploy. `record_deal_outcome_event()`
+> returns `trigger` and PostgreSQL does not check EXECUTE when a trigger fires
+> it; `materialize_application_responses(bigint)` has **0** live runtime
+> callers, a ruling `20261010210000` had already made. The migration is a
+> **no-op on MAIN** that makes the chain reproduce MAIN's posture, and the
+> contract's `serviceRoleOnly` pin on the latter was stale replay state, now
+> `internalOnly`.
 
 **The waitlist invitation slice is COMPLETE and sealed.** 55 real invitations
 went out on 11 Oct — LE 25 (batch 1, preflight 9) and GYU 30 (batch 2,
