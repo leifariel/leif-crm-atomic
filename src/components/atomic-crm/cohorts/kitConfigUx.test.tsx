@@ -193,6 +193,12 @@ describe("Cohort Edit — Kit configuration", () => {
 
     await expect.element(screen.getByRole("dialog")).toBeVisible();
     await expect.element(screen.getByText("Choose Kit tag")).toBeVisible();
+    // The catalog arrives AFTER the dialog: until it does the box reads
+    // "Loading your Kit tags…", so wait for a real tag before reading the
+    // dialog's text synchronously.
+    await expect
+      .element(screen.getByRole("button", { name: "GYU_Cohort2" }))
+      .toBeVisible();
     // Now — and only now — the real catalog and its search are present.
     const dialog = document.querySelector("[role='dialog']");
     expect(dialog?.textContent ?? "").toContain("GYU_Cohort2");
@@ -205,9 +211,19 @@ describe("Cohort Edit — Kit configuration", () => {
     await page.viewport(1280, 1000);
     const screen = await render(build("/cohorts/3"));
 
+    // The Choose button only exists once the cohort has loaded; clicking
+    // before then clicked nothing and the dialog never opened.
+    await expect
+      .element(screen.getByRole("button", { name: "Choose" }))
+      .toBeVisible();
     await screen.getByRole("button", { name: "Choose" }).click();
     await expect.element(screen.getByRole("dialog")).toBeVisible();
 
+    // Searching before the catalog has loaded filters an empty list, and the
+    // result never appears.
+    await expect
+      .element(screen.getByRole("button", { name: "GYU_Cohort2" }))
+      .toBeVisible();
     await screen.getByPlaceholder("Search your Kit tags").fill("Cohort2");
     await expect
       .element(screen.getByRole("button", { name: "GYU_Cohort2" }))
@@ -265,6 +281,10 @@ describe("Program Edit — Kit automation", () => {
     await expect
       .element(screen.getByText("Kit automation", { exact: true }))
       .toBeVisible();
+    // Gate on a MAPPING, not on the box title: the title is also the
+    // placeholder's title, so it cannot distinguish "loaded" from "still
+    // loading".
+    await expect.element(screen.getByText("GYU-Applicant")).toBeVisible();
     expect(document.body.textContent ?? "").toContain("GYU-Applicant");
     expect(document.body.textContent ?? "").toContain("GYU-Approved");
     // Unmapped events say so rather than being guessed at.
@@ -290,6 +310,11 @@ describe("Program Edit — Kit automation", () => {
     await expect
       .element(screen.getByText("Kit automation", { exact: true }))
       .toBeVisible();
+    // A "Change" button exists only once a mapping is loaded; clicking before
+    // then clicked nothing.
+    await expect
+      .element(screen.getByRole("button", { name: "Change" }).first())
+      .toBeVisible();
     await screen.getByRole("button", { name: "Change" }).first().click();
 
     await expect.element(screen.getByRole("dialog")).toBeVisible();
@@ -305,8 +330,10 @@ describe("Program Edit — Kit automation", () => {
     await page.viewport(1280, 1000);
     const screen = await render(build("/offers/2", []));
 
+    // Await the sentence itself rather than the box that may or may not yet
+    // contain it.
     await expect
-      .element(screen.getByText("Kit automation", { exact: true }))
+      .element(screen.getByText("Changes apply to future Kit actions"))
       .toBeVisible();
     expect(document.body.textContent ?? "").toContain(
       "Changes apply to future Kit actions",
