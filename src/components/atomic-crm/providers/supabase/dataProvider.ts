@@ -335,6 +335,7 @@ const getDataProviderWithCustomMethods = () => {
       ownerDecision: string;
       prospectDecision?: string | null;
       followUpDate?: string | null;
+      impressions?: string | null;
     }) {
       const { data, error } = await getSupabaseClient().rpc(
         "complete_attended_sales_call",
@@ -343,6 +344,9 @@ const getDataProviderWithCustomMethods = () => {
           p_owner_decision: input.ownerDecision,
           p_prospect_decision: input.prospectDecision ?? null,
           p_follow_up_date: input.followUpDate || null,
+          // Blank means "unchanged", never "erase what he wrote"; the RPC
+          // normalises it and only writes a non-empty value.
+          p_impressions: input.impressions || null,
         },
       );
       if (error) {

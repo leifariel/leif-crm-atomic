@@ -23,7 +23,12 @@ export type AttendedOutcomeInput = {
   ownerDecision: string;
   prospectDecision?: string | null;
   followUpDate?: string | null;
+  impressions?: string | null;
 };
+
+/** Blank is "unchanged", never "erase": the RPC normalises it the same way. */
+const trimmedImpressions = (input: AttendedOutcomeInput): string | null =>
+  (input.impressions ?? "").trim() || null;
 
 export const completeAttendedSalesCallMirror = async (
   dataProvider: DataProvider,
@@ -97,7 +102,17 @@ export const completeAttendedSalesCallMirror = async (
         attendance: "attended",
         attendance_recorded_at: now,
         status: "completed",
+        impressions: trimmedImpressions(input),
       },
+      previousData: call,
+    });
+  } else if (trimmedImpressions(input) !== null) {
+    // A converging replay may ADD an impression the first pass did not. It
+    // may never erase one — blank means "unchanged", not "delete what he
+    // wrote". Mirrors complete_attended_sales_call() exactly.
+    await dataProvider.update<SalesCall>("sales_calls", {
+      id: call.id,
+      data: { impressions: trimmedImpressions(input) },
       previousData: call,
     });
   }

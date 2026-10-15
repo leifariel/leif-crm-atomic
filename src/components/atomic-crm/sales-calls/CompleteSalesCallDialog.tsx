@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 
 import {
@@ -90,6 +91,7 @@ export const CompleteSalesCallDialog = ({
   const [prospectDecision, setProspectDecision] =
     useState<OpportunityProspectDecision | null>(null);
   const [followUpDate, setFollowUpDate] = useState<string>("");
+  const [impressions, setImpressions] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const reset = () => {
@@ -147,6 +149,7 @@ export const CompleteSalesCallDialog = ({
         ownerDecision,
         prospectDecision,
         followUpDate: prospectDecision === "thinking" ? followUpDate : null,
+        impressions,
       });
 
       if (result.status === "completed") {
@@ -344,6 +347,27 @@ export const CompleteSalesCallDialog = ({
                       />
                     </div>
                   )}
+
+                  {/* Optional, and last: the decision is what the call is
+                      for, and this is what Leif remembers about it. Part of
+                      the SAME single action — there is no second save. */}
+                  <div className="flex flex-col gap-2 mt-4">
+                    <Label
+                      htmlFor="sales-call-impressions"
+                      className="text-sm font-medium"
+                    >
+                      {translate("resources.deals.sales_call.impressions", {
+                        _: "Impressions (optional)",
+                      })}
+                    </Label>
+                    <Textarea
+                      id="sales-call-impressions"
+                      rows={3}
+                      value={impressions}
+                      placeholder="What you made of the call"
+                      onChange={(event) => setImpressions(event.target.value)}
+                    />
+                  </div>
                 </div>
               )}
             </fieldset>

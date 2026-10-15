@@ -34,6 +34,12 @@ export type CompleteSalesCallOutcomeInput = {
   // protects a non-UI caller, e.g. a test or a future Acuity-adjacent
   // automation, from an ambiguous write).
   followUpDate?: string | null;
+  /**
+   * Optional. Joins the SAME transaction as the rest of the outcome rather
+   * than getting a save of its own -- a second request is how you end up
+   * with a call whose decision landed and whose impression did not.
+   */
+  impressions?: string | null;
 };
 
 export type CompleteSalesCallOutcomeResult =
@@ -70,6 +76,7 @@ type TransactionalProvider = DataProvider & {
     ownerDecision: string;
     prospectDecision?: string | null;
     followUpDate?: string | null;
+    impressions?: string | null;
   }) => Promise<Record<string, unknown>>;
 };
 
@@ -106,6 +113,7 @@ export const completeSalesCallOutcome = async (
       ownerDecision: input.ownerDecision,
       prospectDecision: input.prospectDecision ?? null,
       followUpDate: input.followUpDate ?? null,
+      impressions: input.impressions ?? null,
     });
     const status = result.status as CompleteSalesCallOutcomeResult["status"];
     if (status === "validation-error") {

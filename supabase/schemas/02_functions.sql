@@ -3189,7 +3189,7 @@ begin
 end;
 $$;
 
-CREATE OR REPLACE FUNCTION "public"."complete_attended_sales_call"("p_sales_call_id" bigint, "p_owner_decision" "text", "p_prospect_decision" "text" DEFAULT NULL::"text", "p_follow_up_date" "date" DEFAULT NULL::"date") RETURNS "jsonb"
+CREATE OR REPLACE FUNCTION "public"."complete_attended_sales_call"("p_sales_call_id" bigint, "p_owner_decision" "text", "p_prospect_decision" "text" DEFAULT NULL::"text", "p_follow_up_date" "date" DEFAULT NULL::"date", "p_impressions" "text" DEFAULT NULL::"text") RETURNS "jsonb"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
     AS $$
@@ -3200,6 +3200,11 @@ declare
   v_sale jsonb;
   v_follow_up date;
   v_converged boolean := false;
+  -- btrim() with no character set trims SPACES ONLY -- a value of just a
+  -- newline survived it and got stored, while the fakerest mirror's JS
+  -- .trim() stripped it. The two runtimes disagreed until a real-Postgres
+  -- test caught it, so the whitespace set is named explicitly.
+  v_impressions text := nullif(btrim(coalesce(p_impressions, ''), E' \t\r\n'), '');
 begin
   select * into v_call from sales_calls where id = p_sales_call_id for update;
   if not found then
@@ -3235,6 +3240,9 @@ begin
        set attendance = 'attended',
            attendance_recorded_at = v_now,
            status = 'completed',
+           -- Blank stays blank; it erases nothing, because there is nothing
+           -- yet to erase.
+           impressions = v_impressions,
            updated_at = v_now
      where id = v_call.id;
   else
@@ -3253,6 +3261,17 @@ begin
        and v_deal.prospect_decision is distinct from p_prospect_decision then
       return jsonb_build_object('status', 'conflicting-outcome',
         'reason', format('This call was already recorded as "%s".', v_deal.prospect_decision));
+    end if;
+
+    -- A converging replay may carry an impression the first pass did not. It
+    -- may NEVER erase one: an omitted or blank value means "unchanged", not
+    -- "delete what he wrote". Clearing one deliberately is Part 2's
+    -- correction path, which does not exist yet.
+    if v_impressions is not null then
+      update sales_calls
+         set impressions = v_impressions,
+             updated_at = v_now
+       where id = v_call.id;
     end if;
   end if;
 
@@ -3302,6 +3321,7 @@ begin
   end if;
 
   select * into v_deal from deals where id = v_deal.id;
+  select * into v_call from sales_calls where id = v_call.id;
 
   return jsonb_build_object(
     'status', case when v_converged then 'converged' else 'completed' end,
@@ -3310,6 +3330,7 @@ begin
     'stage', v_deal.stage,
     'outcome', v_deal.outcome,
     'follow_up_date', v_follow_up,
+    'impressions', v_call.impressions,
     'enrollments', (select count(*) from enrollments where opportunity_id = v_deal.id)
   );
 end;

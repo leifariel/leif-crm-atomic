@@ -26,11 +26,18 @@ import {
 //     book, and the freshest approval is the one most likely to convert.
 //
 //   Call Booked
-//     The next genuine booked call FIRST, farthest LAST — Leif's stated
-//     requirement. A call whose time has passed and was never resolved
-//     sorts BELOW every future booking rather than above them: it is
-//     unfinished admin, not the next thing happening. An Opportunity in
-//     this stage with no booked call at all sorts last of all.
+//     PASSED AND UNRESOLVED FIRST, most recently passed at the top. Then
+//     future bookings, nearest first. Then anything with no usable time.
+//
+//     This REVERSES the earlier rule, which put future bookings above
+//     passed ones on the reasoning that a passed call is "unfinished
+//     admin, not the next thing happening". Leif overturned it: a call
+//     that has already happened and that nobody has written up is the
+//     thing actually owed, and the most recent one is freshest in his
+//     memory — which is why it sorts to the very top rather than the
+//     bottom of its band. A future booking needs nothing from him yet.
+//     The old order and its tests are gone deliberately; see
+//     pipelineOrdering.test.ts.
 //
 //   Decision
 //     What still needs a decision, in four bands: overdue follow-ups
@@ -101,22 +108,44 @@ export const inconsistentCallBookedDeals = (
     (deal) => deal.stage === "call_booked" && !nextCallAt.has(String(deal.id)),
   );
 
+const PASSED_UNRESOLVED = 0;
+const FUTURE_BOOKING = 1;
+const NO_USABLE_TIME = 2;
+
 const nextCallFirst =
   (nextCallAt: Map<string, string>, now: number) =>
   (a: Deal, b: Deal): number => {
-    // Three bands, in this order: future bookings (soonest first), past
-    // unresolved bookings (soonest first), then no booking at all — which
-    // in this column means the card is inconsistent with its own stage.
+    // Three bands:
+    //
+    //   0  passed and unresolved — the call happened and nobody has said
+    //      what came of it. MOST RECENTLY PASSED FIRST (descending), so the
+    //      one still fresh in Leif's memory is the one at the top.
+    //   1  future bookings — NEAREST FIRST (ascending).
+    //   2  no usable time at all. In this column that means the card is
+    //      inconsistent with its own stage: the stage asserts a call is in
+    //      the calendar and there isn't one. Deterministically last, never
+    //      interleaved with real calls.
     const rank = (deal: Deal): { band: number; at: string } => {
       const at = nextCallAt.get(String(deal.id));
-      if (!at) return { band: 2, at: "" };
-      return { band: new Date(at).getTime() >= now ? 0 : 1, at };
+      if (!at) return { band: NO_USABLE_TIME, at: "" };
+      return {
+        band:
+          new Date(at).getTime() >= now ? FUTURE_BOOKING : PASSED_UNRESOLVED,
+        at,
+      };
     };
 
     const ra = rank(a);
     const rb = rank(b);
     if (ra.band !== rb.band) return ra.band - rb.band;
-    if (ra.at !== rb.at) return ra.at.localeCompare(rb.at);
+    if (ra.at !== rb.at) {
+      // Descending inside the passed band, ascending inside the future one.
+      return ra.band === PASSED_UNRESOLVED
+        ? rb.at.localeCompare(ra.at)
+        : ra.at.localeCompare(rb.at);
+    }
+    // Band 2 has no time to compare, and equal times anywhere fall through
+    // to the same stable tie-break every column uses.
     return byIdDescending(a, b);
   };
 
@@ -238,7 +267,7 @@ export const ORDERING_RULE_LABELS: Record<string, string> = {
   interested: "Newest first",
   application_received: "Newest first",
   approved: "Newest first",
-  call_booked: "Next call first",
+  call_booked: "Unwritten-up calls first, then next call",
   decision: "Needs action first",
   onboarding: "Waiting longest first",
 };

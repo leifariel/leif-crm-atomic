@@ -4429,6 +4429,151 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8w. What he made of them — SALES CALL WORKFLOW PART 1, BUILT NOT YET DEPLOYED (2026-10-15)
+
+Four things the sales-call lifecycle was missing. **Most of it already
+existed** — the audit mattered more than the build here, because roughly half
+of what was asked for was already shipped and one canonical rule contradicted
+it.
+
+### The authority is ONE RESULT PER SALES-CALL EPISODE, not per Opportunity
+
+Ruled by Leif, 2026-10-15, and it is the load-bearing decision of this slice.
+**Rebooking is a real supported workflow**, so an Opportunity may legitimately
+carry several completed calls — production holds **20 that do**, and they are
+not corruption. `sales_calls_one_booked_per_opportunity_idx` is a partial
+unique index on `status = 'booked'` precisely so a concluded call can leave
+`booked` and a genuine rebooking can be inserted.
+
+Everything this slice adds is therefore per EPISODE. What Leif made of
+somebody in September is not what he made of them in November, and putting
+that on the Opportunity would have overwritten the first conversation with the
+second.
+
+### What already existed, and was left alone
+
+| Need | Authority that already held it |
+|---|---|
+| attendance | `sales_calls.attendance` (`attended`/`no_show`) + `attendance_recorded_at`, which the schema says is "always a human/CRM action, never inferred from Acuity" |
+| would-work-with | `deals.owner_decision` (`would_work_with`/`workshops_only`/`do_not_engage`) — already separate from `deals.prospect_decision` (`yes`/`thinking`/`no`), so fit and purchase were never conflated |
+| Decision follow-up date | **`deals.follow_up_date`**, already durable sales truth. `pipelineOrdering.ts` calls it "the only source… there is deliberately no second follow-up date to disagree with it" |
+| atomic completion | `complete_attended_sales_call()` — SECURITY DEFINER, row-locks the call AND the deal `FOR UPDATE`, writes the call, the decisions, the `sales_call_events` row and the task reconciliation in one transaction |
+| audit history | `sales_call_events` (`booked`, `attendance_recorded`, `opportunity_attached`, `cancelled`, `rescheduled`) |
+
+**No new Decision date field was created**, and no second audit framework.
+
+### 1. Impressions — `sales_calls.impressions`
+
+Nullable text, on the call episode. Joins the EXISTING atomic completion path
+as a fifth parameter rather than getting a save of its own, because a second
+request is how you end up with a call whose decision landed and whose
+impression did not.
+
+**Blank means UNCHANGED, never "erase".** A converging replay may ADD an
+impression the first pass did not; it may never delete one. Clearing one
+deliberately belongs to Part 2's correction path, which does not exist yet.
+
+**A real bug the real-Postgres test caught:** `btrim()` with no character set
+trims **spaces only**, so an impression of just a newline survived
+normalisation and was stored — while the fakerest mirror's JS `.trim()`
+stripped it. The two runtimes disagreed. The whitespace set is now named
+explicitly (`E' \t\r\n'`) in both.
+
+**Not backfilled.** 176 completed calls exist and **135 record no attendance at
+all** because they predate that field. A historical call without an impression
+is a fact, not a gap — and **no NOT NULL was imposed on either column**, which
+a regression proves by writing a row in exactly the shape history is in.
+
+### 2. "Call passed" — read model only
+
+A Call Booked Opportunity qualifies when it has a **knowable** scheduled time,
+that time is **past**, and the call episode is **still `booked` with no
+attendance recorded**.
+
+**It mutates nothing.** Not the call, not the deal, not a task, not attendance,
+not the stage. **A passed call is NOT a no-show** — a no-show is something Leif
+observed and recorded; this is only the CRM noticing that nobody has told it
+anything yet. The badge disappears by itself once the call is completed or
+cancelled, because the call stops being `booked`. A date-only historical call
+counts as passed once its day is over, because `callInstant()` places it at
+23:59 of its own day rather than inventing midnight.
+
+### 3. Call Booked ordering — REVERSED on Leif's ruling
+
+    band 0   passed and unresolved   scheduled_at DESC  (most recently passed first)
+    band 1   future bookings         scheduled_at ASC   (nearest first)
+    band 2   no usable timestamp     id DESC            (deterministic, always last)
+
+**This overturns shipped, tested, production-accepted behaviour.** The previous
+rule put future bookings first and called a passed call "unfinished admin, not
+the next thing happening". Leif's ruling is the opposite: a call that has
+happened and that nobody has written up is the thing actually owed, and the
+most recent one is freshest in his memory — so it goes to the very top of its
+band rather than the bottom. The two tests that encoded future-first were
+**rewritten rather than deleted**, so the reversal is visible in history.
+
+Band 2 is deliberately id-descending and never interleaved: production holds
+**3 active Call Booked Opportunities with no booked call at all**, and an
+inconsistent card must not take a position that looks like a legitimate order.
+
+### 4. The Decision follow-up date on the card
+
+The pipeline Decision card now shows `deals.follow_up_date` directly — it had
+only ever appeared on the Dashboard's `PeopleDeciding` widget. Three states:
+**overdue** (red), **today** ("Follow up today", amber), **future**
+("Decision due <date>", muted).
+
+The band comes from `followUpBand()` — **the same function the column sorts
+by**, so a card can never disagree with its own position. Deliberately NOT read
+from the follow-up Task: the Task projects this date, it does not own it.
+
+**Rendered only while the lifecycle context is Decision.** Production holds
+**one active non-Decision Opportunity still carrying a `follow_up_date`, and
+presenting that as a live commitment would be a lie about where that person is.
+
+**A date passing changes the words on the card and nothing else.** It does not
+move the stage.
+
+### The clock is not a lifecycle authority — audited, not assumed
+
+No clock-gated stage write exists anywhere. Grep found no `scheduled_at < now()`
+driving a stage mutation, and the one scheduled reconciler,
+`reconcile_sales_call_tasks()` (pg_cron), writes **`tasks` only — zero writes
+to `deals` or `stage`**, verified against the deployed function body.
+
+### Production findings, deliberately NOT repaired here
+
+All read-only, all recorded for the Health Sweep:
+
+| Finding | Count |
+|---|---|
+| active Call Booked with **no booked call at all** | **3** |
+| active non-Decision Opportunity carrying `follow_up_date` | **1** |
+| completed calls with `attendance = NULL` | **135** of 176 |
+| Opportunities with more than one completed call | **20** (valid — rebooking) |
+| attended call whose deal has no `owner_decision` | 1 |
+| active `decision` Opportunities | **0** — the Decision card has no current production subject |
+
+### PART 2 IS STILL REQUIRED
+
+**Correcting a completed call does not exist**, and the database actively
+refuses it: re-completion with different values returns `conflicting-outcome`.
+Part 2 must edit the SAME episode, preserve its audit history, create no second
+contradictory result, never touch another rebooked episode, reconcile derived
+tasks idempotently, and **refuse** externally consequential reversals
+(enrollment, onboarding, payment) rather than guessing.
+
+### GMAIL REMAINS BLOCKED
+
+The sequence, unchanged:
+
+1. Sales Call Workflow **Part 1** → production acceptance
+2. Sales Call Workflow **Part 2** (correction) → production acceptance
+3. **FULL CRM Integration Readiness / Health Sweep**
+4. Repair every **REPAIR BEFORE GMAIL** finding
+5. Re-run the gate until clear
+6. **Then** Gmail / Communication Events
+
 ## 8v. The privileged five were seven — PRODUCTION ACCEPTED 2026-10-15
 
 Two SECURITY DEFINER functions were more permissive in a replayed database
@@ -8487,7 +8632,16 @@ The next Claude session should, in order:
 **The exact next action as of 2026-10-15:** `origin/main` = `a3ba6d3c`,
 production at **171 migrations**, nothing unpushed.
 
-> **THE GMAIL DATABASE-AUTHORITY GATE IS CLEAR** (§8v). Every known
+> **GMAIL IS NOT NEXT.** The sequence Leif set on 2026-10-15: Sales Call
+> Workflow **Part 1** (§8w, built — impressions, "Call passed", the reversed
+> Call Booked ordering, the Decision date on the card) → production
+> acceptance → **Part 2**, the completed-call correction command, which does
+> not exist and which the database currently refuses → production acceptance →
+> **the FULL CRM Integration Readiness / Health Sweep** → repair every REPAIR
+> BEFORE GMAIL finding → re-run the gate clear → **then** Gmail.
+>
+> **THE GMAIL DATABASE-AUTHORITY GATE IS CLEAR** (§8v) — that gate was about
+> database authority only, and it says nothing about the sweep above. Every known
 > database-authority finding from Phases 2A–2C and the parity slices is closed:
 > declarative function parity (§8u), `delivery_method` parity (§8t), the two
 > function ACL mismatches (§8v), Phase 2C's convergence authority (§8u) and the

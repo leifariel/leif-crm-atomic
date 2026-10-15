@@ -950,6 +950,13 @@ create table public.sales_calls (
     -- attendance.
     attendance text,
     attendance_recorded_at timestamp with time zone,
+    -- Optional free text: what Leif made of THIS call. Per call episode,
+    -- never per Opportunity -- rebooking is a supported workflow and what he
+    -- made of somebody in September is not what he made of them in November.
+    -- Nullable and never backfilled: a historical call without one is a fact,
+    -- not a gap. Written through complete_attended_sales_call() in the same
+    -- transaction as the rest of the outcome.
+    impressions text,
     source text not null default 'manual',
     acuity_appointment_id text,
     acuity_appointment_type_id text,

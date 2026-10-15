@@ -498,6 +498,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/sales-calls/callPassed.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/sales-calls/bookSalesCall.ts",
           "type": "registry:component"
         },

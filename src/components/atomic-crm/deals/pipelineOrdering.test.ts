@@ -64,7 +64,17 @@ const order = (
     )
     .map((d) => Number(d.id));
 
-describe("Call Booked — next call first", () => {
+// CANONICAL ORDER (Leif, 2026-10-15), which REVERSES what this file used to
+// assert. A call that has already happened and that nobody has written up is
+// the thing actually owed; a future booking needs nothing from him yet. So:
+//
+//   band 0  passed and unresolved — MOST RECENTLY passed first
+//   band 1  future bookings       — NEAREST first
+//   band 2  no usable time        — deterministically last
+//
+// The two expectations that encoded future-first are rewritten below rather
+// than deleted, so the reversal is visible in the history.
+describe("Call Booked — unwritten-up calls first, then the next one", () => {
   it("orders nearest upcoming call to farthest", () => {
     const deals = [deal({ id: 1 }), deal({ id: 2 }), deal({ id: 3 })];
     const calls = [
@@ -76,15 +86,71 @@ describe("Call Booked — next call first", () => {
     expect(order("call_booked", deals, calls)).toEqual([2, 3, 1]);
   });
 
-  // The defect this rule exists to remove.
-  it("sorts a past unresolved call BELOW every future booking", () => {
+  // E. Was asserted the other way round until 2026-10-15. The old rule
+  // called a passed call "unfinished admin, not the next thing happening";
+  // Leif's ruling is that it is precisely the thing owed.
+  it("sorts a past unresolved call ABOVE every future booking", () => {
     const deals = [deal({ id: 1 }), deal({ id: 2 })];
     const calls = [
       call(1, "2026-07-07T17:00:00.000Z"), // long past, never resolved
       call(2, "2026-10-16T17:00:00.000Z"), // future
     ];
 
-    expect(order("call_booked", deals, calls)).toEqual([2, 1]);
+    expect(order("call_booked", deals, calls)).toEqual([1, 2]);
+  });
+
+  // F. Within the passed band the direction is DESCENDING, which is the
+  // opposite of every other band in this file: the call Leif can still
+  // remember is the one worth asking about first.
+  it("sorts two passed unresolved calls most-recently-passed first", () => {
+    const deals = [deal({ id: 1 }), deal({ id: 2 }), deal({ id: 3 })];
+    const calls = [
+      call(1, "2026-07-07T17:00:00.000Z"), // passed long ago
+      call(2, "2026-09-17T17:00:00.000Z"), // passed yesterday
+      call(3, "2026-08-20T17:00:00.000Z"), // passed last month
+    ];
+
+    expect(order("call_booked", deals, calls)).toEqual([2, 3, 1]);
+  });
+
+  // G + H together: the three bands in one board, which is the only way to
+  // see that they compose.
+  it("puts passed first, then future nearest-first, then no-time last", () => {
+    const deals = [
+      deal({ id: 1 }),
+      deal({ id: 2 }),
+      deal({ id: 3 }),
+      deal({ id: 4 }),
+      deal({ id: 5 }),
+    ];
+    const calls = [
+      call(1, "2026-10-16T17:00:00.000Z"), // future, far
+      call(2, "2026-09-17T17:00:00.000Z"), // passed yesterday
+      call(3, "2026-09-19T09:00:00.000Z"), // future, nearest
+      call(4, "2026-07-07T17:00:00.000Z"), // passed long ago
+      // 5 has no booked call at all.
+    ];
+
+    expect(order("call_booked", deals, calls)).toEqual([2, 4, 3, 1, 5]);
+  });
+
+  // H. Two inconsistent records must not interleave with real calls, and
+  // must not depend on the order they happened to arrive in.
+  it("orders no-time records deterministically after every timed call", () => {
+    const deals = [deal({ id: 7 }), deal({ id: 9 }), deal({ id: 8 })];
+    const calls = [call(8, "2026-09-17T17:00:00.000Z")];
+
+    // 8 has the only call. 7 and 9 have none, and fall to the stable
+    // id-descending tie-break every column shares.
+    expect(order("call_booked", deals, calls)).toEqual([8, 9, 7]);
+    // And the same input in a different arrival order gives the same answer.
+    expect(
+      order(
+        "call_booked",
+        [deal({ id: 9 }), deal({ id: 7 }), deal({ id: 8 })],
+        calls,
+      ),
+    ).toEqual([8, 9, 7]);
   });
 
   it("puts an Opportunity with no booked call last of all", () => {
@@ -94,7 +160,9 @@ describe("Call Booked — next call first", () => {
       call(1, "2026-07-07T17:00:00.000Z"),
     ];
 
-    expect(order("call_booked", deals, calls)).toEqual([3, 1, 2]);
+    // Rewritten for the reversal: 1's call passed, so it now leads 3's
+    // future booking. 2 still has no call and still sorts last.
+    expect(order("call_booked", deals, calls)).toEqual([1, 3, 2]);
   });
 
   it("ignores cancelled calls when deciding what is next", () => {

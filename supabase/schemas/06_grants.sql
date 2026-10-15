@@ -779,10 +779,10 @@ revoke all on function public.ensure_sale_enrollment(bigint) from anon;
 revoke all on function public.ensure_sale_enrollment(bigint) from authenticated;
 revoke all on function public.ensure_sale_enrollment(bigint) from service_role;
 
-revoke all on function public.complete_attended_sales_call(bigint, text, text, date) from public;
-revoke all on function public.complete_attended_sales_call(bigint, text, text, date) from anon;
-grant execute on function public.complete_attended_sales_call(bigint, text, text, date) to authenticated;
-grant execute on function public.complete_attended_sales_call(bigint, text, text, date) to service_role;
+revoke all on function public.complete_attended_sales_call(bigint, text, text, date, text) from public;
+revoke all on function public.complete_attended_sales_call(bigint, text, text, date, text) from anon;
+grant execute on function public.complete_attended_sales_call(bigint, text, text, date, text) to authenticated;
+grant execute on function public.complete_attended_sales_call(bigint, text, text, date, text) to service_role;
 
 revoke all on function public.record_prospect_accepted(bigint) from public;
 revoke all on function public.record_prospect_accepted(bigint) from anon;

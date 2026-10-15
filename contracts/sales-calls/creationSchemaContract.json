@@ -37,6 +37,7 @@
     "dismissal_reason",
     "dismissed_at",
     "id",
+    "impressions",
     "last_rescheduled_at",
     "opportunity_id",
     "original_scheduled_at",

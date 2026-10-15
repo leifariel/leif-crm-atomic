@@ -787,6 +787,11 @@ export type SalesCall = {
   // (Acuity's own no-show flag requires an admin to set it there too).
   attendance?: SalesCallAttendance | null;
   attendance_recorded_at?: string | null;
+  // Optional free text: what Leif made of THIS call. Per episode, never per
+  // Opportunity — a rebooked call is a different conversation. Written in the
+  // same transaction as the rest of the outcome by
+  // complete_attended_sales_call(); never backfilled, so null on history.
+  impressions?: string | null;
   source: SalesCallSource;
   acuity_appointment_id?: string | null;
   acuity_appointment_type_id?: string | null;

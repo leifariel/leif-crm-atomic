@@ -3,6 +3,7 @@ import { render } from "vitest-browser-react";
 
 import { buildContact, StoryWrapper } from "@/test/StoryWrapper";
 import type { Deal, Offer, SalesCall } from "@/components/atomic-crm/types";
+import { crmDayKey } from "./pipelineOrdering";
 
 // Go-Live Blocker: Sales-Call No-Show/Rebooking slice — the smallest
 // useful Kanban-visibility fix: a Call Booked card whose latest Sales
@@ -167,5 +168,152 @@ describe("DealCard — Sales-Call No-Show badge", () => {
 
     await expect.element(screen.getByText("Ada Lovelace")).toBeInTheDocument();
     await expect.element(screen.getByText("No-show")).not.toBeInTheDocument();
+  });
+});
+
+// Sales Call Workflow Part 1 — the two read-model treatments on the card.
+//
+// These render against the real clock on purpose: the whole point of both is
+// "where does today put this?", and freezing time would prove the arithmetic
+// rather than the card. Dates are therefore computed RELATIVE to now.
+
+const dayOffsetInCrmZone = (days: number): string => {
+  const at = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  // The same calendar-day authority the card and the column share, so a test
+  // run at 23:30 Denver time does not disagree with the component.
+  return crmDayKey(at);
+};
+
+const instantOffset = (days: number): string =>
+  new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+
+const renderBoard = async (deal: Deal, salesCalls: SalesCall[]) =>
+  render(
+    <StoryWrapper
+      initialEntries={["/deals"]}
+      data={{
+        contacts: [buildContact({ id: CONTACT_ID })],
+        offers: [livingExample],
+        deals: [deal],
+        sales_calls: salesCalls,
+      }}
+    >
+      <></>
+    </StoryWrapper>,
+  );
+
+describe("DealCard — Call passed", () => {
+  it("C. shows Call passed for a booked call whose time has gone by with no outcome", async () => {
+    const screen = await renderBoard(buildDeal(), [
+      buildSalesCall({
+        scheduled_at: instantOffset(-2),
+        original_scheduled_at: instantOffset(-2),
+      }),
+    ]);
+
+    await expect.element(screen.getByText("Call passed")).toBeInTheDocument();
+  });
+
+  it("A. does not show it for a future booking", async () => {
+    const screen = await renderBoard(buildDeal(), [
+      buildSalesCall({
+        scheduled_at: instantOffset(14),
+        original_scheduled_at: instantOffset(14),
+      }),
+    ]);
+
+    await expect.element(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+    await expect
+      .element(screen.getByText("Call passed"))
+      .not.toBeInTheDocument();
+  });
+
+  it("it disappears once the call is actually written up", async () => {
+    const screen = await renderBoard(buildDeal(), [
+      buildSalesCall({
+        scheduled_at: instantOffset(-2),
+        original_scheduled_at: instantOffset(-2),
+        status: "completed",
+        attendance: "attended",
+        attendance_recorded_at: instantOffset(-1),
+      }),
+    ]);
+
+    await expect.element(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+    await expect
+      .element(screen.getByText("Call passed"))
+      .not.toBeInTheDocument();
+  });
+});
+
+describe("DealCard — the Decision follow-up commitment", () => {
+  it("L/M. a future follow-up shows the canonical date from deals.follow_up_date", async () => {
+    const screen = await renderBoard(
+      buildDeal({ stage: "decision", follow_up_date: dayOffsetInCrmZone(6) }),
+      [],
+    );
+
+    await expect.element(screen.getByText(/Decision due/)).toBeInTheDocument();
+  });
+
+  it("N. a follow-up owed today says so", async () => {
+    const screen = await renderBoard(
+      buildDeal({ stage: "decision", follow_up_date: dayOffsetInCrmZone(0) }),
+      [],
+    );
+
+    await expect
+      .element(screen.getByText("Follow up today"))
+      .toBeInTheDocument();
+  });
+
+  it("O. a passed follow-up reads as overdue — and the stage has NOT moved", async () => {
+    const deal = buildDeal({
+      stage: "decision",
+      follow_up_date: dayOffsetInCrmZone(-3),
+    });
+    const screen = await renderBoard(deal, []);
+
+    await expect
+      .element(screen.getByText(/Follow-up overdue/))
+      .toBeInTheDocument();
+    // The clock changed the words on the card and nothing else.
+    expect(deal.stage).toBe("decision");
+  });
+
+  it("P. a follow_up_date outside Decision is NOT presented as a live commitment", async () => {
+    // Production holds one active non-Decision Opportunity still carrying a
+    // follow_up_date. Showing it as a Decision commitment would be a lie
+    // about where that person is.
+    const screen = await renderBoard(
+      buildDeal({
+        stage: "call_booked",
+        follow_up_date: dayOffsetInCrmZone(-3),
+      }),
+      [],
+    );
+
+    await expect.element(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+    await expect
+      .element(screen.getByText(/Follow-up overdue/))
+      .not.toBeInTheDocument();
+    await expect
+      .element(screen.getByText(/Decision due/))
+      .not.toBeInTheDocument();
+    await expect
+      .element(screen.getByText("Follow up today"))
+      .not.toBeInTheDocument();
+  });
+
+  it("a Decision with no date claims no commitment", async () => {
+    const screen = await renderBoard(
+      buildDeal({ stage: "decision", follow_up_date: null }),
+      [],
+    );
+
+    await expect.element(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+    await expect
+      .element(screen.getByText(/Decision due/))
+      .not.toBeInTheDocument();
   });
 });
