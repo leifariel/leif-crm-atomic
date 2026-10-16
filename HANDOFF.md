@@ -4429,6 +4429,332 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8y. Deposits — ARCHITECTURE AUDIT ONLY, NOTHING BUILT (2026-10-16)
+
+Read-only audit of the existing CRM/Stripe architecture against the decided
+deposit mechanics. **No implementation, no migration, no Stripe object, no
+production mutation.**
+
+### The decided mechanics (not re-asked)
+
+The deposit is **credited toward the programme price**, and the existing
+payment-plan timeframes are unchanged. The balance schedule is anchored on
+**the first calendar day of the client's programme start month** — never the
+deposit date, the sales-call date, the Enrollment date, or a 30-day offset.
+
+| | price | deposit | balance |
+|---|---|---|---|
+| The Living Example | $4,000 | **$500** | $3,500 |
+| Growing Yourself Up | $1,400 | **$400** | $1,000 |
+
+### The authority map, as it actually is
+
+```
+offer_payment_options (versioned)   name/total/installments/installment_amount
+  + is_public, is_active, pricing_mode, replaces_option_id
+        │  Leif edits via set_offer_payment_option(), which REFUSES a plan
+        │  whose installment_amount × installments ≠ total
+        ▼
+deals   selected_payment_option_id + the SNAPSHOT that actually governs:
+        selected_payment_total / _installment_count / _installment_amount
+        (+ _total_source), offer_price_snapshot, offer_name_snapshot
+        offer_page_token  ──► the public Offer Page (OfferPage.tsx)
+        ▼
+stripe_checkout (Edge)  every commercial term re-resolved server-side from
+        CRM state; the browser sends only a token + an option id.
+        mode = "payment" when installments = 1, "subscription" when > 1.
+        Writes deals.stripe_checkout_session_id. Does NOT freeze the chosen
+        option — an abandoned attempt stays freely changeable.
+        ▼
+stripe_webhook (Edge)   handles checkout.session.completed AND NOTHING ELSE.
+        Re-fetches the Session from Stripe, refuses payment_status "unpaid",
+        re-validates pricing_mode against the Deal, then:
+          · Architecture B — adopts the Checkout subscription under a
+            Subscription Schedule (from_subscription), preserves the paid
+            phase byte-for-byte, appends ONE future phase of N−1
+            iterations, sets end_behavior = 'cancel'. Idempotent by reading
+            LIVE Stripe state, and recovers a lost race from
+            subscription.schedule.
+          · recordDealPaymentSucceeded → stage = 'won' (never creates the
+            Enrollment itself)
+          · reconcileStripe(contactId) → the money
+        ▼
+handle_deal_won (trigger)  Enrollment ('onboarding') + seed_enrollment_
+        onboarding() + scholarship-slot transfer. ALL CRM-INTERNAL.
+        ▼
+deal_payment_schedule_items   RECEIPTS (source 'stripe', status 'paid',
+        stripe_payment_intent_id = provenance AND idempotency key) and
+        OBLIGATIONS (source 'owner_stated', status 'scheduled', discharged
+        via satisfied_by_payment_intent_id)
+deal_stripe_plan_objects      one row per subscription/schedule, with
+        Stripe's own status and is_current; link_source tells you who found
+        it
+paymentTruth.ts   the single read model: agreedTotal, collected,
+        futureScheduled, remaining, installmentsSatisfied, hasCurrentPlan,
+        setupConfirmedElsewhere, paidInFull, state, reviewCode — all in
+        integer cents via CENTS()
+cron reconcile-stripe @ 47 * * * *   the hourly PULL that keeps it true
+```
+
+**Start-month authority:** `enrollments.start_date` +
+`enrollments.start_date_source` (`owner` / `session_derived` / `unknown`,
+paired by constraint). It is a start **week**; the first of the start month
+is `date_trunc('month', start_date)` — **derivable, so it needs no column**.
+
+### What the audit found that changes the design
+
+**1. The CRM's own Checkout has barely been used in production.** One Deal
+has a `stripe_checkout_session_id`; **zero** plan objects have
+`link_source = 'checkout_session'` (32 `historical_import`, 26
+`reconciliation`). Every one of the 39 Won Deals has
+`selected_payment_option_id = NULL` — the whole Won population is historical
+import whose agreed terms live in the Deal snapshot. **No production Deal
+references any payment option**, so adding deposit configuration to an
+option version retrofits nothing.
+
+**2. There is no saved payment method today.** `setup_future_usage` and
+`off_session` appear **nowhere** in the repo. A `mode: "payment"` deposit as
+the code stands would leave no reusable card, so the balance could not be
+charged later. This is the one genuinely missing Stripe capability, and it
+is a one-parameter addition to the existing call.
+
+**3. The future-start schedule state already exists and is populated.**
+`deal_stripe_plan_objects` holds **6 rows of `schedule` / `not_started` /
+`is_current = true`** right now. "A schedule that exists and has not charged
+yet" is already modelled, reconciled and displayed.
+
+**4. The webhook is checkout-only; installment truth arrives by PULL.**
+`invoice.paid`, `invoice.payment_failed` and
+`invoice.payment_action_required` are explicit no-ops. Second-and-later
+installments land through the hourly `reconcile-stripe`, which ingests money
+**by customer, keyed on PaymentIntent**, independent of which object
+produced it. So balance payments will land for a Schedule the same way they
+land today — no new ingestion path.
+
+**5. A failed off-session charge is currently invisible, and that is
+pre-existing.** `PaymentState` is `paid_in_full | active_plan |
+scheduled_plan | setup_pending | needs_review | unknown`. `hasCurrentPlan`
+asks only whether a current plan **exists** — it never reads the Stripe
+`status` the reconciler already stores. So a client who pays a deposit and
+whose first installment then fails reads **`active_plan`**, with a truthful
+`remaining` and nothing saying a charge failed. `check_payment` is a task
+type **nothing creates automatically**. This already applies to the 16
+active subscriptions in production; deposits make it matter, because the
+whole premise is that the client leaves and the rest is charged off-session.
+
+**6. Nothing external fires on Won.** `seed_enrollment_onboarding` writes
+`enrollment_onboarding_items` and `tasks` — nothing else. The onboarding
+items are **Leif's own to-dos** ("Send contract to {name}", "Grant {name}
+Notion personal session-notes access", "Invite {name} to GYU Slack", "Grant
+{name} GYU calendar access"). The CRM grants nothing, invites nobody and
+sends no email. The eleven `deals` triggers are all internal; the waitlist
+conversion has already happened long before (it fires from
+`application_received` onward).
+
+**So deposit-success → Won is coherent and safe**, and is the recommendation.
+
+**7. Capacity needs no change.** `slotOccupancy.ts` already names four
+phases — `occupied` (running), `committed` (agreed, not started),
+`unscheduled` (**an Enrollment with no `start_date` at all: a real
+obligation not yet placed in a week, consuming neither an active nor a dated
+slot**), `released`. Production holds **12 Enrollments with no start_date**
+and 10 with a future one. A deposit-paid client awaiting a start month is
+`unscheduled`, by a rule that already exists because of Todd Jacobsen.
+
+**8. "Deposit paid, start month not set" already has a surface.**
+`StartWeekCard.tsx` renders "Start week not set" on the client's own page,
+with the fix one field away, for individual programmes. And the asymmetry
+matters: **GYU is a group offer, so `handle_deal_won` snapshots the cohort's
+`program_start_at` with `start_date_source = 'owner'` at Won** — the balance
+anchor exists immediately. **Only LE genuinely waits.** There is therefore
+**no circular dependency**: the deposit needs no start month, and the start
+month needs no balance schedule.
+
+### Recommended Stripe objects
+
+| | object | new? |
+|---|---|---|
+| A. deposit | `mode: "payment"` Checkout Session → one PaymentIntent | **exists** |
+| B. saved card | `payment_intent_data.setup_future_usage: "off_session"` on that Session | **new (one parameter)** |
+| C. balance, pay in full | Subscription Schedule, `start_date` = first of start month, **1 iteration**, `end_behavior: 'cancel'` | **new creation path, existing object type** |
+| D. balance, installments | the same Subscription Schedule with N iterations (two phases when the cents do not divide) | **new creation path, existing object type** |
+| E. customer | `contact_stripe_customers` + `recordStripeCustomerForContact()` | **exists** (79 rows) |
+
+**Why a one-iteration Schedule for pay-in-full rather than a future
+PaymentIntent or invoice:** it keeps ONE future-start mechanism for both
+shapes. A scheduled PaymentIntent would need its own creation, its own
+idempotency, its own failure path, and `deal_stripe_plan_objects` has no row
+type for it — while a Schedule is already modelled, already reconciled,
+already has a `not_started` state in production, and already ends itself
+with `end_behavior: 'cancel'`.
+
+### Exact integer-cent allocations
+
+Rule: `floor = balance div n`, `r = balance mod n`; **r iterations at
+`floor + 1`, then `n − r` at `floor`** — two Schedule phases when `r > 0`,
+one when `r = 0`. Deterministic, sums exactly, and the odd cents fall
+earliest.
+
+| plan | balance | allocation | sum |
+|---|---|---|---|
+| LE pay in full | 350000c | 1 × 350000c | 350000 ✓ |
+| LE 4-pay | 350000c | 4 × 87500c | 350000 ✓ |
+| LE 6-pay, if $4,000 governs | 350000c | 2 × 58334c then 4 × 58333c | 350000 ✓ |
+| LE Financial Need 6-pay ($3,996) | 349600c | 4 × 58267c then 2 × 58266c | 349600 ✓ |
+| GYU pay in full | 100000c | 1 × 100000c | 100000 ✓ |
+| GYU 2-pay | 100000c | 2 × 50000c | 100000 ✓ |
+| GYU 4-pay ($1,400) | 100000c | 4 × 25000c | 100000 ✓ |
+
+**Today's architecture would refuse the uneven ones.** `stripe_checkout`
+rebuilds `installment_amount × installments` and demands it equal the total
+to the cent (`not-representable`), and `set_offer_payment_option()` refuses
+to store such an option at all. A two-phase Schedule is the escape, and
+authorising it is a decision, not an assumption.
+
+### The LE "$666 × 6 / $3,996" finding — it is not an arithmetic error
+
+Production option **#1 on LE is "Financial Need", `total = 3996.00`,
+`6 × 666.00`** — which multiplies out **exactly**. **Zero** catalog options
+fail the reconstruction check. It is `is_public = false`: authorised
+case-by-case, $4 under list. **Four Won Deals carry an agreed total of
+$3,996.** So $3,996 is a real agreed number in production, not a slip.
+
+There is also **no public LE 6-pay at all**: LE offers Monthly (4 × $1,000),
+Pay in Full, Financial Need (non-public, 6 × $666) and two scholarship
+options. GYU's non-public 4-pay is likewise "Financial Need" (4 × $350).
+
+### Minimum new CRM authority
+
+**One column.** `offer_payment_options.deposit_amount numeric(10,2) null` —
+on the **payment-option version**, because the deposit interacts with the
+installment structure (balance = total − deposit, divided by installments),
+options are already versioned and immutable once referenced, and
+`is_public` / `pricing_mode` already scope them. On the Offer it would force
+every option of a programme to share one deposit and leave Financial Need
+undecidable. Prospective by construction; **nothing is retrofitted**
+(every option has zero references).
+
+Everything else §15 asks for is already answerable:
+
+| question | existing authority |
+|---|---|
+| programme / agreed total | `deals.selected_payment_total` (+ `_source`), `offer_price_snapshot` |
+| deposit paid / unpaid | `paymentTruth.collected >= depositRequired`, in cents |
+| deposit Stripe object | the receipt row's `stripe_payment_intent_id` |
+| remaining balance | `paymentTruth.remaining` |
+| selected payment option | `deals.selected_payment_option_id` + the snapshot |
+| remaining installment amounts | `selected_installment_count` / `_amount` |
+| remaining schedule start date | `date_trunc('month', enrollments.start_date)`, and Stripe's own `deal_stripe_plan_objects.started_at` |
+| scheduled-plan object | `deal_stripe_plan_objects` (`schedule` / `not_started`) |
+| which payments succeeded | `deal_payment_schedule_items` receipts |
+| amount still owed | `paymentTruth.remaining` |
+
+**Plus one read-model addition with no new column:** a `PaymentState` for an
+**unhealthy** plan, derived from the Stripe `status` the reconciler already
+writes onto `deal_stripe_plan_objects` (`past_due`, `unpaid`, `incomplete`),
+and an automatic `check_payment` task when a scheduled charge fails. This
+closes finding 5 and is the one thing that must not be skipped — a deposit
+success must never make a later failure invisible.
+
+### Start-month change before the first balance charge
+
+Stripe permits `subscriptionSchedules.update` while a schedule is
+`not_started`. **Recommended rule:** before the first balance charge, a
+changed start month **updates the existing schedule in place** to the new
+first-of-month anchor, idempotently, keyed on
+`deals.stripe_subscription_schedule_id` plus a Stripe idempotency key
+derived from (deal, anchor). After the first balance payment has been
+collected, **refuse** and surface a review rather than rewriting financial
+history — the same restraint the stale-`pricing_mode` branch already shows.
+
+### Idempotency, reusing what exists
+
+- replayed deposit webhook → `recordDealPaymentSucceeded` returns
+  `already-won`; `handle_deal_won` is `on conflict (opportunity_id) do
+  nothing`. **Two Enrollments are already impossible.**
+- repeated start-month save → guarded by
+  `deals.stripe_subscription_schedule_id` and by reading live Stripe state
+  first, exactly as `ensureInstallmentScheduleConfigured` does
+- repeated schedule webhook → receipts are keyed on PaymentIntent
+- abandoned Checkout → Session creation writes only
+  `stripe_checkout_session_id`; the webhook refuses `payment_status
+  "unpaid"`; the chosen option is deliberately NOT frozen until money
+  lands. **Checkout created ≠ deposit paid ≠ Won** already holds.
+- payment success and schedule creation stay separate facts: the first is a
+  receipt, the second a plan object
+
+### Production cases this must preserve (read-only; nothing mutated)
+
+39 Won Deals · 40 Enrollments · 12 with no `start_date` · 10 with a future
+one · 20 Deals with a subscription · 24 with a schedule · 15 active
+schedules + 6 `not_started` + 8 completed + 2 canceled · 16 active
+subscriptions + 11 canceled · 83 Stripe receipts + 2 owner-stated paid + 1
+owner-stated scheduled · 32 Deals with schedule items · agreed totals
+spanning $700–$9,000 (12 at $4,000, **4 at $3,996**, 3 at $3,700, 1 at
+$3,998, 1 at $4,500, 1 at $9,000, 8 unknown) · installment counts 1, 2, 4,
+6 and 12 · `selected_payment_total_source` 18 `stripe_derived` / 9
+`owner_confirmed` / 12 NULL · 2 Deals in `collected_exceeds_agreed` review
+and 2 in `terms_unknown` · 79 linked Stripe customers.
+
+### Recommended end-to-end model
+
+1. Leif authorises a payment option (or the prospect picks a public one).
+   The option version carries `deposit_amount`.
+2. Offer Page shows the programme total, **"$500 today, credited toward
+   $4,000"**, the chosen plan, and that the balance begins on the 1st of
+   their programme start month, which Leif sets during onboarding.
+3. **Deposit Checkout** — `mode: "payment"`, `unit_amount = deposit`,
+   `setup_future_usage: "off_session"`, existing metadata and the existing
+   server-side term resolution.
+4. `checkout.session.completed` → the deposit receipt lands via
+   `reconcileStripe`, and `recordDealPaymentSucceeded` marks **Won**.
+5. `handle_deal_won` creates the Enrollment and seeds onboarding. For
+   **GYU** the cohort start is snapshotted immediately; for **LE**
+   `start_date` is null and `StartWeekCard` says "Start week not set".
+6. Leif sets the start week during onboarding. `date_trunc('month', …)`
+   gives the anchor.
+7. That save creates **one Subscription Schedule**, `start_date` = the 1st
+   of the start month, the saved card as the default payment method, one
+   phase if the cents divide and two if they do not, `end_behavior:
+   'cancel'`. It appears as `schedule` / `not_started` /
+   `is_current = true` — a shape production already holds.
+8. The first balance charge lands on day 1. Every payment is ingested by
+   the hourly reconciler as a receipt keyed on its PaymentIntent, and
+   `paymentTruth.remaining` walks down to zero.
+9. The final iteration ends the schedule by itself.
+
+**Why this over the alternatives:** it adds one Stripe parameter, one
+column, and one creation path, and reuses the Subscription Schedule,
+`end_behavior: 'cancel'`, the PaymentIntent-keyed receipt ledger, the hourly
+reconciler, the plan-object model and the existing `not_started` state.
+Every alternative — a second object type for pay-in-full, a bespoke
+scheduled-charge table, or charging the balance from the deposit date —
+adds a parallel mechanism for no capability.
+
+### Genuine decisions still needed from Leif
+
+1. **Is there an LE 6-pay at $4,000, or is the "rare 6-pay" the existing
+   non-public Financial Need option at $3,996?** There is no public LE
+   6-pay in the catalog. The answer decides whether the balance is
+   $3,500 or $3,496, and four Won Deals already sit at $3,996.
+2. **Does the deposit apply to the discounted / Financial Need and
+   scholarship options, and at what amount?** Neither divides evenly after
+   a deposit, and scholarship LE/GYU are $3,000 / $700.
+3. **May a plan be uneven at all?** Today both the checkout guard and
+   `set_offer_payment_option()` refuse a plan that does not multiply out.
+   Authorising the two-phase cent allocation is the decision that unblocks
+   every 6-pay case.
+4. **If the start month changes after the first balance charge, what is the
+   manual policy?** The recommendation is to refuse and raise a review.
+
+### State
+
+- **Implementation: NOT started.** No migration, no Stripe object, no
+  production change. Audit and recommendation only.
+- Deposits remain the next product slice; the full Health Sweep follows
+  their production acceptance.
+- **Gmail: still blocked.**
+
 ## 8x. A recorded result can be corrected — SALES CALL WORKFLOW PART 2, PRODUCTION ACCEPTED 2026-10-16 (NOT YET EXERCISED)
 
 Part 1 gave a completed call an authoritative result and no way to change it.
@@ -9205,7 +9531,10 @@ upgrades that without reopening acceptance; verify it end to end when it
 happens, and never use Mads Bunch as synthetic test data.
 
 **The next product slice is DEPOSITS / payment-page support** — The Living
-Example $500, Growing Yourself Up $400. Then: accept deposits → the full
+Example $500, Growing Yourself Up $400. **Its architecture audit is done
+(§8y) and nothing is built**; four genuine decisions are waiting on Leif
+there, the load-bearing one being whether a plan may be uneven at all.
+Then: accept deposits → the full
 Integration Readiness / Health Sweep (its queue is at the end of §8x) →
 repair every REPAIR BEFORE GMAIL finding → re-run until clear → **only then
 Gmail**. Migration **173** is the deployed tip of the chain: **147
