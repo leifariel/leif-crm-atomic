@@ -17,7 +17,10 @@ import type { Enrollment } from "../types";
 import { enrollmentStatuses } from "./enrollmentConstants";
 import { ProjectedFinalWeekField } from "./ProjectedFinalWeekField";
 import { assessEnrollmentSave, saveOutcomeMessage } from "./savedWhatWasStated";
-import { scheduleBalanceForOpportunity } from "../deals/scheduleBalance";
+import {
+  balanceScheduleNotice,
+  scheduleBalanceForOpportunity,
+} from "../deals/scheduleBalance";
 
 // The three operational facts about a client Leif actually edits: where they
 // are in the programme, the week they start, and the day they finished if
@@ -131,11 +134,26 @@ export const ClientEditModal = ({
                 // verdict: the start week has been saved and Leif has been
                 // told so truthfully. Every refusal is a legitimate answer
                 // (no deposit on this agreement, deposit not paid, the 1st
-                // already passed, a balance payment already succeeded), the
-                // call is idempotent, and the hourly reconciler sweeps the
-                // same decision regardless.
+                // already passed, a balance payment already succeeded), and
+                // the call is idempotent.
+                //
+                // But the answer is no longer thrown away. Four of those
+                // outcomes are things she can act on, and a toast she might
+                // miss is not where they live either: the Opportunity
+                // carries a durable artefact for each. This just says it
+                // while she is still looking.
                 if (saved.opportunity_id != null) {
-                  void scheduleBalanceForOpportunity(saved.opportunity_id);
+                  void scheduleBalanceForOpportunity(saved.opportunity_id).then(
+                    (outcome) => {
+                      const notice = balanceScheduleNotice(outcome.status);
+                      if (notice) {
+                        notify(notice, {
+                          type: "warning",
+                          autoHideDuration: 0,
+                        });
+                      }
+                    },
+                  );
                 }
                 onOpenChange(false);
                 refresh();

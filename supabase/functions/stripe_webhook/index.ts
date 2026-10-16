@@ -90,6 +90,57 @@ const reconcilePaymentHealth = async (opportunityId: number | null) => {
     );
   }
 };
+// THE RETRY, which is what makes the convergence rule true rather than
+// aspirational.
+//
+// enrollments.start_date and the Stripe schedule cannot share a
+// transaction. The date commits first and the schedule is a consequence,
+// so the consequence can fail on its own: the browser never reached the
+// Edge Function, the network dropped, Stripe errored, the card was not
+// saved yet. Before this, every one of those left a committed client with a
+// balance owed, a known start month and no schedule -- and nothing trying
+// again.
+//
+// deals_awaiting_balance_schedule() states exactly premise C of
+// reconcile_payment_health_tasks(), so the Deals retried here and the Deals
+// that raise a check_payment Task are the same set by construction. Run
+// before the health reconciliation below, so a schedule created now closes
+// its own Task in the same pass.
+const sweepPendingBalanceSchedules = async (
+  stripe: Stripe | null,
+): Promise<{ attempted: number; statuses: Record<string, number> }> => {
+  const statuses: Record<string, number> = {};
+  const count = (key: string) => {
+    statuses[key] = (statuses[key] ?? 0) + 1;
+  };
+  const { data, error } = await supabaseAdmin.rpc(
+    "deals_awaiting_balance_schedule",
+  );
+  if (error) {
+    console.error("stripe_webhook: could not list pending balances:", error);
+    return { attempted: 0, statuses };
+  }
+  const ids = ((data ?? []) as unknown[])
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value > 0);
+  for (const dealId of ids) {
+    try {
+      const result = await ensureBalanceSchedule(stripe, dealId);
+      count(result.status);
+    } catch (error) {
+      // One client's provider error must not stop the rest of the sweep,
+      // and must not fail the run: the condition still holds, so the next
+      // hour tries again and the Task stays raised meanwhile.
+      console.error(
+        "stripe_webhook: balance sweep failed for deal " + dealId,
+        error,
+      );
+      count("error");
+    }
+  }
+  return { attempted: ids.length, statuses };
+};
+
 const fetchDeal = async (dealId: number): Promise<DealRow | null> => {
   const { data } = await supabaseAdmin
     .from("deals")
@@ -358,7 +409,11 @@ const handleCheckoutSessionCompleted = async (
       balance = scheduled.status;
     } catch (error) {
       // Never fail the delivery: the deposit and the sale have already
-      // landed, and the hourly reconciler sweeps this again.
+      // landed, and the hourly reconcile-stripe job now genuinely sweeps
+      // this again -- see sweepPendingBalanceSchedules(). This is the path
+      // Growing Yourself Up depends on: its anchor exists at Won, so a
+      // failure here is the only thing between a GYU deposit and its
+      // schedule, and it must not need Leif to open a Start Week screen.
       console.error(
         "stripe_webhook: balance scheduling failed for deal " + deal.id,
         error,
@@ -519,7 +574,15 @@ Deno.serve(async (req: Request) => {
         return createErrorResponse(401, "Invalid cron invocation secret.");
       }
       const delta = await reconcileStripe(stripe);
-      return jsonResponse({ status: "reconciled", delta });
+      // Both halves, and in this order. The sweep is the durable retry for
+      // a balance whose schedule never got made; the reconciliation then
+      // opens a Task for whatever is still unscheduled and closes the ones
+      // the sweep has just settled. Neither ran on this path before, so an
+      // hourly job that exists to converge payment truth was converging
+      // only the money.
+      const balances = await sweepPendingBalanceSchedules(stripe);
+      await reconcilePaymentHealth(null);
+      return jsonResponse({ status: "reconciled", delta, balances });
     }
 
     const contactId = Number(contactParam);
@@ -543,8 +606,9 @@ Deno.serve(async (req: Request) => {
     }
 
     const delta = await reconcileStripe(stripe, { contactId });
+    const balances = await sweepPendingBalanceSchedules(stripe);
     await reconcilePaymentHealth(null);
-    return jsonResponse({ status: "reconciled", delta });
+    return jsonResponse({ status: "reconciled", delta, balances });
   }
 
   // THE BALANCE SCHEDULE, asked for by name.
@@ -582,6 +646,33 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("STRIPE_SECRET_KEY") ? stripe : null,
       dealId,
     );
+
+    // THE ONE OUTCOME THAT IS A DECISION RATHER THAN A CONDITION.
+    //
+    // A person asked to move a start month, and the balance had already
+    // begun collecting, so re-anchoring would rewrite financial history and
+    // the CRM refused. Nothing about the client's account is wrong, so no
+    // reconciler can own it and recovery must never erase it: it goes to
+    // deals.payment_review_reason, where a human closes it by hand.
+    //
+    // Gated on a person having asked. The hourly sweep reaching the same
+    // Deal is not a start-date change, and the deposit webhook's own
+    // attempt is not one either. The column makes a duplicate impossible
+    // regardless.
+    if (!isCron && scheduled.status === "balance-already-started") {
+      const { error } = await supabaseAdmin.rpc(
+        "flag_balance_schedule_frozen",
+        { p_opportunity_id: dealId },
+      );
+      if (error) {
+        console.error(
+          "stripe_webhook: could not raise the balance-schedule review for deal " +
+            dealId,
+          error,
+        );
+      }
+    }
+
     await reconcilePaymentHealth(dealId);
     return jsonResponse(scheduled);
   }

@@ -2054,7 +2054,7 @@ alter table public.deals
 alter table public.deals
     drop constraint if exists deals_payment_review_code_check;
 alter table public.deals
-    add constraint deals_payment_review_code_check CHECK (((payment_review_code IS NULL) OR (payment_review_code = ANY (ARRAY['terms_unknown'::text, 'evidence_incomplete'::text, 'collected_exceeds_agreed'::text, 'duplicate_economic_payment'::text, 'identity_unresolved'::text, 'owner_flagged'::text]))));
+    add constraint deals_payment_review_code_check CHECK (((payment_review_code IS NULL) OR (payment_review_code = ANY (ARRAY['terms_unknown'::text, 'evidence_incomplete'::text, 'collected_exceeds_agreed'::text, 'duplicate_economic_payment'::text, 'identity_unresolved'::text, 'owner_flagged'::text, 'balance_schedule_frozen'::text]))));
 alter table public.deals
     drop constraint if exists deals_payment_setup_pair_check;
 alter table public.deals

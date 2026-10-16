@@ -280,6 +280,15 @@ revoke all on function public.plan_balance_schedule(bigint) from public, anon, a
 grant execute on function public.plan_balance_schedule(bigint) to service_role;
 revoke all on function public.reconcile_payment_health_tasks(bigint) from public, anon, authenticated;
 grant execute on function public.reconcile_payment_health_tasks(bigint) to service_role;
+-- flag_balance_schedule_frozen() raises the review a person must close;
+-- deals_awaiting_balance_schedule() lists what the hourly sweep retries.
+-- Both are the service's, never a browser's.
+revoke all on function public.payment_health_task_reason(text) from public, anon, authenticated;
+grant execute on function public.payment_health_task_reason(text) to service_role;
+revoke all on function public.flag_balance_schedule_frozen(bigint) from public, anon, authenticated;
+grant execute on function public.flag_balance_schedule_frozen(bigint) to service_role;
+revoke all on function public.deals_awaiting_balance_schedule() from public, anon, authenticated;
+grant execute on function public.deals_awaiting_balance_schedule() to service_role;
 revoke all on function public.set_offer_payment_option_active(bigint, boolean) from public;
 revoke all on function public.set_offer_payment_option_active(bigint, boolean) from anon;
 grant execute on function public.set_offer_payment_option_active(bigint, boolean) to authenticated;

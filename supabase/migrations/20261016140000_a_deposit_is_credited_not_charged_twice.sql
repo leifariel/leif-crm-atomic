@@ -460,6 +460,28 @@ comment on function public.plan_balance_schedule(bigint) is
 -- in this schema is: created while its condition holds, closed when it
 -- stops.
 
+-- ONE SENTENCE PER PREMISE, IN ONE PLACE.
+--
+-- Used by the insert and by the refresh below, so a Task that changes
+-- premise cannot end up describing the premise it used to have -- and so
+-- the refresh can tell a sentence this function wrote from a sentence
+-- somebody typed, which is what makes it safe to rewrite at all.
+create or replace function public.payment_health_task_reason(p_premise text)
+returns text
+language sql
+immutable
+set search_path to 'public'
+as $fn$
+  select case p_premise
+           when 'plan_not_collecting'
+             then 'a scheduled payment did not go through'
+           when 'balance_start_requires_review'
+             then 'the balance start month has already passed -- the remaining balance needs scheduling by hand'
+           when 'balance_not_scheduled'
+             then 'the remaining balance is not scheduled yet'
+         end;
+$fn$;
+
 create or replace function public.reconcile_payment_health_tasks(
   p_opportunity_id bigint default null
 ) returns jsonb
@@ -470,42 +492,126 @@ as $fn$
 declare
   v_created int := 0;
   v_closed int := 0;
+  v_restated int := 0;
   v_sales_id bigint;
 begin
   select id into v_sales_id from sales where administrator = true limit 1;
 
-  -- Stripe's own vocabulary for "this plan is not collecting":
-  --   past_due / unpaid        a charge failed and is being retried
-  --   incomplete(_expired)     the customer has to authenticate
-  -- TWO durable premises, both declarative so the same query that opens a
+  -- THREE DURABLE PREMISES, all declarative, so the same query that opens a
   -- Task is the one that closes it.
   --
-  --   A  the current Stripe plan is not collecting
-  --   B  a deposit is in, a balance is outstanding, the first of the start
-  --      month has already gone, and no plan is carrying it
+  --   A  plan_not_collecting            the current Stripe plan is not
+  --                                     collecting (Stripe's own vocabulary:
+  --                                     past_due / unpaid for a failed
+  --                                     charge, incomplete(_expired) when
+  --                                     the customer has to authenticate)
+  --   B  balance_start_requires_review  deposit in, balance outstanding, the
+  --                                     first of the start month has gone, and
+  --                                     nothing carrying it
+  --   C  balance_not_scheduled          deposit in, balance outstanding, a
+  --                                     USABLE FUTURE start month, and no
+  --                                     balance schedule exists
   --
-  -- B is the past-due refusal plan_balance_schedule() makes. It is a
-  -- condition, not an event: it keeps holding until Leif states a workable
-  -- month or an arrangement exists, and then it stops on its own.
+  -- C is the one that closes the stranding hole. The CRM and Stripe cannot
+  -- share a transaction: enrollments.start_date commits first and the
+  -- schedule is a consequence, so every way that consequence can fail --
+  -- the Edge call never made, a network error, a provider error, no saved
+  -- card -- used to leave a committed client with a balance owed, a known
+  -- start month, no schedule and nothing saying so. It is a CONDITION, not
+  -- an event: it holds until a schedule exists and then stops on its own,
+  -- which is exactly what makes a later success close it with no retry
+  -- bookkeeping. deals_awaiting_balance_schedule() below states the same
+  -- predicate for the hourly sweep that retries it.
+  --
+  -- The three cannot overlap: A requires a current plan object and B and C
+  -- require none, and B needs the anchor past where C needs it future. The
+  -- distinct on () is belt as well as braces.
   with collected as (
     select deal_id, sum(round(amount * 100)::bigint) as cents
       from deal_payment_schedule_items where status = 'paid' group by deal_id
   ),
-  unhealthy as (
-    select distinct d.id as deal_id, d.contact_id
+  -- A sale that is agreed and has not ended, carrying a deposit, with the
+  -- deposit in and the balance not. Stated once for both B and C.
+  owed as (
+    select d.id as deal_id,
+           d.contact_id,
+           date_trunc('month', e.start_date)::date as anchor,
+           d.stripe_subscription_schedule_id as schedule_id
+      from deals d
+      join enrollments e on e.opportunity_id = d.id and e.status <> 'withdrawn'
+      left join collected c on c.deal_id = d.id
+      -- Stated directly rather than through deal_is_active(), whose whole
+      -- point is that a WON deal is not 'active' -- true here, and
+      -- confusing to read.
+     where d.stage = 'won'
+       and d.archived_at is null
+       and d.outcome is null
+       and d.selected_deposit_amount is not null
+       and round(d.selected_deposit_amount, 2) > 0
+       and d.selected_payment_total is not null
+       and e.start_date is not null
+       and coalesce(c.cents, 0) >= round(d.selected_deposit_amount * 100)::bigint
+       and coalesce(c.cents, 0) < round(d.selected_payment_total * 100)::bigint
+       and not exists (select 1 from deal_stripe_plan_objects p2
+                        where p2.deal_id = d.id and p2.is_current)
+  ),
+  premises as (
+    select distinct d.id as deal_id, d.contact_id, 'plan_not_collecting'::text as premise
       from deals d
       join deal_stripe_plan_objects p on p.deal_id = d.id
      where p.is_current
        and p.status in ('past_due', 'unpaid', 'incomplete', 'incomplete_expired')
-       -- A sale that is agreed and has not ended. Stated directly rather
-       -- than through deal_is_active(), whose whole point is that a WON deal
-       -- is not 'active' -- true here, and confusing to read.
        and d.stage = 'won'
        and d.archived_at is null
        and d.outcome is null
-       and (p_opportunity_id is null or d.id = p_opportunity_id)
-    union
-    select d.id, d.contact_id
+    union all
+    select o.deal_id, o.contact_id, 'balance_start_requires_review'
+      from owed o where o.anchor <= current_date
+    union all
+    select o.deal_id, o.contact_id, 'balance_not_scheduled'
+      from owed o where o.anchor > current_date and o.schedule_id is null
+  ),
+  raised as (
+    select distinct on (deal_id) deal_id, contact_id, premise
+      from premises
+     where p_opportunity_id is null or deal_id = p_opportunity_id
+     order by deal_id, premise
+  )
+  insert into tasks (contact_id, type, text, due_date, status, opportunity_id, sales_id)
+  select r.contact_id, 'check_payment',
+         format('%s · %s', nullif(btrim(coalesce(c.first_name, '') || ' ' || coalesce(c.last_name, '')), ''),
+                public.payment_health_task_reason(r.premise)),
+         now(), 'pending', r.deal_id, v_sales_id
+    from raised r
+    join contacts c on c.id = r.contact_id
+   where not exists (
+     select 1 from tasks t
+      where t.opportunity_id = r.deal_id
+        and t.type = 'check_payment'
+        and t.done_date is null);
+  get diagnostics v_created = row_count;
+
+  -- A TASK WHOSE REASON CHANGED SAYS THE NEW REASON.
+  --
+  -- The text is written once, at insert, and the dedupe above deliberately
+  -- does not add a second Task -- so a Deal that moves from "the start
+  -- month has already passed" to "not scheduled yet" would otherwise keep
+  -- telling Leif about a month that is now perfectly fine. The premise it
+  -- was raised under is not the premise it is still open under.
+  --
+  -- Rewrites ONLY a sentence this function itself wrote, which is what
+  -- payment_health_task_reason() being single-sourced buys: a check_payment
+  -- Task somebody typed by hand matches none of the three and is left
+  -- exactly as typed.
+  with collected as (
+    select deal_id, sum(round(amount * 100)::bigint) as cents
+      from deal_payment_schedule_items where status = 'paid' group by deal_id
+  ),
+  owed as (
+    select d.id as deal_id,
+           d.contact_id,
+           date_trunc('month', e.start_date)::date as anchor,
+           d.stripe_subscription_schedule_id as schedule_id
       from deals d
       join enrollments e on e.opportunity_id = d.id and e.status <> 'withdrawn'
       left join collected c on c.deal_id = d.id
@@ -516,72 +622,284 @@ begin
        and round(d.selected_deposit_amount, 2) > 0
        and d.selected_payment_total is not null
        and e.start_date is not null
-       and date_trunc('month', e.start_date)::date <= current_date
-       -- the deposit is in, and the balance is not
        and coalesce(c.cents, 0) >= round(d.selected_deposit_amount * 100)::bigint
        and coalesce(c.cents, 0) < round(d.selected_payment_total * 100)::bigint
-       -- and nothing is carrying it
        and not exists (select 1 from deal_stripe_plan_objects p2
                         where p2.deal_id = d.id and p2.is_current)
-       and (p_opportunity_id is null or d.id = p_opportunity_id)
+  ),
+  premises as (
+    select distinct d.id as deal_id, d.contact_id, 'plan_not_collecting'::text as premise
+      from deals d
+      join deal_stripe_plan_objects p on p.deal_id = d.id
+     where p.is_current
+       and p.status in ('past_due', 'unpaid', 'incomplete', 'incomplete_expired')
+       and d.stage = 'won'
+       and d.archived_at is null
+       and d.outcome is null
+    union all
+    select o.deal_id, o.contact_id, 'balance_start_requires_review'
+      from owed o where o.anchor <= current_date
+    union all
+    select o.deal_id, o.contact_id, 'balance_not_scheduled'
+      from owed o where o.anchor > current_date and o.schedule_id is null
+  ),
+  wanted as (
+    select distinct on (p.deal_id)
+           p.deal_id,
+           format('%s · %s', nullif(btrim(coalesce(c.first_name, '') || ' ' || coalesce(c.last_name, '')), ''),
+                  public.payment_health_task_reason(p.premise)) as says
+      from premises p
+      join contacts c on c.id = p.contact_id
+     where p_opportunity_id is null or p.deal_id = p_opportunity_id
+     order by p.deal_id, p.premise
   )
-  insert into tasks (contact_id, type, text, due_date, status, opportunity_id, sales_id)
-  select u.contact_id, 'check_payment',
-         format('%s · a scheduled payment did not go through',
-                nullif(btrim(coalesce(c.first_name, '') || ' ' || coalesce(c.last_name, '')), '')),
-         now(), 'pending', u.deal_id, v_sales_id
-    from unhealthy u
-    join contacts c on c.id = u.contact_id
-   where not exists (
-     select 1 from tasks t
-      where t.opportunity_id = u.deal_id
-        and t.type = 'check_payment'
-        and t.done_date is null);
-  get diagnostics v_created = row_count;
+  update tasks t
+     set text = w.says
+    from wanted w
+   where t.opportunity_id = w.deal_id
+     and t.type = 'check_payment'
+     and t.done_date is null
+     and t.text <> w.says
+     and t.text in (
+       select format('%s · %s', nullif(btrim(coalesce(c.first_name, '') || ' ' || coalesce(c.last_name, '')), ''),
+                     public.payment_health_task_reason(premise))
+         from contacts c
+         cross join unnest(array['plan_not_collecting',
+                                 'balance_start_requires_review',
+                                 'balance_not_scheduled']) as premise
+        where c.id = t.contact_id);
+  get diagnostics v_restated = row_count;
 
-  -- Recovered, or the plan is gone. Either way the question is answered,
-  -- so the Task is finished rather than left to rot.
+  -- Recovered, scheduled, or the plan is gone. Either way the question is
+  -- answered, so the Task is finished rather than left to rot. The premise
+  -- set is recomputed rather than restated, so opening and closing can
+  -- never drift apart -- which is what a third premise would otherwise
+  -- have made very easy.
+  --
+  -- This closes the CONDITION. It deliberately cannot touch
+  -- deals.payment_review_code = 'balance_schedule_frozen', which is the
+  -- DECISION Leif owns after money has already moved: different artefact,
+  -- different table, different lifecycle.
+  with collected as (
+    select deal_id, sum(round(amount * 100)::bigint) as cents
+      from deal_payment_schedule_items where status = 'paid' group by deal_id
+  ),
+  owed as (
+    select d.id as deal_id,
+           date_trunc('month', e.start_date)::date as anchor,
+           d.stripe_subscription_schedule_id as schedule_id
+      from deals d
+      join enrollments e on e.opportunity_id = d.id and e.status <> 'withdrawn'
+      left join collected c on c.deal_id = d.id
+     where d.stage = 'won'
+       and d.archived_at is null
+       and d.outcome is null
+       and d.selected_deposit_amount is not null
+       and round(d.selected_deposit_amount, 2) > 0
+       and d.selected_payment_total is not null
+       and e.start_date is not null
+       and coalesce(c.cents, 0) >= round(d.selected_deposit_amount * 100)::bigint
+       and coalesce(c.cents, 0) < round(d.selected_payment_total * 100)::bigint
+       and not exists (select 1 from deal_stripe_plan_objects p2
+                        where p2.deal_id = d.id and p2.is_current)
+  ),
+  premises as (
+    select distinct d.id as deal_id
+      from deals d
+      join deal_stripe_plan_objects p on p.deal_id = d.id
+     where p.is_current
+       and p.status in ('past_due', 'unpaid', 'incomplete', 'incomplete_expired')
+       and d.stage = 'won'
+       and d.archived_at is null
+       and d.outcome is null
+    union
+    select o.deal_id from owed o where o.anchor <= current_date
+    union
+    select o.deal_id from owed o where o.anchor > current_date and o.schedule_id is null
+  )
   update tasks t
      set done_date = coalesce(t.done_date, now()), status = 'completed'
    where t.type = 'check_payment'
      and t.done_date is null
      and t.opportunity_id is not null
      and (p_opportunity_id is null or t.opportunity_id = p_opportunity_id)
-     and not exists (
-       select 1 from deal_stripe_plan_objects p
-        where p.deal_id = t.opportunity_id
-          and p.is_current
-          and p.status in ('past_due', 'unpaid', 'incomplete', 'incomplete_expired'))
-     and not exists (
-       select 1 from deals d
-         join enrollments e on e.opportunity_id = d.id and e.status <> 'withdrawn'
-        where d.id = t.opportunity_id
-          and d.stage = 'won'
-          and d.archived_at is null
-          and d.outcome is null
-          and d.selected_deposit_amount is not null
-          and round(d.selected_deposit_amount, 2) > 0
-          and d.selected_payment_total is not null
-          and e.start_date is not null
-          and date_trunc('month', e.start_date)::date <= current_date
-          and coalesce((select sum(round(i.amount * 100)::bigint)
-                          from deal_payment_schedule_items i
-                         where i.deal_id = d.id and i.status = 'paid'), 0)
-              >= round(d.selected_deposit_amount * 100)::bigint
-          and coalesce((select sum(round(i.amount * 100)::bigint)
-                          from deal_payment_schedule_items i
-                         where i.deal_id = d.id and i.status = 'paid'), 0)
-              < round(d.selected_payment_total * 100)::bigint
-          and not exists (select 1 from deal_stripe_plan_objects p2
-                           where p2.deal_id = d.id and p2.is_current));
+     and not exists (select 1 from premises pr where pr.deal_id = t.opportunity_id);
   get diagnostics v_closed = row_count;
 
-  return jsonb_build_object('created', v_created, 'closed', v_closed);
+  return jsonb_build_object('created', v_created, 'closed', v_closed,
+                            'restated', v_restated);
 end;
 $fn$;
 
 comment on function public.reconcile_payment_health_tasks(bigint) is
-    'One open check_payment Task per Opportunity whose current Stripe plan is past_due/unpaid/incomplete, closed when it recovers. Reads the status the reconciler already stores -- no new financial column.';
+    'One open check_payment Task per Opportunity whose current Stripe plan is not collecting, or whose paid-deposit balance has no schedule carrying it -- closed when the condition stops. Reads the status the reconciler already stores; no new financial column. Never touches deals.payment_review_code.';
+
+-- ---------------------------------------------------------------------
+-- The decision Leif owns, after money has already moved
+-- ---------------------------------------------------------------------
+-- THIS ONE IS AN EVENT, NOT A CONDITION, which is why it is not a Task.
+--
+-- Before the first balance payment, moving the start week re-anchors the
+-- not_started schedule in place: automatic, safe, reversible. After one has
+-- succeeded, re-anchoring would rewrite financial history, so the CRM
+-- refuses -- and a refusal nobody is told about is the same as a silent
+-- failure. But "somebody asked to move a charged schedule" never stops
+-- being true, so a declarative reconciler would close it on its next pass,
+-- and it is not a condition about the client's account that recovery could
+-- resolve.
+--
+-- So it goes where this schema already keeps "a human must decide about
+-- this payment": deals.payment_review_reason with its machine-readable
+-- payment_review_code. That slot is the right shape for three structural
+-- reasons rather than by preference.
+--
+--   DEDUPE IS STRUCTURAL. One column on one Deal. A repeated refusal
+--   cannot make a second artefact, because there is nowhere to put one.
+--
+--   IT CANNOT BE AUTO-CLOSED. ingestStripePayments() resolves
+--   `existingReviewReason ?? ambiguity ?? computed`, so a stored reason
+--   wins over anything the hourly reconciliation computes and is carried
+--   forward untouched; and reconcile_payment_health_tasks() above only ever
+--   writes `tasks` rows of type check_payment. Recovery of the card, a
+--   later successful charge, a new schedule: none of them can erase it.
+--
+--   IT ALREADY HAS A MANUAL RESOLUTION. canMarkReviewed() in
+--   deals/paymentReview.ts allows a stored, deliberately-raised review to
+--   be closed by a person, and PaymentPanel's "Mark reviewed" is that
+--   action. Leif resolves it exactly the way she resolves every other
+--   payment review.
+--
+-- It derives its own context instead of being handed any: the Edge Function
+-- passes an Opportunity id and nothing else, so it cannot be told a start
+-- month or an amount that is not in the database.
+alter table public.deals drop constraint if exists deals_payment_review_code_check;
+alter table public.deals
+    add constraint deals_payment_review_code_check check (
+      payment_review_code is null or payment_review_code = any (array[
+        'terms_unknown'::text,
+        'evidence_incomplete'::text,
+        'collected_exceeds_agreed'::text,
+        'duplicate_economic_payment'::text,
+        'identity_unresolved'::text,
+        'owner_flagged'::text,
+        'balance_schedule_frozen'::text]));
+
+create or replace function public.flag_balance_schedule_frozen(
+  p_opportunity_id bigint
+) returns jsonb
+language plpgsql
+security definer
+set search_path to 'public'
+as $fn$
+declare
+  v_deal deals%rowtype;
+  v_start date;
+  v_collected bigint;
+  v_balance_paid bigint;
+  v_reason text;
+begin
+  select * into v_deal from deals where id = p_opportunity_id;
+  if not found then
+    return jsonb_build_object('status', 'not-found');
+  end if;
+
+  -- Already asked, or a different question is already standing. Either way
+  -- this does not stack: an older review is somebody else's unanswered
+  -- question and overwriting it would lose it.
+  if v_deal.payment_review_reason is not null
+     or v_deal.payment_review_code is not null then
+    return jsonb_build_object(
+      'status', case when v_deal.payment_review_code = 'balance_schedule_frozen'
+                     then 'already-raised'
+                     else 'another-review-stands' end,
+      'review_code', v_deal.payment_review_code);
+  end if;
+
+  select e.start_date into v_start
+    from enrollments e
+   where e.opportunity_id = v_deal.id and e.status <> 'withdrawn'
+   order by e.id limit 1;
+
+  select coalesce(sum(round(amount * 100)::bigint), 0) into v_collected
+    from deal_payment_schedule_items
+   where deal_id = v_deal.id and status = 'paid';
+  v_balance_paid := greatest(
+    v_collected - round(coalesce(v_deal.selected_deposit_amount, 0) * 100)::bigint, 0);
+
+  -- Answer first, mechanism second: what is true, what was NOT done, and
+  -- what the decision is. No Stripe object ids and no lifecycle vocabulary.
+  v_reason :=
+    'The programme start month changed after the remaining balance had already begun collecting, so the payment schedule was NOT moved. Nothing was charged and no schedule was rewritten.'
+    || coalesce(' The start month now reads ' ||
+                to_char(date_trunc('month', v_start), 'FMMonth YYYY') || '.', '')
+    || ' $' || to_char(v_balance_paid / 100.0, 'FM999999990.00')
+    || ' of the balance has already been collected.'
+    || ' Decide whether to leave the remaining payments as they stand or change them deliberately.';
+
+  update deals
+     set payment_review_reason = v_reason,
+         payment_review_code = 'balance_schedule_frozen'
+   where id = v_deal.id;
+
+  return jsonb_build_object('status', 'raised',
+    'opportunity_id', v_deal.id,
+    'start_date', v_start,
+    'balance_paid_cents', v_balance_paid);
+end;
+$fn$;
+
+comment on function public.flag_balance_schedule_frozen(bigint) is
+    'Durable manual review when a start-month change could not re-anchor a balance schedule that has already begun collecting. One per Deal, never stacked on another review, never auto-closed -- Leif closes it with Mark reviewed.';
+
+-- ---------------------------------------------------------------------
+-- What the hourly sweep retries
+-- ---------------------------------------------------------------------
+-- Premise C of the reconciler above, stated as a list so the sweep can act
+-- on it. Deliberately the SAME predicate: the Deals the reconciler raises a
+-- Task for are exactly the Deals the sweep tries to schedule, so a Task
+-- appearing and a retry happening can never describe different sets.
+--
+-- This is what makes the invariant hold without Leif doing anything.
+-- Growing Yourself Up takes its start authority from the cohort at Won, so
+-- its schedule is created by the deposit webhook itself and no Start Week
+-- save is ever needed -- but if that one attempt fails, nothing else used to
+-- try again. Now the hourly reconcile-stripe job does, and keeps doing it
+-- until there is a schedule or the start month arrives and premise B takes
+-- over.
+create or replace function public.deals_awaiting_balance_schedule()
+returns setof bigint
+language sql
+stable
+security definer
+set search_path to 'public'
+as $fn$
+  select d.id
+    from deals d
+    join enrollments e on e.opportunity_id = d.id and e.status <> 'withdrawn'
+   where d.stage = 'won'
+     and d.archived_at is null
+     and d.outcome is null
+     and d.selected_deposit_amount is not null
+     and round(d.selected_deposit_amount, 2) > 0
+     and d.selected_payment_total is not null
+     and e.start_date is not null
+     and date_trunc('month', e.start_date)::date > current_date
+     and d.stripe_subscription_schedule_id is null
+     and not exists (select 1 from deal_stripe_plan_objects p
+                      where p.deal_id = d.id and p.is_current)
+     and coalesce((select sum(round(i.amount * 100)::bigint)
+                     from deal_payment_schedule_items i
+                    where i.deal_id = d.id and i.status = 'paid'), 0)
+         >= round(d.selected_deposit_amount * 100)::bigint
+     and coalesce((select sum(round(i.amount * 100)::bigint)
+                     from deal_payment_schedule_items i
+                    where i.deal_id = d.id and i.status = 'paid'), 0)
+         < round(d.selected_payment_total * 100)::bigint
+   order by d.id;
+$fn$;
+
+comment on function public.deals_awaiting_balance_schedule() is
+    'Opportunities with a paid deposit, a balance outstanding, a usable future start month and no balance schedule -- premise C of reconcile_payment_health_tasks(), as a list for the hourly sweep to retry.';
 
 -- Internal: reached from the Stripe webhook and the hourly reconciler,
 -- both of which run as the service, and from plan_balance_schedule() as
@@ -592,6 +910,12 @@ revoke all on function public.plan_balance_schedule(bigint) from public, anon, a
 grant execute on function public.plan_balance_schedule(bigint) to service_role;
 revoke all on function public.reconcile_payment_health_tasks(bigint) from public, anon, authenticated;
 grant execute on function public.reconcile_payment_health_tasks(bigint) to service_role;
+revoke all on function public.payment_health_task_reason(text) from public, anon, authenticated;
+grant execute on function public.payment_health_task_reason(text) to service_role;
+revoke all on function public.flag_balance_schedule_frozen(bigint) from public, anon, authenticated;
+grant execute on function public.flag_balance_schedule_frozen(bigint) to service_role;
+revoke all on function public.deals_awaiting_balance_schedule() from public, anon, authenticated;
+grant execute on function public.deals_awaiting_balance_schedule() to service_role;
 
 -- ---------------------------------------------------------------------
 -- 7. PROVE IT.
@@ -657,5 +981,54 @@ begin
   end if;
   if not has_function_privilege('service_role', 'public.reconcile_payment_health_tasks(bigint)', 'EXECUTE') then
     raise exception 'the webhook cannot reconcile payment health';
+  end if;
+
+  -- THE TWO ARTEFACTS ARE DISTINCT, and the migration says so rather than
+  -- trusting that they stay that way.
+  if to_regprocedure('public.flag_balance_schedule_frozen(bigint)') is null then
+    raise exception 'there is no durable manual review for a refused re-anchor';
+  end if;
+  if to_regprocedure('public.deals_awaiting_balance_schedule()') is null then
+    raise exception 'nothing states which balances are still awaiting a schedule';
+  end if;
+  -- One sentence per premise, in one place, or a Task that changes premise
+  -- starts describing the premise it used to have.
+  if public.payment_health_task_reason('balance_not_scheduled')
+       <> 'the remaining balance is not scheduled yet' then
+    raise exception 'the unscheduled-balance reason is not what the UI and the tests expect';
+  end if;
+  if public.payment_health_task_reason('nonsense') is not null then
+    raise exception 'an unknown premise invents a reason instead of returning nothing';
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'deals_payment_review_code_check'
+       and pg_get_constraintdef(oid) like '%balance_schedule_frozen%'
+  ) then
+    raise exception 'balance_schedule_frozen is not an accepted payment review code';
+  end if;
+  -- The condition reconciler must not be able to close the decision: it
+  -- writes only tasks, and never a deals.payment_review_ column.
+  --
+  -- COMMENTS STRIPPED FIRST. pg_get_functiondef() returns the body
+  -- verbatim, comments included, and the reconciler's own comments name
+  -- the column precisely in order to say it must never write it. Matching
+  -- the prose instead of the code is how this assertion failed the first
+  -- time it ran -- against code that was correct.
+  if regexp_replace(
+       pg_get_functiondef('public.reconcile_payment_health_tasks(bigint)'::regprocedure),
+       '--[^' || chr(10) || ']*', '', 'g') like '%payment\_review\_%' then
+    raise exception 'the payment-health reconciler can reach the manual review it must never close';
+  end if;
+  if has_function_privilege('authenticated', 'public.flag_balance_schedule_frozen(bigint)', 'EXECUTE') then
+    raise exception 'a browser can raise a payment review directly';
+  end if;
+  if has_function_privilege('authenticated', 'public.deals_awaiting_balance_schedule()', 'EXECUTE') then
+    raise exception 'a browser can enumerate unscheduled balances';
+  end if;
+
+  -- Nothing in production acquires this review by the migration running.
+  if exists (select 1 from deals where payment_review_code = 'balance_schedule_frozen') then
+    raise exception 'a Deal acquired a frozen-schedule review it never had';
   end if;
 end $$;

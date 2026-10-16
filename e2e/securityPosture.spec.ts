@@ -654,6 +654,66 @@ test.describe("who may decide what a client owes", () => {
     );
   });
 
+  test("a browser cannot raise a payment review, nor enumerate unscheduled balances", async () => {
+    const signedIn = await signedInClient(serviceRoleClient());
+    const anon = anonClient();
+
+    // flag_balance_schedule_frozen() writes deals.payment_review_reason,
+    // which is a claim about somebody's money. The browser asks the Edge
+    // Function to try to schedule; the Edge Function decides whether a
+    // review is warranted. A browser that could call this directly could
+    // flag any Opportunity it liked.
+    expectDenied(
+      await signedIn.rpc("flag_balance_schedule_frozen", {
+        p_opportunity_id: 1,
+      }),
+      "EXECUTE of flag_balance_schedule_frozen by authenticated",
+    );
+    expect(
+      (await anon.rpc("flag_balance_schedule_frozen", { p_opportunity_id: 1 }))
+        .error,
+      "anon EXECUTE of flag_balance_schedule_frozen was not refused",
+    ).not.toBeNull();
+
+    // And the retry list is a list of clients who owe money, which is not
+    // a browser's to enumerate either.
+    expectDenied(
+      await signedIn.rpc("deals_awaiting_balance_schedule", {}),
+      "EXECUTE of deals_awaiting_balance_schedule by authenticated",
+    );
+    expectDenied(
+      await signedIn.rpc("payment_health_task_reason", {
+        p_premise: "balance_not_scheduled",
+      }),
+      "EXECUTE of payment_health_task_reason by authenticated",
+    );
+  });
+
+  test("the review a person owns is not writable by a browser either", async () => {
+    const client = await signedInClient(serviceRoleClient());
+
+    // The one legitimate browser write to these columns is PaymentPanel's
+    // "Mark reviewed", which CLEARS them. Setting a review code by hand
+    // from the browser would be inventing a payment claim, and the
+    // constraint is what stops an unknown code getting in whichever way
+    // the write arrived.
+    const { data: deal } = await client
+      .from("deals")
+      .select("id")
+      .limit(1)
+      .maybeSingle();
+    if (deal) {
+      const { error } = await client
+        .from("deals")
+        .update({ payment_review_code: "invented_code" })
+        .eq("id", deal.id);
+      expect(
+        error,
+        "an unknown payment review code was accepted",
+      ).not.toBeNull();
+    }
+  });
+
   test("a browser cannot write a payment option or a deposit directly", async () => {
     const client = await signedInClient(serviceRoleClient());
 

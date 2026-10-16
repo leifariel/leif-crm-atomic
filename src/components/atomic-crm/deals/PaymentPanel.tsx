@@ -177,7 +177,13 @@ export const PaymentPanel = ({
     try {
       await dataProvider.update("deals", {
         id: opportunityId,
-        data: { payment_review_reason: null },
+        // BOTH columns, or the review cannot be closed at all:
+        // paymentTruth derives reviewCode from the stored code and only
+        // falls back to a derivation when there is no stored reason, so
+        // clearing the sentence while leaving the code raises the same
+        // warning forever -- the Emma Wijns failure in paymentReview.ts,
+        // one column along.
+        data: { payment_review_reason: null, payment_review_code: null },
         previousData: { id: opportunityId },
       });
       notify("Payment reviewed.", { type: "info" });

@@ -86,7 +86,11 @@ export type PaymentReviewCode =
   | "collected_exceeds_agreed"
   | "duplicate_economic_payment"
   | "identity_unresolved"
-  | "owner_flagged";
+  | "owner_flagged"
+  // A start-month change that could not be applied because the remaining
+  // balance had already begun collecting. Raised by
+  // flag_balance_schedule_frozen() and closed only by a person.
+  | "balance_schedule_frozen";
 
 export type PaymentTruth = {
   // --- what was agreed -------------------------------------------------

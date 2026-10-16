@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -39,7 +39,7 @@ const REPO_ROOT = path.resolve(
 const SQL = readFileSync(
   path.join(
     REPO_ROOT,
-    "supabase/migrations/20261017120000_a_deposit_is_credited_not_charged_twice.sql",
+    "supabase/migrations/20261016140000_a_deposit_is_credited_not_charged_twice.sql",
   ),
   "utf8",
 );
@@ -140,5 +140,65 @@ describe("the agreed total is never distorted to make the maths tidy", () => {
     expect(body).toMatch(
       /round\(p_installment_amount \* p_installments, 2\) <> round\(p_total, 2\)/,
     );
+  });
+});
+
+// R-K. NO MIGRATION IS DATED IN THE FUTURE.
+//
+// Migration 174 was written as 20261017120000 on 2026-10-16 -- a day that
+// had not happened. Nothing rejects that: it applies, it replays, and it
+// sorts after every migration written on the real day for as long as that
+// day lasts. It is only wrong, and it is wrong in a way no other check in
+// this repository was looking for.
+describe("the migration chain is never dated ahead of itself", () => {
+  const MIGRATIONS = path.join(REPO_ROOT, "supabase/migrations");
+  const versions = readdirSync(MIGRATIONS)
+    .filter((name) => /^\d{14}_.*\.sql$/.test(name))
+    .sort();
+
+  it("every version is stamped today or earlier", () => {
+    // UTC, which is the permissive end: a migration authored in any
+    // timezone behind UTC can only ever look older than today, never newer.
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const ahead = versions.filter((name) => name.slice(0, 8) > today);
+    expect(ahead, "migrations stamped in the future").toEqual([]);
+  });
+
+  it("the deposits migration is the Oct 16 one, and the future-dated name is gone", () => {
+    expect(versions).toContain(
+      "20261016140000_a_deposit_is_credited_not_charged_twice.sql",
+    );
+    expect(
+      versions.filter((name) => name.startsWith("20261017")),
+      "the future-dated migration is renamed, not copied",
+    ).toEqual([]);
+    // And it still sorts after migration 173, which it has to: it widens a
+    // constraint 173 does not touch, but the chain is only ever replayed in
+    // name order.
+    expect(
+      "20261016140000_a_deposit_is_credited_not_charged_twice.sql" >
+        "20261016120000_a_recorded_result_can_be_corrected.sql",
+    ).toBe(true);
+  });
+
+  it("nothing that has to RESOLVE still points at the old filename", () => {
+    // The manifest and the schema dump name migrations by filename, and a
+    // rename that misses one leaves a reference to a file that does not
+    // exist.
+    //
+    // HANDOFF.md is deliberately NOT in this list. It records that the
+    // migration was written as 20261017120000 on 2026-10-16 and renamed,
+    // which is history worth keeping and resolves to nothing. This
+    // assertion failed its first run for exactly that reason: it was
+    // matching prose instead of references.
+    for (const ref of [
+      "supabase/migrations/replay-manifest.json",
+      "supabase/schemas/02_functions.sql",
+    ]) {
+      expect(
+        readFileSync(path.join(REPO_ROOT, ref), "utf8"),
+        ref,
+      ).not.toContain("20261017120000");
+    }
   });
 });

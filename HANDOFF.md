@@ -4429,7 +4429,7 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8y. A deposit is credited, not charged twice — DEPOSITS, BUILT NOT DEPLOYED (2026-10-17)
+## 8y. A deposit is credited, not charged twice — DEPOSITS, BUILT NOT DEPLOYED (2026-10-16)
 
 Leif takes a fixed deposit now and the rest on the first day of the client's
 programme start month, on the payment plan they already chose. The audit
@@ -4629,7 +4629,7 @@ payment page would have been a lie about what their card is charged.
 ### State
 
 - migration **174**
-  `20261017120000_a_deposit_is_credited_not_charged_twice.sql` — built,
+  `20261016140000_a_deposit_is_credited_not_charged_twice.sql` — built,
   **NOT deployed**
 - deterministic chain **148** · MAIN-only **26** · total **174**
 - **production unchanged.** Read-only discovery only: no payment option
@@ -4647,18 +4647,110 @@ payment page would have been a lie about what their card is charged.
 4. After the first balance charge a start-date change is **refused** with a
    manual-review state.
 
-### One deliberate deviation, flagged rather than hidden
+### 8y-hardening. The convergence boundary — RESOLVED (2026-10-16)
 
-The brief asked for a payment-review Task on the **post-first-charge**
-reschedule refusal as well. The two durable conditions (an unhealthy plan; a
-past-due unschedulable balance) are reconciled declaratively, so the same
-query that opens a Task closes it. "Somebody tried to re-anchor a schedule
-that has already charged" is an **event**, not a condition: nothing about the
-client's account is wrong, and a Task raised for it would be closed by the
-very next reconciliation. So that refusal returns its status and reason to
-the caller and raises nothing standing. **If Leif wants a durable artefact
-there, it needs a different shape** — most likely a note on the Opportunity
-rather than a Task about a payment.
+Three narrow repairs on top of the deposits build, before pushing. The first
+closes the deviation flagged above; the second closes a stranding hole that
+flagging it uncovered.
+
+**THE DEVIATION IS RESOLVED, AND NOT AS A TASK.** The post-first-charge
+refusal now raises a durable manual review on the Deal:
+`payment_review_code = 'balance_schedule_frozen'`, written by
+`flag_balance_schedule_frozen()`. The reason it is not a Task is unchanged —
+it is an event, so a declarative reconciler would close it on its next pass —
+but the existing `payment_review_reason` / `payment_review_code` pair is the
+right home for three STRUCTURAL reasons, not by preference:
+
+- **dedupe is structural.** One column on one Deal. A repeated refusal has
+  nowhere to put a duplicate. It also refuses to stack on a review somebody
+  else raised, returning `another-review-stands`.
+- **it cannot be auto-closed.** `ingestStripePayments()` resolves
+  `existingReviewReason ?? ambiguity ?? computed`, so a stored reason wins
+  over anything the hourly reconciliation computes; and
+  `reconcile_payment_health_tasks()` writes `tasks` and nothing else. The
+  migration asserts both, and the second one by stripping comments first —
+  the assertion failed on its first run against correct code, because
+  `pg_get_functiondef()` returns the comments too and the function's own
+  comments name the column in order to say it must never write it.
+- **it already has a manual resolution.** `canMarkReviewed()` allows a
+  stored, deliberately-raised review to be closed by a person, and
+  PaymentPanel's "Mark reviewed" is that action.
+
+**ONE REAL BUG FOUND IN THAT PAIR, AND FIXED.** "Mark reviewed" cleared only
+`payment_review_reason`, while `paymentTruth` falls back to the stored
+`payment_review_code`. Any stored code would therefore have kept the warning
+up forever — the Emma Wijns failure recorded in `paymentReview.ts`, one
+column along. Latent until now because nothing had ever written a code; this
+slice is the first writer, so it would have shipped unresolvable. It clears
+both.
+
+**THE STRANDING HOLE — a committed client could have gone silent.** The CRM
+and Stripe cannot share a transaction: `enrollments.start_date` commits
+first and the schedule is a consequence. Every way that consequence could
+fail — the Edge call never made, a network error, a provider error, no saved
+card — left a Deal with a collected deposit, a balance owed, a known future
+start month, **no schedule and nothing saying so**. Three things made it
+invisible:
+
+- `ClientEditModal` called `void scheduleBalanceForOpportunity(...)` and
+  **discarded the result entirely**.
+- the payment-health reconciler's deposit premise required
+  `date_trunc('month', start_date) <= current_date` — so every FUTURE anchor
+  was out of scope, which is every anchor that matters here.
+- two code comments claimed "the hourly reconciler sweeps the same decision".
+  It did not. `reconcile-stripe` (hourly, `:47`) called `reconcileStripe`
+  and, **on the fleet-wide cron path, not even `reconcilePaymentHealth`** —
+  an hourly job whose purpose is converging payment truth was converging only
+  the money, and nothing anywhere retried a balance schedule.
+
+**THE INVARIANT NOW.** A Deal with a collected deposit, a balance
+outstanding and a usable future start month converges to EITHER the correct
+current Stripe balance schedule OR a durable actionable state saying why it
+has not got one. Never a third, silent state. Carried by:
+
+| premise | artefact | lifecycle |
+|---|---|---|
+| A the current plan is not collecting | `check_payment` Task | condition — auto-closes on recovery |
+| B deposit in, balance owed, start month **already gone** | `check_payment` Task | condition — closes when Leif states a workable month or an arrangement exists |
+| C deposit in, balance owed, **usable future** month, no schedule | `check_payment` Task | condition — closes the moment a schedule exists |
+| a person's re-anchor refused after money moved | `payment_review_code` | **decision — only a person closes it** |
+
+`deals_awaiting_balance_schedule()` states premise C as a list, so the Deals
+the hourly sweep retries and the Deals that raise a Task are the same set by
+construction. One open `check_payment` per Opportunity, and its text is
+**restated** when its premise changes (it is written at insert, and the dedupe
+deliberately does not add a second Task, so a Deal that moved from B to C
+would otherwise keep reporting a month that is now fine). The restate only
+ever rewrites a sentence `payment_health_task_reason()` itself produced, so a
+`check_payment` Task somebody typed is left exactly as typed.
+
+**A PRE-EXISTING TEST WAS ASSERTING THE HOLE.** `V` ended with: Leif states a
+workable month, therefore the review closes. That asserted that a Deal with a
+paid deposit, a balance owed, a known month and **no schedule** had nothing
+outstanding — precisely the forbidden state. It now asserts that the Task
+stays (restated to "not scheduled yet") and closes when the schedule exists.
+
+**GYU CONVERGES WITHOUT A SCREEN BEING OPENED.** `handle_deal_won()`
+snapshots the cohort's `program_start_at` onto the Enrollment, so the anchor
+exists before the deposit webhook calls `ensureBalanceSchedule` — no Start
+Week save is involved, and R-I proves it end to end on a real cohort. That
+path had **no test at all** until a sensitivity break went looking for one;
+it now has two contract assertions (scheduled after the sale, and a provider
+failure never fails the delivery).
+
+**LE IS UNCHANGED.** Deposit paid, `start_date` NULL, no schedule, and
+**nothing raised** — premise C requires a start date, so the CRM does not
+invent a problem out of its own ignorance. StartWeekCard remains the explicit
+next action (R-J).
+
+**THE MIGRATION WAS DATED IN THE FUTURE.** `20261017120000` written on
+2026-10-16, renamed to `20261016140000`. Nothing rejected it: it applied,
+replayed and sorted correctly. A contract now asserts no migration version is
+stamped later than today, and that the old name is referenced nowhere.
+
+**What Leif still owns here:** nothing. The refusal is truthful in the UI the
+moment it happens (`balanceScheduleNotice()`), durable on the Opportunity
+afterwards, and closed by hand when she has decided.
 
 ### Roadmap
 
@@ -4676,7 +4768,6 @@ Two items this slice adds to that queue, neither introduced by it:
 | `e2e/startWeekGoldenJourney.spec.ts` | **repaired here, not deferred**: a geometry assertion demanded two date inputs be within **4 pixels** of each other, a figure measured once on a Pixel 5. It failed on desktop chromium at 4.0856px — **proven pre-existing by re-running it with this slice stashed**. The defect it names is one input collapsing to a THIRD of the other, so the tolerance is now RELATIVE (5%), which catches a collapse by a factor of thirteen and ignores sub-pixel rounding |
 | `e2e/fall2026CohortRepair.spec.ts` | **repaired here, not deferred**: the test timed out on its FIRST assertion after a cold load of the Applications list (element-not-found in a 5s window), once, in a suite that had just grown by ~77 tests. It passes alone. The assertion is unchanged -- it still demands the Growing Yourself Up group AND a "No cohort recorded" subsection -- but the page is now given time to have rendered its groups at all, and the test a budget that fits two cold loads plus a real migration run. Same family as the Kit race repaired in `4e1b488c` |
 | `waitlist/waitlistEditLightbox.test.tsx` | one racy assertion ("corrects the email on that same Contact") fails under full-suite load. **Proven pre-existing at `a1ee270d`** with this slice's work stashed. Same family as the Kit race repaired in `4e1b488c` |
-| the post-first-charge reschedule artefact | the deliberate deviation above, awaiting Leif's preference |
 
 ## 8y-audit. Deposits — the architecture audit that preceded the build (2026-10-16)
 

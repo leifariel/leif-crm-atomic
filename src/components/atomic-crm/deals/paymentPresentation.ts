@@ -276,6 +276,13 @@ export const describeReview = (truth: PaymentTruth): string | null => {
       return "The same money appears to be recorded twice, from two provenances.";
     case "identity_unresolved":
       return "Payments were found on a Stripe customer this person is not linked to.";
+    // DELIBERATELY the stored sentence, unlike every case above. This one
+    // records what happened at a moment -- a start month was changed after
+    // money had already moved -- so re-deriving it from today's figures
+    // would describe a different event. The sentence is composed in SQL
+    // from the database's own state at the time, never from anything a
+    // caller passed in.
+    case "balance_schedule_frozen":
     case "owner_flagged":
     default:
       return truth.reviewReason;
