@@ -32,8 +32,27 @@ const admin = () =>
 const daysFromNow = (days: number): Date =>
   new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 
+/**
+ * A calendar day in the CRM's ONE calendar timezone.
+ *
+ * deals.follow_up_date is a calendar date and the card bands it against
+ * crmDayKey(), which formats in America/Denver (deals/pipelineOrdering.ts).
+ * This used to slice an ISO string, which is a UTC day -- so between 18:00
+ * and 24:00 MDT the two disagreed, "today" was seeded as tomorrow, and the
+ * Decision card correctly read "Decision due" instead of "Follow up today".
+ *
+ * Found by this suite failing at 00:04 UTC on 2026-10-16 (18:04 MDT) after
+ * passing twice earlier the same evening. Not flake: a reproducible
+ * six-hour window every day. The fixture's notion of "today" was wrong, not
+ * the product's.
+ */
 const isoDay = (days: number): string =>
-  daysFromNow(days).toISOString().slice(0, 10);
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Denver",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(daysFromNow(days));
 
 /** A Contact and an Opportunity, named so the board is readable. */
 const seedOpportunity = async (
