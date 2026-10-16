@@ -30,6 +30,12 @@ export type OfferPagePaymentOption = {
   total: number;
   installments: number;
   installmentAmount: number;
+  /**
+   * Due today, credited toward . Null or 0 is no deposit, which is
+   * every option that existed before deposits -- that page must look
+   * exactly as it did.
+   */
+  depositAmount?: number | null;
 };
 
 export type PublicOfferPageContext =
@@ -126,7 +132,12 @@ export const getOfferPageContext = async (
     assessment.status === "catalog"
       ? await resolvePaymentOptions(dataProvider, deal)
       : assessment.status === "payable"
-        ? [agreedTermsAsOption(assessment.terms)]
+        ? [
+            agreedTermsAsOption(
+              assessment.terms,
+              deal.selected_deposit_amount ?? null,
+            ),
+          ]
         : [];
 
   return {
@@ -153,12 +164,14 @@ export const AGREED_TERMS_OPTION_ID = "agreed-terms";
 
 const agreedTermsAsOption = (
   terms: ExactInstallments,
+  depositAmount: number | null,
 ): OfferPagePaymentOption => ({
   id: AGREED_TERMS_OPTION_ID,
   name: terms.installments === 1 ? "Payment" : "Payment plan",
   total: terms.total,
   installments: terms.installments,
   installmentAmount: terms.installmentAmount,
+  depositAmount,
 });
 
 const describeStatus = (
@@ -220,6 +233,8 @@ const resolvePaymentOptions = async (
             total: deal.selected_payment_total,
             installments: deal.selected_installment_count,
             installmentAmount: deal.selected_installment_amount,
+            // The agreement's own, never the catalogue's current value.
+            depositAmount: deal.selected_deposit_amount ?? null,
           },
         ]
       : [];
@@ -251,6 +266,7 @@ const resolvePaymentOptions = async (
         total: option.total,
         installments: option.installments,
         installmentAmount: option.installment_amount,
+        depositAmount: option.deposit_amount ?? null,
       }))
   );
 };

@@ -43,9 +43,42 @@ export type PaymentState =
   | "paid_in_full"
   | "active_plan"
   | "scheduled_plan"
+  // Deposits slice: a plan EXISTS and is not collecting. Stripe says
+  // past_due / unpaid (a charge failed) or incomplete (the customer has to
+  // authenticate). Before this, a Deal whose card had failed read
+  // "active_plan" on the strength of money collected months earlier --
+  // hasCurrentPlan asked only whether a plan existed, never whether it was
+  // working. Harmless while every plan was set up by hand in the Stripe
+  // dashboard; not harmless once a deposit's whole premise is that the
+  // client leaves and the balance is charged off-session.
+  | "payment_failed"
+  // Deposits slice: the deposit is in, a balance is still owed, and nothing
+  // is scheduled to collect it yet. The ordinary state of a Living Example
+  // client between paying and Leif stating their start week.
+  //
+  // It used to read "active_plan", on the strength of money having been
+  // collected -- which is exactly the claim that must not be made, because
+  // there is no plan. paymentSetupComplete was already correctly false; this
+  // makes the NAME true as well, so no surface can report a complete
+  // financial arrangement from a deposit alone.
+  | "deposit_paid"
   | "setup_pending"
   | "needs_review"
   | "unknown";
+
+/**
+ * What Stripe says about the plan that is supposed to be collecting.
+ *
+ * Read from the status the reconciler ALREADY stores on
+ * deal_stripe_plan_objects -- no new financial column. "unknown" means
+ * there is no current plan to have a health, which is not the same as
+ * healthy.
+ */
+export type PlanHealth = "healthy" | "past_due" | "action_required" | "unknown";
+
+/** Stripe's own vocabulary for a subscription that is not collecting. */
+const FAILING_STATUSES = new Set(["past_due", "unpaid"]);
+const AUTHENTICATION_STATUSES = new Set(["incomplete", "incomplete_expired"]);
 
 export type PaymentReviewCode =
   | "terms_unknown"
@@ -86,6 +119,15 @@ export type PaymentTruth = {
   planReplaced: boolean;
   stripeLinked: boolean;
 
+  // --- the deposit -----------------------------------------------------
+  /** What was agreed as payable up front. Null when no deposit was agreed. */
+  depositAgreed: number | null;
+  /** Satisfied by money, in cents, never by a Checkout having been opened. */
+  depositPaid: boolean;
+
+  // --- is the plan actually working ------------------------------------
+  planHealth: PlanHealth;
+
   // --- verdicts --------------------------------------------------------
   paidInFull: boolean;
   paymentSetupComplete: boolean;
@@ -118,6 +160,7 @@ export const assessPaymentTruth = ({
     | "selected_payment_total"
     | "selected_installment_count"
     | "selected_installment_amount"
+    | "selected_deposit_amount"
     | "stripe_subscription_id"
     | "stripe_subscription_schedule_id"
     | "payment_review_reason"
@@ -168,12 +211,35 @@ export const assessPaymentTruth = ({
       )
     : null;
 
+  // --- the deposit -----------------------------------------------------
+  const depositAgreed = number(deal.selected_deposit_amount);
+  const depositCents = depositAgreed == null ? 0 : CENTS(depositAgreed);
+  // Money, in cents, and nothing else. A Checkout that was opened proves
+  // nothing; a deposit is paid when a receipt says so. A client who paid
+  // the whole total up front has also satisfied it, which is true.
+  const depositPaid =
+    depositCents > 0 && collectedCents + TOLERANCE >= depositCents;
+
   // --- arrangement -----------------------------------------------------
   const hasCurrentPlan =
     planObjects.some((object) => object.is_current) ||
     Boolean(
       deal.stripe_subscription_id || deal.stripe_subscription_schedule_id,
     );
+  // Health, from the status Stripe owns and the reconciler already writes.
+  const currentPlans = planObjects.filter((object) => object.is_current);
+  const planHealth: PlanHealth = !currentPlans.length
+    ? "unknown"
+    : currentPlans.some((object) =>
+          AUTHENTICATION_STATUSES.has(String(object.status ?? "")),
+        )
+      ? "action_required"
+      : currentPlans.some((object) =>
+            FAILING_STATUSES.has(String(object.status ?? "")),
+          )
+        ? "past_due"
+        : "healthy";
+
   const planReplaced =
     planObjects.filter((object) => object.object_type === "subscription")
       .length > 1;
@@ -213,15 +279,23 @@ export const assessPaymentTruth = ({
     ? "No agreed total is recorded for this Opportunity."
     : storedReason;
 
+  // A plan that is not collecting is the most important thing true about
+  // this Deal, short of the money being fully in. It must outrank
+  // "active_plan": money collected in the past is exactly what used to
+  // hide a card that had since failed.
   const base: PaymentState = paidInFull
     ? "paid_in_full"
-    : collectedCents > 0
-      ? "active_plan"
-      : hasCurrentPlan || ownerConfirmedSetup
-        ? "scheduled_plan"
-        : deal.stage === "won"
-          ? "setup_pending"
-          : "unknown";
+    : planHealth === "past_due" || planHealth === "action_required"
+      ? "payment_failed"
+      : depositPaid && !hasCurrentPlan && !ownerConfirmedSetup
+        ? "deposit_paid"
+        : collectedCents > 0
+          ? "active_plan"
+          : hasCurrentPlan || ownerConfirmedSetup
+            ? "scheduled_plan"
+            : deal.stage === "won"
+              ? "setup_pending"
+              : "unknown";
 
   // A review outranks everything except money that fully reconciles
   // against known terms — the one conclusion an open question cannot
@@ -245,6 +319,9 @@ export const assessPaymentTruth = ({
     setupConfirmedElsewhere: ownerConfirmedSetup,
     planReplaced,
     stripeLinked,
+    depositAgreed,
+    depositPaid,
+    planHealth,
     paidInFull,
     paymentSetupComplete,
     state,

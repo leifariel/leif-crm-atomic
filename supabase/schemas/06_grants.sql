@@ -263,10 +263,23 @@ revoke select, insert, update, delete on table public.offer_payment_options from
 -- Closed to the browser: every change goes through set_offer_payment_option,
 -- which refuses to rewrite an option somebody already chose.
 revoke insert, update, delete on table public.offer_payment_options from authenticated;
-revoke all on function public.set_offer_payment_option(bigint, text, numeric, smallint, numeric, boolean, text, bigint) from public;
-revoke all on function public.set_offer_payment_option(bigint, text, numeric, smallint, numeric, boolean, text, bigint) from anon;
-grant execute on function public.set_offer_payment_option(bigint, text, numeric, smallint, numeric, boolean, text, bigint) to authenticated;
-grant execute on function public.set_offer_payment_option(bigint, text, numeric, smallint, numeric, boolean, text, bigint) to service_role;
+revoke all on function public.set_offer_payment_option(bigint, text, numeric, smallint, numeric, boolean, text, bigint, numeric) from public;
+revoke all on function public.set_offer_payment_option(bigint, text, numeric, smallint, numeric, boolean, text, bigint, numeric) from anon;
+grant execute on function public.set_offer_payment_option(bigint, text, numeric, smallint, numeric, boolean, text, bigint, numeric) to authenticated;
+grant execute on function public.set_offer_payment_option(bigint, text, numeric, smallint, numeric, boolean, text, bigint, numeric) to service_role;
+
+-- Deposits slice. The balance planner and the allocation it uses are
+-- INTERNAL: a browser must not be able to decide what a client owes or when.
+-- The Stripe webhook and the hourly reconciler reach them as the service;
+-- plan_balance_schedule() reaches allocate_balance_cents() as the owner.
+-- reconcile_payment_health_tasks() is the only one the service calls
+-- directly, because a failed off-session charge has to become a Task.
+revoke all on function public.allocate_balance_cents(bigint, int) from public, anon, authenticated;
+grant execute on function public.allocate_balance_cents(bigint, int) to service_role;
+revoke all on function public.plan_balance_schedule(bigint) from public, anon, authenticated;
+grant execute on function public.plan_balance_schedule(bigint) to service_role;
+revoke all on function public.reconcile_payment_health_tasks(bigint) from public, anon, authenticated;
+grant execute on function public.reconcile_payment_health_tasks(bigint) to service_role;
 revoke all on function public.set_offer_payment_option_active(bigint, boolean) from public;
 revoke all on function public.set_offer_payment_option_active(bigint, boolean) from anon;
 grant execute on function public.set_offer_payment_option_active(bigint, boolean) to authenticated;

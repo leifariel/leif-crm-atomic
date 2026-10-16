@@ -14,7 +14,7 @@ import {
 // Every column the decision reads. Both functions select these, so a
 // missing column cannot make one of them silently more permissive.
 export const CHECKOUT_FACT_COLUMNS =
-  "id, stage, pricing_mode, offer_price_snapshot, selected_payment_total, selected_payment_total_source, selected_installment_count, selected_installment_amount, stripe_subscription_id, stripe_subscription_schedule_id, payment_setup_confirmed_at";
+  "id, stage, pricing_mode, offer_price_snapshot, selected_payment_total, selected_payment_total_source, selected_installment_count, selected_installment_amount, selected_deposit_amount, stripe_subscription_id, stripe_subscription_schedule_id, payment_setup_confirmed_at";
 
 export type CheckoutFactRow = {
   id: number;
@@ -25,6 +25,7 @@ export type CheckoutFactRow = {
   selected_payment_total: number | null;
   selected_installment_count: number | null;
   selected_installment_amount: number | null;
+  selected_deposit_amount: number | null;
   stripe_subscription_id: string | null;
   stripe_subscription_schedule_id: string | null;
   payment_setup_confirmed_at: string | null;

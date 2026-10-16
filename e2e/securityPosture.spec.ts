@@ -610,3 +610,95 @@ test.describe("who may correct a recorded sales-call result", () => {
     ).toContain("sales_call_events_correction_kind_check");
   });
 });
+
+// Deposits slice. Money is server-authoritative: a browser may configure a
+// payment option (that is Leif's own screen) and may ask for a balance to be
+// scheduled, but it must never be able to DECIDE what a client owes or when.
+test.describe("who may decide what a client owes", () => {
+  test("the balance planner is reachable by no client role", async () => {
+    const signedIn = await signedInClient(serviceRoleClient());
+    const args = { p_opportunity_id: 1 };
+
+    expectDenied(
+      await signedIn.rpc("plan_balance_schedule", args),
+      "EXECUTE of plan_balance_schedule by authenticated",
+    );
+    expect(
+      (await anonClient().rpc("plan_balance_schedule", args)).error,
+      "anon EXECUTE of plan_balance_schedule was not refused",
+    ).not.toBeNull();
+  });
+
+  test("the cent allocation is reachable by no client role", async () => {
+    const signedIn = await signedInClient(serviceRoleClient());
+    const args = { p_balance_cents: 349600, p_installments: 6 };
+
+    expectDenied(
+      await signedIn.rpc("allocate_balance_cents", args),
+      "EXECUTE of allocate_balance_cents by authenticated",
+    );
+    expect(
+      (await anonClient().rpc("allocate_balance_cents", args)).error,
+      "anon EXECUTE of allocate_balance_cents was not refused",
+    ).not.toBeNull();
+  });
+
+  test("payment health is asserted by the service, never by a browser", async () => {
+    const signedIn = await signedInClient(serviceRoleClient());
+
+    expectDenied(
+      await signedIn.rpc("reconcile_payment_health_tasks", {
+        p_opportunity_id: null,
+      }),
+      "EXECUTE of reconcile_payment_health_tasks by authenticated",
+    );
+  });
+
+  test("a browser cannot write a payment option or a deposit directly", async () => {
+    const client = await signedInClient(serviceRoleClient());
+
+    // The catalogue has been closed to the browser since 20261009120000;
+    // the deposit column inherits that, and adding it widened nothing.
+    expectDenied(
+      await client.from("offer_payment_options").insert({
+        offer_id: 1,
+        name: "Smuggled",
+        total: 4000,
+        installments: 1,
+        installment_amount: 4000,
+        deposit_amount: 500,
+      }),
+      "INSERT into offer_payment_options by authenticated",
+    );
+    expectDenied(
+      await client
+        .from("offer_payment_options")
+        .update({ deposit_amount: 0 })
+        .eq("id", 1),
+      "UPDATE of offer_payment_options by authenticated",
+    );
+  });
+
+  test("but the owner's own configuration screen still works", async () => {
+    const client = await signedInClient(serviceRoleClient());
+
+    // set_offer_payment_option is granted to authenticated on purpose: it is
+    // Leif's screen, and every refusal lives inside the function.
+    const { data, error } = await client.rpc("set_offer_payment_option", {
+      p_offer_id: 1,
+      p_name: "Posture check",
+      p_total: 4000,
+      p_installments: 1,
+      p_installment_amount: 4000,
+      p_is_public: false,
+      p_pricing_mode: "standard",
+      p_option_id: null,
+      p_deposit_amount: 500,
+    });
+    expect(
+      error,
+      "authenticated lost EXECUTE on set_offer_payment_option",
+    ).toBeNull();
+    expect((data as { status?: string })?.status).toBe("added");
+  });
+});

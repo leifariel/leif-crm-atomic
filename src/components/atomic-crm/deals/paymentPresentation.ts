@@ -104,6 +104,54 @@ export const presentPayment = (
         outstanding: null,
       };
 
+    // THE DEPOSIT IS IN AND NOTHING IS CARRYING THE REST.
+    //
+    // Said plainly, because the honest words are the whole point: money has
+    // arrived, the arrangement does not exist yet, and what unblocks it is
+    // one field on the client's own page. This used to read "Active payment
+    // plan" on the strength of the deposit alone.
+    case "deposit_paid":
+      return {
+        headline: "Deposit paid",
+        detail: [
+          formatMoney(truth.collected) + " collected",
+          truth.depositAgreed != null
+            ? formatMoney(truth.depositAgreed) + " deposit agreed"
+            : "Deposit agreed",
+          // The actionable half. The start week itself is set on the
+          // client's page, where StartWeekCard already asks for it.
+          "The balance is not scheduled yet — it begins on the 1st of the programme start month",
+        ],
+        outstanding:
+          truth.remaining != null && truth.remaining > 0
+            ? formatMoney(truth.remaining) + " remaining"
+            : null,
+      };
+
+    // A PLAN THAT IS NOT COLLECTING.
+    //
+    // Stripe says past_due / unpaid / incomplete and the reconciler has
+    // stored it. Before deposits nothing read that status, so a client whose
+    // card had failed read "Active payment plan" from money collected months
+    // earlier. A check_payment Task is raised alongside this.
+    case "payment_failed":
+      return {
+        headline:
+          truth.planHealth === "action_required"
+            ? "Payment needs the client to authenticate"
+            : "A scheduled payment did not go through",
+        detail: [
+          formatMoney(truth.collected) + " collected",
+          truth.planHealth === "action_required"
+            ? "Stripe is waiting for the client to confirm the charge"
+            : "Stripe is retrying the card",
+        ],
+        outstanding:
+          truth.remaining != null && truth.remaining > 0
+            ? formatMoney(truth.remaining) + " remaining"
+            : null,
+      };
+
     case "active_plan":
       return {
         headline: "Active payment plan",

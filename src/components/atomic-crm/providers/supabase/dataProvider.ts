@@ -577,6 +577,7 @@ const getDataProviderWithCustomMethods = () => {
       installmentAmount: number;
       isPublic: boolean;
       pricingMode: string;
+      depositAmount?: number | null;
       optionId?: Identifier | null;
     }) {
       const { data, error } = await getSupabaseClient().rpc(
@@ -588,6 +589,9 @@ const getDataProviderWithCustomMethods = () => {
           p_installments: draft.installments,
           p_installment_amount: draft.installmentAmount,
           p_is_public: draft.isPublic,
+          // Null and 0 are both "no deposit"; the function stores what it is
+          // given and refuses one larger than the option's own total.
+          p_deposit_amount: draft.depositAmount ?? null,
           p_pricing_mode: draft.pricingMode,
           p_option_id: draft.optionId ?? null,
         },

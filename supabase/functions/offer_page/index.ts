@@ -44,6 +44,7 @@ type DealRow = {
   selected_payment_total: number | null;
   selected_installment_count: number | null;
   selected_installment_amount: number | null;
+  selected_deposit_amount: number | null;
   stripe_subscription_id: string | null;
   stripe_subscription_schedule_id: string | null;
   payment_setup_confirmed_at: string | null;
@@ -64,6 +65,7 @@ type OfferPaymentOptionRow = {
   total: number;
   installments: number;
   installment_amount: number;
+  deposit_amount: number | null;
 };
 
 const jsonResponse = (body: unknown, status = 200) =>
@@ -96,6 +98,9 @@ const resolveCatalogOptions = async (
     total: number;
     installments: number;
     installmentAmount: number;
+    // Due today, credited toward total. Null/0 is no deposit, which is
+    // every option that existed before deposits.
+    depositAmount?: number | null;
   }[]
 > => {
   if (deal.selected_payment_option_id != null) {
@@ -118,6 +123,7 @@ const resolveCatalogOptions = async (
         total: deal.selected_payment_total,
         installments: deal.selected_installment_count,
         installmentAmount: deal.selected_installment_amount,
+        depositAmount: deal.selected_deposit_amount ?? null,
       },
     ];
   }
@@ -128,7 +134,7 @@ const resolveCatalogOptions = async (
   // stops being offered to anybody new.
   const { data: options } = await supabaseAdmin
     .from("offer_payment_options")
-    .select("id, name, total, installments, installment_amount")
+    .select("id, name, total, installments, installment_amount, deposit_amount")
     .eq("offer_id", deal.offer_id)
     .eq("is_public", true)
     .eq("is_active", true)
@@ -140,6 +146,7 @@ const resolveCatalogOptions = async (
     total: option.total,
     installments: option.installments,
     installmentAmount: option.installment_amount,
+    depositAmount: option.deposit_amount ?? null,
   }));
 };
 
@@ -185,6 +192,7 @@ const handleContext = async (body: Record<string, unknown>) => {
               total: assessment.terms.total,
               installments: assessment.terms.installments,
               installmentAmount: assessment.terms.installmentAmount,
+              depositAmount: deal.selected_deposit_amount ?? null,
             },
           ]
         : [];

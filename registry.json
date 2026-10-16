@@ -1322,6 +1322,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/deals/scheduleBalance.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/deals/resolveAuthorizedCheckoutTerms.ts",
           "type": "registry:component"
         },
@@ -1443,6 +1447,10 @@
         },
         {
           "path": "src/components/atomic-crm/deals/dneOutcome.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/deals/depositAllocation.ts",
           "type": "registry:component"
         },
         {

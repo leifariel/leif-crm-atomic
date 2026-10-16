@@ -17,6 +17,7 @@ import type { Enrollment } from "../types";
 import { enrollmentStatuses } from "./enrollmentConstants";
 import { ProjectedFinalWeekField } from "./ProjectedFinalWeekField";
 import { assessEnrollmentSave, saveOutcomeMessage } from "./savedWhatWasStated";
+import { scheduleBalanceForOpportunity } from "../deals/scheduleBalance";
 
 // The three operational facts about a client Leif actually edits: where they
 // are in the programme, the week they start, and the day they finished if
@@ -118,6 +119,24 @@ export const ClientEditModal = ({
               const message = saveOutcomeMessage(verdict);
               if (verdict.kind === "saved") {
                 notify(message, { type: "info" });
+                // THE DATE IS THE FACT; THE SCHEDULE IS A CONSEQUENCE.
+                //
+                // A deposit-paying client's remaining balance is anchored
+                // on the first of their programme start month, so stating
+                // the start week is exactly the moment that anchor becomes
+                // knowable. Asked for here so the schedule exists straight
+                // away rather than up to an hour later.
+                //
+                // Deliberately not awaited and never allowed to change the
+                // verdict: the start week has been saved and Leif has been
+                // told so truthfully. Every refusal is a legitimate answer
+                // (no deposit on this agreement, deposit not paid, the 1st
+                // already passed, a balance payment already succeeded), the
+                // call is idempotent, and the hourly reconciler sweeps the
+                // same decision regardless.
+                if (saved.opportunity_id != null) {
+                  void scheduleBalanceForOpportunity(saved.opportunity_id);
+                }
                 onOpenChange(false);
                 refresh();
                 return;

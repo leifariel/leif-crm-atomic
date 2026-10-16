@@ -6,7 +6,13 @@ import { NotFoundNotice } from "../public-application/NotFoundNotice";
 import { PublicApplicationLayout } from "../public-application/PublicApplicationLayout";
 import { useConfigurationContext } from "../root/ConfigurationContext";
 import { formatOfferPageAmount } from "./offerPageMoney";
+import {
+  allocateBalance,
+  centsToAmount,
+  describePhases,
+} from "./depositAllocation";
 import type {
+  OfferPagePaymentOption,
   OfferPagePaymentState,
   OfferPagePaymentStatus,
   PublicOfferPageContext,
@@ -270,11 +276,7 @@ export const OfferPage = ({
                 >
                   <div className="flex flex-col gap-0.5">
                     <span className="text-sm font-medium">{option.name}</span>
-                    <span className="text-sm text-muted-foreground">
-                      {option.installments === 1
-                        ? `${formatOfferPageAmount(option.total, currency)} once`
-                        : `${option.installments} × ${formatOfferPageAmount(option.installmentAmount, currency)}`}
-                    </span>
+                    <OptionTerms option={option} currency={currency} />
                     {/* Terms, never a receipt. This line used to say
                         "First payment of $X received" for anybody already
                         Won, generated from the installment structure with
@@ -305,3 +307,69 @@ export const OfferPage = ({
 };
 
 OfferPage.path = "/offer/:token";
+
+/**
+ * What this option actually costs, and when.
+ *
+ * With no deposit it says exactly what it always said -- one payment, or
+ * N × the monthly amount -- so every existing option's page is unchanged.
+ *
+ * With a deposit it has to say four things truthfully, because the prospect
+ * is about to be charged the first of them: the programme total, what is due
+ * TODAY, that today's money is CREDITED rather than extra, and what remains.
+ * The remaining split is computed by deals/depositAllocation.ts -- the same
+ * module the owner's form and the Stripe schedule use -- so the page cannot
+ * promise a number the card will not be charged.
+ *
+ * AND IT DOES NOT INVENT A DATE. For The Living Example the start week is
+ * Leif's to set during onboarding and may not exist yet, so the page says
+ * "the 1st of your programme start month" rather than a calendar date it
+ * does not know.
+ */
+const OptionTerms = ({
+  option,
+  currency,
+}: {
+  option: OfferPagePaymentOption;
+  currency: string;
+}) => {
+  const money = (amount: number) => formatOfferPageAmount(amount, currency);
+
+  const allocation =
+    option.depositAmount != null && option.depositAmount > 0
+      ? allocateBalance({
+          agreedTotal: option.total,
+          deposit: option.depositAmount,
+          installments: option.installments,
+        })
+      : null;
+
+  if (allocation == null || allocation.status !== "allocated") {
+    return (
+      <span className="text-sm text-muted-foreground">
+        {option.installments === 1
+          ? money(option.total) + " once"
+          : option.installments + " × " + money(option.installmentAmount)}
+      </span>
+    );
+  }
+
+  const { depositCents, balanceCents, phases } = allocation.allocation;
+  return (
+    <div className="flex flex-col gap-0.5 text-sm text-muted-foreground">
+      <span>Programme total {money(option.total)}</span>
+      <span className="font-medium text-foreground">
+        {money(centsToAmount(depositCents))} due today
+      </span>
+      <span>credited toward the programme total</span>
+      <span>
+        Remaining {money(centsToAmount(balanceCents))}
+        {balanceCents > 0 ? ": " : ""}
+        {balanceCents > 0 ? describePhases(phases, money) : ""}
+      </span>
+      {balanceCents > 0 && (
+        <span>beginning on the 1st of your programme start month</span>
+      )}
+    </div>
+  );
+};

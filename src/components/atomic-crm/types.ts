@@ -194,6 +194,15 @@ export type OfferPaymentOption = {
   total: number;
   installments: number;
   installment_amount: number;
+  // Deposits slice: credited toward THIS option's total, and versioned with
+  // the rest of it. Null or 0 is no deposit -- every option that existed
+  // before deposits, whose behaviour must not change.
+  //
+  // installment_amount above stays the PRE-deposit figure: Financial Need is
+  // $3,996 in 6 x $666, and the balance split (4 x $582.67 then 2 x $582.66)
+  // is DERIVED by deals/depositAllocation.ts. Storing the derived split here
+  // would duplicate the authority.
+  deposit_amount?: number | null;
   is_public: boolean;
   // Optional in TS (not just "may be omitted" — it has a real, universal
   // safe default of "standard" applied by both the Postgres column
@@ -1111,6 +1120,14 @@ export type Deal = {
   selected_payment_total?: number | null;
   selected_installment_count?: number | null;
   selected_installment_amount?: number | null;
+  // Deposits slice: the fourth commercial snapshot field, for the same
+  // reason as the three above it -- a later catalogue edit must not be able
+  // to reinterpret an agreement somebody already made, and the BALANCE is
+  // derived from this (agreed total minus this). Reading the deposit from
+  // the catalogue while reading the total from here could compute a balance
+  // from two different versions of one agreement. Null means no deposit was
+  // agreed, which is every Deal that existed before deposits.
+  selected_deposit_amount?: number | null;
   // Payment domain foundation slice: the opaque public token the
   // personalized Offer Page resolves by — never the Deal's own sequential
   // id. Generated once, when the Deal first reaches Committed.

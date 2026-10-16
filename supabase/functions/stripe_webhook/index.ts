@@ -10,6 +10,7 @@ import {
 } from "./stripeDiscovery.ts";
 import { investigateStripe } from "./stripeInvestigate.ts";
 import { reconcileStripe } from "./stripeReconcile.ts";
+import { ensureBalanceSchedule } from "./balanceSchedule.ts";
 import { getAuthToken, verifySupabaseJWT } from "../_shared/authentication.ts";
 import { handleOwnerStripeSync, type SalesRow } from "./ownerStripeSync.ts";
 
@@ -73,6 +74,22 @@ const jsonResponse = (body: unknown, status = 200) =>
     headers: { "Content-Type": "application/json", ...corsHeaders },
   });
 
+// A plan that is not collecting must say so, and a recovery must stop
+// saying it. Reads the Stripe status the reconciler has just refreshed --
+// no new financial column. Never allowed to fail a delivery: Stripe would
+// retry a webhook whose real work already succeeded.
+const reconcilePaymentHealth = async (opportunityId: number | null) => {
+  try {
+    await supabaseAdmin.rpc("reconcile_payment_health_tasks", {
+      p_opportunity_id: opportunityId,
+    });
+  } catch (error) {
+    console.error(
+      "stripe_webhook: payment-health reconciliation failed:",
+      error,
+    );
+  }
+};
 const fetchDeal = async (dealId: number): Promise<DealRow | null> => {
   const { data } = await supabaseAdmin
     .from("deals")
@@ -276,6 +293,27 @@ const handleCheckoutSessionCompleted = async (
     }
   }
 
+  // WAS THIS THE DEPOSIT? The Session says so durably, stamped server-side
+  // by stripe_checkout from CRM state -- never inferred from the amount,
+  // because $500 is a deposit on one programme and could be an instalment
+  // on another.
+  const isDeposit = session.metadata?.charge_kind === "deposit";
+  const depositCents = session.metadata?.deposit_cents
+    ? Number(session.metadata.deposit_cents)
+    : null;
+
+  // The Deal's own copy of the agreed deposit, frozen exactly here and for
+  // the same reason selected_payment_option_id is: this is the moment the
+  // agreement became real, and a later catalogue edit must not be able to
+  // reinterpret it. Written before the sale lands so the balance planner
+  // can see it as soon as the Enrollment exists.
+  if (isDeposit && depositCents != null && Number.isFinite(depositCents)) {
+    await supabaseAdmin
+      .from("deals")
+      .update({ selected_deposit_amount: depositCents / 100 })
+      .eq("id", deal.id);
+  }
+
   // The SALE. A no-op when the client was sold to before paying, which is
   // now the ordinary order of events.
   const result = await recordDealPaymentSucceeded(deal, paymentOptionId);
@@ -302,7 +340,34 @@ const handleCheckoutSessionCompleted = async (
     payments = "deferred";
   }
 
-  return jsonResponse({ status: result.status, payments });
+  await reconcilePaymentHealth(deal.id);
+
+  // THE BALANCE, if it can be known yet.
+  //
+  // Growing Yourself Up is a group offer, so handle_deal_won() has just
+  // snapshotted the cohort start onto the Enrollment and the anchor already
+  // exists -- the schedule is created here. The Living Example has no start
+  // week until Leif states one, so plan_balance_schedule() answers
+  // "start-date-unknown" and nothing is created. That is the expected
+  // state, not a failure, and it is never papered over with an invented
+  // date.
+  let balance = "skipped";
+  if (isDeposit) {
+    try {
+      const scheduled = await ensureBalanceSchedule(stripe, deal.id);
+      balance = scheduled.status;
+    } catch (error) {
+      // Never fail the delivery: the deposit and the sale have already
+      // landed, and the hourly reconciler sweeps this again.
+      console.error(
+        "stripe_webhook: balance scheduling failed for deal " + deal.id,
+        error,
+      );
+      balance = "deferred";
+    }
+  }
+
+  return jsonResponse({ status: result.status, payments, balance });
 };
 
 Deno.serve(async (req: Request) => {
@@ -478,7 +543,47 @@ Deno.serve(async (req: Request) => {
     }
 
     const delta = await reconcileStripe(stripe, { contactId });
+    await reconcilePaymentHealth(null);
     return jsonResponse({ status: "reconciled", delta });
+  }
+
+  // THE BALANCE SCHEDULE, asked for by name.
+  //
+  // Called by the CRM right after Leif saves a start week, so the schedule
+  // exists the moment the anchor does rather than up to an hour later; and
+  // by the hourly sweep above as the durable backstop. Both converge on one
+  // schedule, because ensureBalanceSchedule() reads the CRM id and the live
+  // Stripe object before it creates anything.
+  //
+  // It computes no money: plan_balance_schedule() in Postgres decides the
+  // cents, the anchor and whether it is safe at all, and this executes that
+  // decision. A browser cannot reach that function (it is service-role
+  // only), so a signed-in user asking here cannot assert an amount.
+  if (url.searchParams.get("action") === "schedule-balance") {
+    const dealId = Number(url.searchParams.get("dealId"));
+    if (!Number.isInteger(dealId) || dealId <= 0) {
+      return createErrorResponse(400, "Invalid opportunity id.");
+    }
+
+    const cronSecret = Deno.env.get("CRON_INVOKE_SECRET");
+    const isCron =
+      Boolean(cronSecret) && req.headers.get("x-cron-secret") === cronSecret;
+    if (!isCron) {
+      try {
+        const isValidJWT = await verifySupabaseJWT(getAuthToken(req));
+        if (!isValidJWT)
+          return createErrorResponse(401, "Invalid authentication");
+      } catch (e) {
+        return createErrorResponse(401, e?.toString() || "Unauthorized");
+      }
+    }
+
+    const scheduled = await ensureBalanceSchedule(
+      Deno.env.get("STRIPE_SECRET_KEY") ? stripe : null,
+      dealId,
+    );
+    await reconcilePaymentHealth(dealId);
+    return jsonResponse(scheduled);
   }
 
   const signature = req.headers.get("Stripe-Signature");
@@ -507,6 +612,58 @@ Deno.serve(async (req: Request) => {
       const session = event.data.object as Stripe.Checkout.Session;
       return await handleCheckoutSessionCompleted(session.id);
     }
+
+    // A SCHEDULED CHARGE THAT DID NOT GO THROUGH.
+    //
+    // These were explicit no-ops, which was survivable while every plan
+    // was set up by hand in the Stripe dashboard and Leif watched it
+    // there. A deposit changes that: the whole premise is that the client
+    // leaves and the balance is charged off-session months later, so a
+    // failed card has to become visible in the CRM by itself.
+    //
+    // Stripe owns the truth, so this does not interpret the event payload:
+    // it re-reads the customer through the existing reconciler (which
+    // refreshes the plan object's own status) and then reconciles the
+    // Task. Payment truth is never invented from an event.
+    if (
+      event.type === "invoice.payment_failed" ||
+      event.type === "invoice.payment_action_required"
+    ) {
+      const invoice = event.data.object as Stripe.Invoice;
+      const customerId =
+        typeof invoice.customer === "string"
+          ? invoice.customer
+          : (invoice.customer?.id ?? null);
+      if (!customerId) {
+        return jsonResponse({ status: "no-customer", type: event.type });
+      }
+      const { data: link } = await supabaseAdmin
+        .from("contacts")
+        .select("id")
+        .eq("stripe_customer_id", customerId)
+        .maybeSingle();
+      const contactId = (link as { id: number } | null)?.id ?? null;
+      if (contactId != null) {
+        try {
+          await reconcileStripe(stripe, { contactId });
+        } catch (error) {
+          console.error(
+            "stripe_webhook: reconciliation after a failed charge:",
+            error,
+          );
+        }
+      }
+      // Null scopes it to every Opportunity, which is correct when the
+      // Contact could not be identified: the condition is declarative, so
+      // a wider sweep reaches the same answer.
+      await reconcilePaymentHealth(null);
+      return jsonResponse({
+        status: "payment-health-reconciled",
+        type: event.type,
+        contactId,
+      });
+    }
+
     // Every other event type is a safe, explicit no-op — this function
     // only subscribes to checkout.session.completed in the Stripe
     // Dashboard, but acknowledging anything else Stripe might still send

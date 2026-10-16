@@ -162,6 +162,10 @@ test.describe("the Fall 2026 cohort repair, end to end", () => {
     page,
     createSales,
   }) => {
+    // Two cold page loads, a browser context of its own, and a real
+    // migration applied in between. 30s is not a generous budget for that
+    // under load.
+    test.setTimeout(120_000);
     test.skip(
       test.info().project.name !== "chromium",
       "one browser is enough for a data-repair read-back",
@@ -175,6 +179,13 @@ test.describe("the Fall 2026 cohort repair, end to end", () => {
     // Before: the page groups them as cohortless.
     await signIn(page, createSales);
     await page.goto("/#/applications");
+    // The list has to have rendered its programme groups before asking
+    // which ones. Under full-suite load a cold render exceeded the default
+    // 5s element window, which reads as "the group is missing" rather than
+    // "the page is still loading".
+    await expect(
+      page.locator('[data-testid="application-programme"]').first(),
+    ).toBeVisible({ timeout: 30_000 });
     const gyu = page.locator(
       '[data-testid="application-programme"][data-programme="Growing Yourself Up"]',
     );
@@ -193,6 +204,9 @@ test.describe("the Fall 2026 cohort repair, end to end", () => {
       const page2 = await fresh.newPage();
       await signIn(page2, createSales);
       await page2.goto("/#/applications");
+      await expect(
+        page2.locator('[data-testid="application-programme"]').first(),
+      ).toBeVisible({ timeout: 30_000 });
 
       const gyu2 = page2.locator(
         '[data-testid="application-programme"][data-programme="Growing Yourself Up"]',

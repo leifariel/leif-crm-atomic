@@ -24,6 +24,12 @@ export type PaymentOptionDraft = {
   installmentAmount: number;
   isPublic: boolean;
   pricingMode: PricingMode;
+  /**
+   * Credited toward THIS option's total. Null or 0 is no deposit, which is
+   * every option that existed before deposits. installmentAmount above
+   * stays the PRE-deposit figure; the balance split is derived.
+   */
+  depositAmount?: number | null;
   /** Omitted when adding. */
   optionId?: Identifier | null;
 };
@@ -48,7 +54,9 @@ export type PaymentOptionResult =
         | "pricing-mode-invalid"
         | "installments-invalid"
         | "amount-invalid"
-        | "instalments-do-not-add-up";
+        | "instalments-do-not-add-up"
+        | "deposit-invalid"
+        | "deposit-exceeds-total";
     };
 
 type PaymentOptionCapableProvider = DataProvider & {
@@ -124,6 +132,16 @@ const validate = (draft: PaymentOptionDraft): PaymentOptionResult | null => {
   ) {
     return { status: "instalments-do-not-add-up" };
   }
+  // A deposit is never more than the thing it is a deposit on -- the same
+  // refusal the database makes, in the same order.
+  if (draft.depositAmount != null) {
+    if (!Number.isFinite(draft.depositAmount) || draft.depositAmount < 0) {
+      return { status: "deposit-invalid" };
+    }
+    if (Math.round(draft.depositAmount * 100) > Math.round(draft.total * 100)) {
+      return { status: "deposit-exceeds-total" };
+    }
+  }
   return null;
 };
 
@@ -142,6 +160,7 @@ export const setOfferPaymentOptionMirror = async (
     installment_amount: draft.installmentAmount,
     is_public: draft.isPublic,
     pricing_mode: draft.pricingMode,
+    deposit_amount: draft.depositAmount ?? null,
   };
 
   if (draft.optionId == null) {

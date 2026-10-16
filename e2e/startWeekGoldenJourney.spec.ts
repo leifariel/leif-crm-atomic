@@ -607,11 +607,20 @@ test.describe("the start-week golden journey", () => {
     // Both the same width, and wide enough that the placeholder cannot
     // clip. 143px was the squeezed column; a date input needs roughly 110
     // for "mm/dd/yyyy" plus the picker control and padding.
-    // Within a few pixels of each other. Measured 2.5px apart on a Pixel 5
-    // at devicePixelRatio 2.75 — sub-pixel rounding, not a squeeze. The
-    // defect being guarded against collapsed one of them to a third of
-    // the other.
-    expect(Math.abs(boxes[0]!.width - boxes[1]!.width)).toBeLessThan(4);
+    // THE SAME WIDTH, measured RELATIVELY rather than in pixels.
+    //
+    // The defect being guarded against collapsed one of these inputs to a
+    // THIRD of the other — a ~65% difference. A flat 4px threshold was
+    // measured once (2.5px apart on a Pixel 5 at devicePixelRatio 2.75) and
+    // left no margin for sub-pixel rounding anywhere else: it failed on
+    // desktop chromium at 4.0856px, which is not a squeeze by any reading.
+    // Proven pre-existing and independent of the slice that found it.
+    //
+    // 5% catches a collapse by a factor of thirteen and ignores rounding.
+    const widest = Math.max(boxes[0]!.width, boxes[1]!.width);
+    expect(Math.abs(boxes[0]!.width - boxes[1]!.width) / widest).toBeLessThan(
+      0.05,
+    );
     expect(boxes[0]!.width).toBeGreaterThan(isMobile ? 240 : 320);
     // Inside the viewport, not spilling out of it.
     const viewport = page.viewportSize()!;

@@ -149,9 +149,20 @@ create table public.offer_payment_options (
     -- become selectable for a scholarship Deal, and vice versa (see
     -- handle_deal_saved()'s cross-validation and resolveAuthorizedCheckoutTerms.ts).
     pricing_mode text not null default 'standard',
+    -- Deposits slice: credited toward THIS option's total. Null or 0 is no
+    -- deposit, which is every option that existed before deposits and whose
+    -- behaviour must not change. installment_amount above stays the
+    -- PRE-deposit figure (Financial Need is $3,996 in 6 x $666) and the
+    -- balance split is DERIVED by deals/depositAllocation.ts and
+    -- allocate_balance_cents() -- storing the derived split here would
+    -- duplicate the authority.
+    deposit_amount numeric(10, 2),
     created_at timestamp with time zone not null default now(),
     updated_at timestamp with time zone not null default now(),
-    constraint offer_payment_options_pricing_mode_check check (pricing_mode in ('standard', 'scholarship'))
+    constraint offer_payment_options_pricing_mode_check check (pricing_mode in ('standard', 'scholarship')),
+    constraint offer_payment_options_deposit_amount_check check (
+        deposit_amount is null
+        or (deposit_amount >= 0 and deposit_amount <= total))
 );
 
 -- Contracts + Onboarding slice: the offer-specific onboarding requirement
@@ -322,6 +333,14 @@ create table public.deals (
     selected_payment_total numeric(10, 2),
     selected_installment_count smallint,
     selected_installment_amount numeric(10, 2),
+    -- Deposits slice: the FOURTH commercial snapshot field, for the same
+    -- reason as the three above it -- a later catalogue edit must not be
+    -- able to reinterpret an agreement somebody already made. The BALANCE
+    -- is derived from this (agreed total minus this), so reading the deposit
+    -- from the catalogue while reading the total from here could compute a
+    -- balance from two different versions of one agreement. Null means no
+    -- deposit was agreed.
+    selected_deposit_amount numeric(10, 2),
     -- Payment domain foundation slice: the ONLY way the public personalized
     -- Offer Page resolves a Deal — opaque and random, never the Deal's own
     -- sequential id (which would let one prospect enumerate another's name
@@ -2048,6 +2067,14 @@ alter table public.deals
     drop constraint if exists deals_selected_payment_total_source_check;
 alter table public.deals
     add constraint deals_selected_payment_total_source_check CHECK (((selected_payment_total_source IS NULL) OR (selected_payment_total_source = ANY (ARRAY['owner_confirmed'::text, 'stripe_derived'::text, 'offer_snapshot'::text]))));
+alter table public.deals
+    drop constraint if exists deals_selected_deposit_amount_check;
+alter table public.deals
+    add constraint deals_selected_deposit_amount_check check (
+        selected_deposit_amount is null
+        or (selected_deposit_amount >= 0
+            and (selected_payment_total is null
+                 or selected_deposit_amount <= selected_payment_total)));
 alter table public.deals
     drop constraint if exists deals_stage_check;
 alter table public.deals

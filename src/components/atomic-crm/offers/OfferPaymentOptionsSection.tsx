@@ -22,6 +22,12 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+import {
+  allocateBalance,
+  centsToAmount,
+  describePhases,
+} from "../deals/depositAllocation";
+
 import { KitConfigBox, KitConfigRow } from "../applications/KitConfigBox";
 import type { Offer, OfferPaymentOption, PricingMode } from "../types";
 import {
@@ -50,6 +56,7 @@ type Draft = {
   total: string;
   installments: string;
   installmentAmount: string;
+  depositAmount: string;
   isPublic: boolean;
   pricingMode: PricingMode;
 };
@@ -60,6 +67,7 @@ const EMPTY: Draft = {
   total: "",
   installments: "1",
   installmentAmount: "",
+  depositAmount: "",
   isPublic: true,
   pricingMode: "standard",
 };
@@ -70,6 +78,8 @@ const draftFrom = (option: OfferPaymentOption): Draft => ({
   total: String(option.total),
   installments: String(option.installments),
   installmentAmount: String(option.installment_amount),
+  depositAmount:
+    option.deposit_amount == null ? "" : String(option.deposit_amount),
   isPublic: option.is_public,
   pricingMode: option.pricing_mode ?? "standard",
 });
@@ -145,6 +155,12 @@ export const OfferPaymentOptionsSection = ({
         total: Number(draft.total),
         installments: Number(draft.installments),
         installmentAmount: Number(draft.installmentAmount),
+        // Blank is no deposit, which is what every option had before
+        // deposits existed and what their behaviour must stay.
+        depositAmount:
+          draft.depositAmount.trim() === ""
+            ? null
+            : Number(draft.depositAmount),
         isPublic: draft.isPublic,
         pricingMode: draft.pricingMode,
         optionId: draft.optionId,
@@ -429,6 +445,31 @@ export const OfferPaymentOptionsSection = ({
                   />
                 </div>
               </div>
+
+              {/* THE DEPOSIT. Credited toward this option's own total, and
+                  versioned with it: once somebody has agreed to an option,
+                  changing this creates the next version and leaves their
+                  terms alone. "Each" above stays the PRE-deposit figure --
+                  Financial Need is $3,996 in 6 x $666 -- and the balance
+                  split is derived, never typed in. */}
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="payment-option-deposit">
+                  {translate(
+                    "resources.offer_payment_options.fields.deposit_amount",
+                    { _: "Deposit due today (optional)" },
+                  )}
+                </Label>
+                <Input
+                  id="payment-option-deposit"
+                  inputMode="decimal"
+                  placeholder="No deposit"
+                  value={draft.depositAmount}
+                  onChange={(event) =>
+                    setDraft({ ...draft, depositAmount: event.target.value })
+                  }
+                />
+                <DepositPreview draft={draft} currency={currency} />
+              </div>
               <div className="flex flex-wrap gap-4">
                 <label className="flex items-center gap-2 text-sm">
                   <input
@@ -486,6 +527,9 @@ export const OfferPaymentOptionsSection = ({
 };
 
 const REFUSALS: Record<string, string> = {
+  "deposit-invalid": "A deposit cannot be negative.",
+  "deposit-exceeds-total":
+    "A deposit cannot be more than the option's own total.",
   "name-required": "A payment option needs a name.",
   "pricing-mode-invalid": "That is not a pricing mode this CRM knows.",
   "installments-invalid": "An option needs at least one installment.",
@@ -496,4 +540,52 @@ const REFUSALS: Record<string, string> = {
   "option-invalid": "That payment option could not be found.",
   "option-not-of-this-offer":
     "That payment option belongs to a different programme.",
+};
+
+/**
+ * What this option will actually charge, worked out from the two numbers
+ * above rather than described in prose.
+ *
+ * The arithmetic is deals/depositAllocation.ts -- the one place that splits
+ * a balance -- so the owner's form, the prospect's page and the Stripe
+ * schedule can never disagree about the cents.
+ */
+const DepositPreview = ({
+  draft,
+  currency,
+}: {
+  draft: Draft;
+  currency: string;
+}) => {
+  const total = Number(draft.total);
+  const installments = Number(draft.installments);
+  const deposit =
+    draft.depositAmount.trim() === "" ? 0 : Number(draft.depositAmount);
+  if (!Number.isFinite(total) || !Number.isFinite(installments)) return null;
+  if (deposit <= 0) return null;
+
+  const result = allocateBalance({
+    agreedTotal: total,
+    deposit,
+    installments,
+  });
+  if (result.status !== "allocated") {
+    return (
+      <span className="text-xs text-destructive">
+        {result.reason === "deposit-exceeds-total"
+          ? "A deposit cannot be more than the option's own total."
+          : "That deposit cannot be applied to these numbers."}
+      </span>
+    );
+  }
+
+  const { depositCents, balanceCents, phases } = result.allocation;
+  return (
+    <span className="text-xs text-muted-foreground">
+      {money(centsToAmount(depositCents), currency)} today, then{" "}
+      {money(centsToAmount(balanceCents), currency)} as{" "}
+      {describePhases(phases, (amount) => money(amount, currency))} from the 1st
+      of the programme start month.
+    </span>
+  );
 };

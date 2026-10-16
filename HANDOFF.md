@@ -4429,7 +4429,256 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8y. Deposits — ARCHITECTURE AUDIT ONLY, NOTHING BUILT (2026-10-16)
+## 8y. A deposit is credited, not charged twice — DEPOSITS, BUILT NOT DEPLOYED (2026-10-17)
+
+Leif takes a fixed deposit now and the rest on the first day of the client's
+programme start month, on the payment plan they already chose. The audit
+(below) found almost nothing missing; the build is **one Stripe parameter,
+two columns and one creation path**.
+
+### The decided mechanics
+
+| | total | deposit | balance |
+|---|---|---|---|
+| The Living Example | $4,000 | **$500** | $3,500 |
+| Growing Yourself Up | $1,400 | **$400** | $1,000 |
+
+The deposit is credited toward the **selected option's** total, so the
+authority is `offer_payment_options.deposit_amount` — versioned with the rest
+of the option. Scholarship and custom options configure their own, including
+zero; nothing about scholarship is hardcoded.
+
+**The Living Example's Financial Need option stays $3,996.** Four Won Deals
+carry that agreed total and it is not rewritten to $4,000. There is no
+separate public LE six-pay — the six-pay IS Financial Need.
+
+### Unequal instalments are authorised, and exact
+
+$3,996 less $500 is $3,496, which does not divide by six. Leif's ruling: do
+not distort the agreed total to keep every monthly charge identical. So the
+balance is split in **integer cents** — `floor = balance div n`,
+`remainder = balance mod n`, the first `remainder` instalments carry one
+extra cent, earliest first:
+
+| plan | balance | instalments | sum |
+|---|---|---|---|
+| LE pay in full | 350000c | 1 × 350000 | ✓ |
+| LE 4-pay | 350000c | 4 × 87500 | ✓ |
+| **LE Financial Need 6-pay** | 349600c | **4 × 58267 then 2 × 58266** | ✓ |
+| GYU pay in full | 100000c | 1 × 100000 | ✓ |
+| GYU 2-pay | 100000c | 2 × 50000 | ✓ |
+| GYU Financial Need 4-pay | 100000c | 4 × 25000 | ✓ |
+
+**Where the relaxation did NOT go.** An option's own
+`installment_amount × installments = total` rule is **untouched**, because
+`installment_amount` stays the PRE-deposit figure ($666) and the balance
+split is derived. Relaxing the catalogue would have admitted options that do
+not add up for reasons having nothing to do with a deposit.
+`set_offer_payment_option()` still answers `instalments-do-not-add-up`, and a
+contract pins that it does.
+
+**Three implementations, cross-checked rather than trusted.**
+`deals/depositAllocation.ts` (owner's form, prospect's page),
+`_shared/depositAllocation.ts` (Edge, which cannot import from `src/`) and
+`allocate_balance_cents()` (Postgres, the authority). The first two are
+compared exhaustively in `contracts/deals/oneDepositAllocation.test.ts`; the
+third against the first in `e2e/depositsAndTheBalance.spec.ts`.
+
+### The Stripe objects
+
+| | object | new? |
+|---|---|---|
+| deposit | `mode: "payment"` Checkout → one PaymentIntent | existing |
+| saved card | `payment_intent_data.setup_future_usage: "off_session"` | **new, one parameter** |
+| balance, pay in full | Subscription Schedule, future `start_date`, **1 iteration**, `end_behavior: 'cancel'` | new path, existing type |
+| balance, instalments | the same Schedule with N iterations, **two phases when the cents do not divide** | new path, existing type |
+| customer | `contact_stripe_customers` | existing |
+
+`setup_future_usage` and `off_session` appeared **nowhere** in the repo
+before this. Without it the card is not reusable and the balance could never
+be charged — and nothing would fail at deposit time; the failure would arrive
+months later as a schedule that cannot collect.
+
+**One mechanism for both shapes.** Pay-in-full is a one-iteration Schedule,
+not a future PaymentIntent or a draft invoice: a second object type would
+need its own creation, idempotency and failure path, and
+`deal_stripe_plan_objects` has no row for it. Production already holds six
+rows of `schedule` / `not_started` / `is_current`.
+
+**The deposit is identified by metadata, never by amount.**
+`charge_kind: "deposit"` plus `deposit_cents` are stamped server-side by
+`stripe_checkout`; $500 is a deposit on LE and could be an instalment on
+something else.
+
+### Deposit success is the sale
+
+A webhook-confirmed deposit marks the Deal **Won**, which creates the
+Enrollment and seeds onboarding. Audited before it was decided:
+`seed_enrollment_onboarding()` writes only onboarding items and Tasks, and
+those Tasks are **Leif's own to-dos** ("Send contract", "Grant Notion
+access", "Invite to GYU Slack", "Grant GYU calendar access"). The CRM grants
+nothing, invites nobody and sends no email. No new "deposit paid but not Won"
+stage exists.
+
+**Checkout created ≠ deposit paid ≠ Won.** Creating a Session writes only
+`stripe_checkout_session_id`; the webhook refuses `payment_status "unpaid"`
+before anything else.
+
+### The balance anchor, and the two refusals
+
+`date_trunc('month', enrollments.start_date)` — derived, **never a second
+column**, and never the deposit date, the sales-call date, the Won timestamp,
+the Enrollment timestamp or a 30-day offset.
+
+`plan_balance_schedule(p_opportunity_id)` decides; the Edge Function
+executes. It answers `ready`, `no-deposit-plan`, `deposit-not-paid`,
+`start-date-unknown`, `nothing-to-schedule`, `enrollment-missing`,
+`terms-unknown`, `not-won`, `not-found`, and the two refusals:
+
+- **`balance-start-requires-review`** — the first of the start month has
+  already gone. It does **not** backdate a schedule, shift the contract,
+  re-anchor to today's day-of-month or charge a catch-up. It refuses and
+  raises a `check_payment` Task.
+- **`balance-already-started`** — a balance payment has already succeeded, so
+  the schedule is history rather than a plan. Refuses rather than rewriting
+  financial history.
+
+**Before the first charge** a changed start date re-anchors the existing
+`not_started` Schedule in place, idempotently — guarded by
+`deals.stripe_subscription_schedule_id`, a live Stripe read, and a Stripe
+idempotency key of `balance-schedule:<deal>:<anchor>`. An anchor that is
+already correct is a no-op, not a rewrite.
+
+**GYU and LE differ, and the schema already said so.** Growing Yourself Up is
+a group offer, so `handle_deal_won()` snapshots the cohort start onto the
+Enrollment at Won and the anchor exists immediately — the schedule is created
+in the deposit webhook. The Living Example has no start week until Leif states
+one, so the answer is `start-date-unknown` and nothing is created. Stating
+the start week (`ClientEditModal`) asks for the schedule straight away;
+the hourly reconciler is the backstop. **No circular dependency**: the
+deposit needs no start month, and the start month needs no schedule.
+
+### A failing off-session charge is no longer invisible
+
+The audit found this and it was **pre-existing**: `invoice.payment_failed`
+and `invoice.payment_action_required` were explicit no-ops, `PaymentState`
+had no unhealthy value, `hasCurrentPlan` never read the Stripe status the
+reconciler already stored, and nothing created a `check_payment` Task by
+itself. A client whose card had failed read **"Active payment plan"** on the
+strength of money collected months earlier.
+
+Fixed in this slice, with **no new financial column**:
+
+- both events now re-read the customer through the existing reconciler
+  (which refreshes the plan object's own status) and then reconcile the Task.
+  No payment truth is invented from an event payload.
+- `PaymentState` gains **`payment_failed`** (from `past_due` / `unpaid` /
+  `incomplete`) and **`deposit_paid`** (deposit in, balance owed, nothing
+  scheduled). `deposit_paid` replaces the old `active_plan` claim, which was
+  the one thing that must not be said when there is no plan.
+- `reconcile_payment_health_tasks()` keeps **exactly one** open
+  `check_payment` Task per Opportunity while either premise holds — an
+  unhealthy plan, or a past-due balance anchor with nothing carrying it — and
+  closes it when neither does.
+
+### Minimum new authority
+
+**Two columns.** `offer_payment_options.deposit_amount` (the versioned
+authority) and `deals.selected_deposit_amount` (the snapshot). The snapshot
+is necessary, not decorative: its three neighbours exist so a later
+catalogue edit cannot reinterpret an agreement, and the balance is
+*derived* from the deposit — reading the deposit from the catalogue while
+reading the total from the Deal could compute a balance from two different
+versions of one agreement.
+
+Everything else is answered by existing authority: `paymentTruth` gained
+`depositAgreed`, `depositPaid` and `planHealth`, all **derived**.
+
+### Historical and versioning safety
+
+Nothing retrospective. Every production option is referenced by **zero**
+Deals, so no agreement is reinterpreted; both new columns are nullable and
+null means "no deposit", which is every row that exists. The migration
+**asserts** that no option and no Deal acquired a deposit by its running.
+Editing a referenced option still **replaces** it and retires the old
+version, deposit included — proven with a real Deal in the e2e.
+
+The Offer Page's money formatter was whole-dollars-only by design ("this
+app's own real data is never fractional"). Deposits made it fractional, so it
+now shows cents **when the amount has them** and whole amounts stay whole —
+no existing display changes. Rounding $582.67 to $583 on the prospect's own
+payment page would have been a lie about what their card is charged.
+
+### Proof
+
+- **25** real-Postgres regressions, `e2e/depositsAndTheBalance.spec.ts`
+  (A–J, Q–Z, AA–AF)
+- **9** built-CSS browser acceptances, `e2e/depositPaymentPage.spec.ts`
+- **5** security regressions appended to `e2e/securityPosture.spec.ts`
+- **16** Checkout-mechanics contracts (L/M/N and the schedule's idempotency),
+  **7** three-way allocation contracts, **16** allocation unit tests
+- **6 sensitivity breaks executed and each one caught**: the deposit not
+  subtracted (9 failures), float rounding that loses cents (3 + the contract),
+  webhook deposit idempotency removed (1), duplicate schedules permitted (1),
+  past-due scheduling allowed (1), `invoice.payment_failed` ignored (2). Every
+  file restored **byte-identical**.
+- two findings of my own contracts: the deposit guard originally ran **after**
+  Stripe was reached (moved before it), and the public Offer Page reads
+  through the `offer_page` Edge projection, which needed the deposit too.
+
+### State
+
+- migration **174**
+  `20261017120000_a_deposit_is_credited_not_charged_twice.sql` — built,
+  **NOT deployed**
+- deterministic chain **148** · MAIN-only **26** · total **174**
+- **production unchanged.** Read-only discovery only: no payment option
+  touched, no Stripe object created, no card charged, no Deal transitioned.
+- **Gmail: still blocked.**
+
+### Decisions Leif resolved, recorded so they are not re-asked
+
+1. The rare LE six-pay **is** the existing non-public Financial Need option
+   at **$3,996**. Balance $3,496.
+2. The deposit **does** apply to Financial Need: LE $500, GYU $400.
+   Scholarship and custom options carry their own on the option version.
+3. **Unequal instalments are authorised**, in integer cents, without
+   distorting the agreed total.
+4. After the first balance charge a start-date change is **refused** with a
+   manual-review state.
+
+### One deliberate deviation, flagged rather than hidden
+
+The brief asked for a payment-review Task on the **post-first-charge**
+reschedule refusal as well. The two durable conditions (an unhealthy plan; a
+past-due unschedulable balance) are reconciled declaratively, so the same
+query that opens a Task closes it. "Somebody tried to re-anchor a schedule
+that has already charged" is an **event**, not a condition: nothing about the
+client's account is wrong, and a Task raised for it would be closed by the
+very next reconciliation. So that refusal returns its status and reason to
+the caller and raises nothing standing. **If Leif wants a durable artefact
+there, it needs a different shape** — most likely a note on the Opportunity
+rather than a Task about a payment.
+
+### Roadmap
+
+1. Push deposits, remote `✅ Check` green, deploy → **production accept**.
+2. **FULL CRM Integration Readiness / Health Sweep** (its queue is the table
+   at the end of §8x, plus the two items this slice added below).
+3. Repair every REPAIR BEFORE GMAIL finding.
+4. Re-run the sweep until clear.
+5. **Only then Gmail.**
+
+Two items this slice adds to that queue, neither introduced by it:
+
+| finding | shape |
+|---|---|
+| `e2e/startWeekGoldenJourney.spec.ts` | **repaired here, not deferred**: a geometry assertion demanded two date inputs be within **4 pixels** of each other, a figure measured once on a Pixel 5. It failed on desktop chromium at 4.0856px — **proven pre-existing by re-running it with this slice stashed**. The defect it names is one input collapsing to a THIRD of the other, so the tolerance is now RELATIVE (5%), which catches a collapse by a factor of thirteen and ignores sub-pixel rounding |
+| `e2e/fall2026CohortRepair.spec.ts` | **repaired here, not deferred**: the test timed out on its FIRST assertion after a cold load of the Applications list (element-not-found in a 5s window), once, in a suite that had just grown by ~77 tests. It passes alone. The assertion is unchanged -- it still demands the Growing Yourself Up group AND a "No cohort recorded" subsection -- but the page is now given time to have rendered its groups at all, and the test a budget that fits two cold loads plus a real migration run. Same family as the Kit race repaired in `4e1b488c` |
+| `waitlist/waitlistEditLightbox.test.tsx` | one racy assertion ("corrects the email on that same Contact") fails under full-suite load. **Proven pre-existing at `a1ee270d`** with this slice's work stashed. Same family as the Kit race repaired in `4e1b488c` |
+| the post-first-charge reschedule artefact | the deliberate deviation above, awaiting Leif's preference |
+
+## 8y-audit. Deposits — the architecture audit that preceded the build (2026-10-16)
 
 Read-only audit of the existing CRM/Stripe architecture against the decided
 deposit mechanics. **No implementation, no migration, no Stripe object, no
@@ -9530,11 +9779,12 @@ not falsify CRM data to exercise a workflow.** The first natural correction
 upgrades that without reopening acceptance; verify it end to end when it
 happens, and never use Mads Bunch as synthetic test data.
 
-**The next product slice is DEPOSITS / payment-page support** — The Living
-Example $500, Growing Yourself Up $400. **Its architecture audit is done
-(§8y) and nothing is built**; four genuine decisions are waiting on Leif
-there, the load-bearing one being whether a plan may be uneven at all.
-Then: accept deposits → the full
+**DEPOSITS ARE BUILT AND NOT DEPLOYED (§8y)** — The Living Example $500,
+Growing Yourself Up $400, credited toward the selected option's total, with
+the balance on the 1st of the programme start month. All four of the
+decisions that were open at audit time (§8y-audit) are resolved and recorded.
+Migration **174** is the tip: **148 deterministic + 26 MAIN-only**. Then:
+accept deposits → the full
 Integration Readiness / Health Sweep (its queue is at the end of §8x) →
 repair every REPAIR BEFORE GMAIL finding → re-run until clear → **only then
 Gmail**. Migration **173** is the deployed tip of the chain: **147

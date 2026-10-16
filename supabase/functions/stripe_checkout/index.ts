@@ -88,6 +88,7 @@ type OfferPaymentOptionRow = {
   total: number;
   installments: number;
   installment_amount: number;
+  deposit_amount: number | null;
   is_public: boolean;
   pricing_mode: string;
 };
@@ -124,7 +125,7 @@ const resolveAuthorizedOption = async (
     const { data } = await supabaseAdmin
       .from("offer_payment_options")
       .select(
-        "id, offer_id, name, total, installments, installment_amount, is_public, pricing_mode",
+        "id, offer_id, name, total, installments, installment_amount, deposit_amount, is_public, pricing_mode",
       )
       .eq("id", deal.selected_payment_option_id)
       .maybeSingle();
@@ -149,6 +150,10 @@ const resolveAuthorizedOption = async (
       installments: deal.selected_installment_count ?? option.installments,
       installment_amount:
         deal.selected_installment_amount ?? option.installment_amount,
+      // Same rule as the three above: once an agreement is frozen on the
+      // Deal, that is what governs.
+      deposit_amount:
+        deal.selected_deposit_amount ?? option.deposit_amount ?? null,
     };
   }
 
@@ -157,7 +162,7 @@ const resolveAuthorizedOption = async (
   const { data: options } = await supabaseAdmin
     .from("offer_payment_options")
     .select(
-      "id, offer_id, name, total, installments, installment_amount, is_public, pricing_mode",
+      "id, offer_id, name, total, installments, installment_amount, deposit_amount, is_public, pricing_mode",
     )
     .eq("offer_id", deal.offer_id)
     .eq("is_public", true)
@@ -230,6 +235,8 @@ const handleCreate = async (body: Record<string, unknown>) => {
       total: assessment.terms.total,
       installments: assessment.terms.installments,
       installment_amount: assessment.terms.installmentAmount,
+      // The agreement's own deposit, from the Deal, never the catalogue.
+      deposit_amount: deal.selected_deposit_amount,
       is_public: false,
       pricing_mode: deal.pricing_mode,
     };
@@ -254,6 +261,35 @@ const handleCreate = async (body: Record<string, unknown>) => {
   // resolved terms and demand it equal the agreement to the cent. $4,000 in
   // 3 fails here rather than charging $3,999.99 and reading "$0.01
   // remaining" forever.
+  // A DEPOSIT IS A DIFFERENT CHARGE FROM THE PLAN.
+  //
+  // When the agreed option carries a deposit, THIS Session takes the
+  // deposit and nothing else: one payment, for the deposit amount, with the
+  // card saved so the balance can be charged on the first of the programme
+  // start month. The balance is not charged here and is not even known yet
+  // for The Living Example, whose start week is Leif's to state later.
+  //
+  // The amount is the Deal's or the option's own deposit, resolved above
+  // from CRM state -- the browser sends an option id and never an amount.
+  const depositCents =
+    option.deposit_amount == null ? 0 : Math.round(option.deposit_amount * 100);
+  const isDeposit = depositCents > 0;
+
+  // A deposit is never more than the thing it is a deposit on. The database
+  // refuses it in two places already; this is the one that would otherwise
+  // charge it.
+  if (isDeposit && depositCents > Math.round(option.total * 100)) {
+    return jsonResponse({
+      status: "payment-not-available",
+      reason: "not-representable",
+    });
+  }
+
+  // Still the last line of defence before real money, and still about the
+  // PLAN adding up: an option's installment_amount is the PRE-deposit
+  // figure, so a deposit never makes this impossible. The uneven BALANCE
+  // split lives in plan_balance_schedule()/depositAllocation.ts and is exact
+  // by construction, so it never reaches this check.
   const reconstructedCents =
     Math.round(option.installment_amount * 100) * option.installments;
   if (
@@ -300,10 +336,14 @@ const handleCreate = async (body: Record<string, unknown>) => {
   const successUrl = `${baseUrl}/#/offer/${encodeURIComponent(token)}?checkout=success`;
   const cancelUrl = `${baseUrl}/#/offer/${encodeURIComponent(token)}?checkout=cancelled`;
 
-  const isSubscription = option.installments > 1;
-  const unitAmount = Math.round(
-    (isSubscription ? option.installment_amount : option.total) * 100,
-  );
+  // An option with no deposit behaves exactly as it did before deposits
+  // existed: one payment for the total, or a monthly subscription.
+  const isSubscription = !isDeposit && option.installments > 1;
+  const unitAmount = isDeposit
+    ? depositCents
+    : Math.round(
+        (isSubscription ? option.installment_amount : option.total) * 100,
+      );
 
   const session = await stripe.checkout.sessions.create({
     mode: isSubscription ? "subscription" : "payment",
@@ -324,13 +364,30 @@ const handleCreate = async (body: Record<string, unknown>) => {
       // mismatch, regardless of whether the best-effort proactive
       // invalidation (stripe_invalidate_checkout) ever ran or succeeded.
       pricing_mode: deal.pricing_mode,
+      // WHAT KIND OF MONEY THIS IS. The webhook and the reconciler both
+      // need to tell a deposit from a full programme payment from a balance
+      // instalment, and the amount alone cannot: $500 is a deposit on LE
+      // and could be an instalment on something else. Durable CRM
+      // authority, stamped server-side.
+      charge_kind: isDeposit ? "deposit" : "programme_payment",
+      ...(isDeposit
+        ? {
+            deposit_cents: String(depositCents),
+            agreed_total_cents: String(Math.round(option.total * 100)),
+            agreed_installments: String(option.installments),
+          }
+        : {}),
     },
     line_items: [
       {
         price_data: {
           currency,
           unit_amount: unitAmount,
-          product_data: { name: deal.offer_name_snapshot ?? option.name },
+          product_data: {
+            name: isDeposit
+              ? (deal.offer_name_snapshot ?? option.name) + " — deposit"
+              : (deal.offer_name_snapshot ?? option.name),
+          },
           ...(isSubscription ? { recurring: { interval: "month" } } : {}),
         },
         quantity: 1,
@@ -351,12 +408,23 @@ const handleCreate = async (body: Record<string, unknown>) => {
         }
       : {
           payment_intent_data: {
+            // THE WHOLE REASON A DEPOSIT CAN WORK. Without this the card is
+            // not reusable and the balance could never be charged on the
+            // first of the start month -- Stripe keeps a payment method for
+            // off-session use only when the PaymentIntent that created it
+            // asked for it. Set ONLY for a deposit: a one-off full payment
+            // has no later charge to make, and saving a card nobody will
+            // use is not ours to do.
+            ...(isDeposit
+              ? { setup_future_usage: "off_session" as const }
+              : {}),
             metadata: {
               deal_id: String(deal.id),
               ...(catalogOptionId != null
                 ? { payment_option_id: String(catalogOptionId) }
                 : {}),
               pricing_mode: deal.pricing_mode,
+              charge_kind: isDeposit ? "deposit" : "programme_payment",
             },
           },
         }),

@@ -10,15 +10,25 @@
 // it's never ambiguous regardless of symbol. Whole-amount only (no cents)
 // — matches this app's own real data, which is never fractional (GYU's
 // $1,400/$700/$350, LE's $4,000).
+// DEPOSITS MADE THIS FRACTIONAL. The comment above was true of every amount
+// this page had ever shown -- $4,000, $1,400, $700 -- and the formatter was
+// written to suppress ".00" accordingly. A deposit breaks that: $3,996 less
+// $500 over six is 4 x $582.67 then 2 x $582.66, and rounding those to
+// whole dollars on the prospect's own payment page would be a lie about what
+// their card is going to be charged.
+//
+// So: whole amounts stay whole, exactly as before, and an amount with cents
+// shows them. No existing display changes.
 export const formatOfferPageAmount = (
   amount: number,
   currency: string,
 ): string => {
+  const hasCents = Math.round(amount * 100) % 100 !== 0;
   const formatted = new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: hasCents ? 2 : 0,
+    maximumFractionDigits: hasCents ? 2 : 0,
   }).format(amount);
-  return `${formatted} ${currency}`;
+  return formatted + " " + currency;
 };
