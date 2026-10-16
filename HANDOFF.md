@@ -4429,7 +4429,7 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
-## 8x. A recorded result can be corrected — SALES CALL WORKFLOW PART 2, BUILT NOT DEPLOYED (2026-10-16)
+## 8x. A recorded result can be corrected — SALES CALL WORKFLOW PART 2, PRODUCTION ACCEPTED 2026-10-16 (NOT YET EXERCISED)
 
 Part 1 gave a completed call an authoritative result and no way to change it.
 `complete_attended_sales_call()` answers a materially different re-completion
@@ -4716,26 +4716,154 @@ Two further read-only findings, neither introduced here:
   **147 deterministic + 26 MAIN-only = 173** · migration **173** replays into
   an empty database
 
+### Deployment, verified against production (2026-10-16)
+
+Deployed on `73abf28d`, with the test-only timezone repair below on
+`83c9fd6d`. Remote `✅ Check` green on `83c9fd6d`: Test, e2e-test,
+Typecheck, Build, ESLint, Prettier.
+
+| | verified |
+|---|---|
+| migration `20261016120000` | applied **exactly once**; production total **173**, tip `20261016120000` |
+| all three function bodies | **byte-identical** to the committed migration — `correct_completed_sales_call` md5 `da31ebc0…` (17357 B), `reconcile_decision_follow_up_task` `bcbd95b3…` (4635 B), `sync_decision_follow_up_task` `c5bed41f…` (325 B) |
+| shape | plpgsql · returns jsonb · SECURITY DEFINER · `search_path=public` |
+| ACL | `proacl = postgres=X, authenticated=X, service_role=X` — **PUBLIC absent**; EXECUTE public/anon/authenticated/service_role = false/false/**true**/**true** |
+| both reconcilers | `postgres=X` only → false/false/false/false |
+| trigger | `on_deal_decision_follow_up_task` attached **exactly once**, `AFTER INSERT OR UPDATE OF stage, outcome, follow_up_date, archived_at` |
+| audit | kind CHECK includes `outcome_corrected`; `correction jsonb` nullable; `CHECK ((correction IS NULL) OR (kind = 'outcome_corrected'))` |
+| completion untouched | 3 × `conflicting-outcome` in the deployed body, **0** × `p_impressions_mode` — no implicit conversion |
+| single-episode targeting | the only locking read is `where id = p_sales_call_id`; no Opportunity-wide "latest wins" mutation |
+| guards precede mutation | every refusal returns at deployed lines 88–271; the first write is line **286** |
+| Part 1 | `impressions` text/nullable · 5-arg completion present · 4-arg `to_regprocedure` → NULL · `Call passed` and `Decision due` in the live bundle |
+| the 9 toast repairs | live as `{type:"…",messageArgs:{_:"…"}}` in the deployed bundle |
+
+**Deployed vocabulary**, read from production rather than inferred:
+
+- statuses (10): `corrected` `no-change` `not-found` `not-completed`
+  `no-opportunity` `invalid-transition` `missing-decision-date`
+  `ambiguous-downstream-state` `superseded-call-episode` `validation-error`
+- categories (7): `won_opportunity` `existing_enrollment`
+  `contact_sales_eligibility` `archived_opportunity` `attendance_retraction`
+  `newer_attended_episode` `not_a_call_outcome`
+- blockers (9): `won_sale` `enrollment` `payment` `stripe_plan`
+  `offer_page_link` `payment_setup` `scholarship_slot`
+  `contact_do_not_engage` `archived`
+
+**Zero deployment side effects.** Every total identical before and after:
+214 calls · 179 completed · 16 attended+matched · 1 impression · 133 events
+· **0** `outcome_corrected` · 109 outcome events · 311 stage events · 203
+deals · 40 enrollments · 121 tasks · 2 pending follow-ups (both still
+`opportunity_id = NULL`) · 28 no-shows · 28 No-show tags · 0 outreach · 153
+Kit ops · 123 waitlist · 86 payment items · 58 Stripe objects. The sharpest
+check: **task 428 is still unlinked** — the trigger exists and has not
+fired, because the migration updates no `deals` row.
+
+**One read of mine was wrong and is recorded as such.** A query at 23:51Z
+reported migration 173 absent; it had simply not landed yet. The re-read at
+23:55Z showed it applied. Production was mid-deploy, not un-deployed — the
+lesson being the one already in this file: re-run the baseline's own query
+before concluding.
+
+### ACCEPTED, AND DELIBERATELY NOT EXERCISED
+
+Leif reviewed Mads Bunch (Opportunity 211) and ruled that **there is no
+truthful correction to make**. He was a genuinely safe candidate — one
+attended episode, no Enrollment, no money, no Stripe object, no Offer Page
+link, not archived, eligibility `normal`, and every one of the nine deployed
+guards evaluated read-only as not firing — but nothing stored about him is
+wrong.
+
+So Part 2 is **PRODUCTION ACCEPTED** on its deployed authority, and
+**PRODUCTION-EXERCISED = NO**. The reason is the rule, not a gap in the
+work: *we do not falsify CRM data to exercise a workflow.* A correction
+invented for a test would be the one thing this slice exists to prevent —
+an untrue stored fact — and it would have landed in the audit trail as a
+real human correction.
+
+**Mads was NOT altered, and must never be used as synthetic test data.**
+Nor was anybody else picked to manufacture an exercise.
+
+**The first natural real correction upgrades PRODUCTION-EXERCISED → YES
+without reopening acceptance.** When it happens, verify it end to end
+independently, against production:
+
+- the same `sales_call.id`; **no second episode created**
+- the intended field changed; every untouched field preserved
+- current Opportunity truth correct, and exactly one appropriate follow-up
+  Task with no duplicates
+- exactly one `outcome_corrected` event, with truthful before/after
+- the original `attendance_recorded` event preserved
+- no other-offer mutation, and no Enrollment / payment / Stripe / Kit /
+  waitlist side effect
+- then read the production UI and confirm it shows the correction
+
 ### State
 
-- migration **173** `20261016120000_a_recorded_result_can_be_corrected.sql` —
-  built, **not deployed**
-- deterministic chain **147** · MAIN-only **26**
-- Part 2 is **not production accepted**: it has not been pushed, and Leif has
-  not corrected a real record. Opportunity 211 is the candidate.
+- migration **173** `20261016120000_a_recorded_result_can_be_corrected.sql`
+  — **deployed**, applied exactly once
+- deterministic chain **147** · MAIN-only **26** · production total **173**
+- Sales Call Workflow **Part 1: PRODUCTION ACCEPTED** (§8w) ·
+  **Part 2: PRODUCTION ACCEPTED**, SYSTEM GREEN, **PRODUCTION-EXERCISED =
+  NO**
 - **Gmail: still blocked**, and still not next.
+
+### The test-only repair that followed the deploy — `83c9fd6d`
+
+The full browser suite failed once, on Part 1's `callBookedBoard.spec.ts`
+("Follow up today", Mobile Chrome). The fixture seeded `follow_up_date` from
+a **UTC** calendar day while the card bands it against `crmDayKey()`, which
+formats in **America/Denver** — so between 18:00 and 24:00 MDT "today" is
+seeded as tomorrow and the card correctly reads "Decision due" instead.
+
+Not flake: a reproducible six-hour window every day. It passed twice that
+evening at 22:4xZ and 23:1xZ and failed at 00:04Z, which is 18:04 MDT.
+Proved by printing both day keys at that instant — UTC said 2026-10-16,
+Denver said 2026-10-15. Sensitivity: with the UTC form restored the one
+assertion fails inside the window; with the Denver form the spec passes
+10/10 in both projects and the full suite is **593 passed / 14 skipped / 0
+failed** in a run spanning 00:08Z–00:13Z, entirely inside the window that
+exposed it.
+
+Test-only. No product code, no schema, no migration — so the push of
+`83c9fd6d` could not and did not change the database, which stayed at 173.
+
+A latent instance of the same habit, not the same defect:
+`e2e/goldenJourneyFixture.ts` computes a `today` in UTC, but compares it
+only against other dates rather than against a Denver-banded product value.
+`e2e/sessionScheduleRebuild.spec.ts` anchors on a fixed Monday and is not at
+risk.
 
 ### Roadmap from here
 
-1. Push Part 2, remote `✅ Check` green, deploy, **Leif corrects Opportunity
-   211 for real** → production accept.
-2. **Deposits**: LE $500, GYU $400 → production accept.
+1. **DEPOSITS / payment-page support** — The Living Example **$500**,
+   Growing Yourself Up **$400**. This is the next product slice.
+2. Production accept deposits.
 3. **Full CRM Integration Readiness / Health Sweep.**
-4. Repair every REPAIR BEFORE GMAIL finding, including the three carried out
-   of this slice (the two remaining `notify` surfaces, the 5 stale Decision
-   dates, the unreadable outcome audit).
+4. Repair every REPAIR BEFORE GMAIL finding — the Health Sweep queue below
+   included.
 5. Re-run the sweep until clear.
 6. **Only then Gmail.**
+
+### Health Sweep queue — RECORDED, NOT FIXED
+
+Carried out of this slice and the ones before it. None of these invalidates
+Part 2; each needs its own evidence and its own decision.
+
+| finding | shape |
+|---|---|
+| `enrollments/ClientShow.tsx` | **6** `notify(key, { _: … })` sites still rendering a raw i18n key |
+| `sessions/CadenceResolutionModal.tsx` | **1** of the same |
+| `npm run test:unit:scripts` | 151 pass / **1 fail** — `owns_durable_schema` absent on **3 of 26** MAIN-only manifest entries (`20260921140000`, `20261006160100`, `20261007120000`). All three pass the real assertion, so it is bookkeeping. Pre-existing at `4e1b488c`, and **not in remote CI** |
+| active Call Booked with no **booked** call | **3** Opportunities |
+| active non-Decision deals carrying `follow_up_date` | **4** (proven not displayed — the `StrayDate` e2e) |
+| ended sales still carrying a Decision `follow_up_date` | **5**. The correction command clears it; the pipeline-exit path does not, and the new trigger closes their Tasks without clearing the dates |
+| completed calls with `attendance` NULL | **135** historical rows. Deliberately never backfilled |
+| attended call whose deal has **no** `owner_decision` | **1** — call 110, deal 140, `call_booked` / `lost` |
+| future-dated `sales_call` metadata | calls **148** (Mo Alzain) and **149** (Porsche Brown) carry `created_at` of 2026-10-27 and 2026-10-29. Any absolute-instant `created_at` filter necessarily matches them; totals are the real proof |
+| `deal_outcome_events` read posture | SELECT-able by **no** API role — not `authenticated`, not `service_role`. The outcome audit is write-only from outside the database, which is why the e2e reads outcome history from the correction event. An audit nobody can read is of limited use to Leif |
+| `sales_call_events` / `deal_stage_events` write posture | a signed-in browser already holds direct INSERT under RLS policies named for `authenticated`. Part 2 added a column to the first and **no grant to either**; the new column is constraint-guarded. Standing posture |
+| 49 further ACL-shape differences | equal in effect (production `proacl = NULL` *is* EXECUTE TO PUBLIC). Not an authority mismatch; worth a hygiene slice (§8w) |
+
 
 ## 8w. What he made of them — SALES CALL WORKFLOW PART 1, PRODUCTION ACCEPTED 2026-10-15
 
@@ -9069,11 +9197,19 @@ parity debt is **OPEN** and gates the next migration.
    and the rest of the Sales Call Workflow; then the Integration Readiness
    Gate, then Instagram.
 
-**Sales Call Workflow Part 1 is PRODUCTION ACCEPTED (§8w) and Part 2 is BUILT,
-NOT DEPLOYED (§8x).** The live queue is: push and accept Part 2 → deposits
-(LE $500 / GYU $400) → accept → the full Health Sweep → repair every REPAIR
-BEFORE GMAIL finding → re-run until clear → Gmail. Migration **173** is the
-current tip of the chain: **147 deterministic + 26 MAIN-only**.
+**The Sales Call Workflow is closed: Part 1 PRODUCTION ACCEPTED (§8w) and
+Part 2 PRODUCTION ACCEPTED (§8x), with PRODUCTION-EXERCISED = NO on Part 2
+because no real stored sales-call fact currently needs correcting and we do
+not falsify CRM data to exercise a workflow.** The first natural correction
+upgrades that without reopening acceptance; verify it end to end when it
+happens, and never use Mads Bunch as synthetic test data.
+
+**The next product slice is DEPOSITS / payment-page support** — The Living
+Example $500, Growing Yourself Up $400. Then: accept deposits → the full
+Integration Readiness / Health Sweep (its queue is at the end of §8x) →
+repair every REPAIR BEFORE GMAIL finding → re-run until clear → **only then
+Gmail**. Migration **173** is the deployed tip of the chain: **147
+deterministic + 26 MAIN-only**.
 
 **Gmail is not next, and it is not independent.** It executes §4b. Building it
 first builds the lifecycle inside the mail provider.
