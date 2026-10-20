@@ -144,6 +144,26 @@ vi.mock("./acuityApi.ts", () => ({
 
 import { reconcileAcuity } from "./acuityReconcile";
 
+// CLOCK-RELATIVE, NOT CALENDAR-FIXED.
+//
+// reconcileAcuity() looks back `sinceDays` -- one by default -- and filters
+// the CRM's own calls with .gte("scheduled_on", minDate). A fixture dated by
+// hand therefore sits inside that window only until the window moves past
+// it, and then stops exercising the code it was written for.
+//
+// These fixtures read 2026-10-16. They were written on 2026-09-17, when that
+// was a month away, and passed every day until 2026-10-18 -- at which point
+// minDate overtook them and four tests failed in CI, on a commit that had
+// never touched this directory. The calls were simply filtered out before
+// the reconciler saw them, so every count came back zero.
+//
+// Expressed as offsets from now, which is what the reinstatement and
+// preserved-past-cancellation tests below already did. SOON is also in the
+// FUTURE, because record_sales_call_reinstated() refuses a past call and the
+// fake above mirrors that.
+const SOON = new Date(Date.now() + 36 * 3600 * 1000).toISOString();
+const LATER = new Date(Date.now() + 60 * 3600 * 1000).toISOString();
+
 const GYU_TYPE = "64654501";
 const LE_TYPE = "91345095";
 const CLIENT_SESSION_TYPE = "90522599";
@@ -153,7 +173,7 @@ const appointment = (over: Partial<Row> = {}): Row => ({
   email: "ada@example.com",
   firstName: "Ada",
   lastName: "Lovelace",
-  datetime: "2026-10-16T17:00:00.000Z",
+  datetime: SOON,
   appointmentTypeID: Number(GYU_TYPE),
   canceled: false,
   ...over,
@@ -206,6 +226,28 @@ describe("acuity reconciliation", () => {
   });
   afterAll(() => vi.resetAllMocks());
 
+  // THE FIXTURES HAVE TO BE INSIDE THE WINDOW THE RECONCILER QUERIES.
+  //
+  // Stated as one named assertion, so a fixture that drifts out of the
+  // lookback window fails here saying so, instead of turning four tests
+  // below into unexplained zeros. That is exactly how the 2026-10-16
+  // fixtures failed: every count was correct, the rows were never in scope.
+  it("the shared fixtures sit inside the reconciler lookback window", () => {
+    const minDate = new Date(Date.now() - 24 * 3600 * 1000)
+      .toISOString()
+      .slice(0, 10);
+    expect(SOON.slice(0, 10) >= minDate, SOON + " vs minDate " + minDate).toBe(
+      true,
+    );
+    expect(
+      LATER.slice(0, 10) >= minDate,
+      LATER + " vs minDate " + minDate,
+    ).toBe(true);
+    // And both in the future: record_sales_call_reinstated() refuses a past
+    // call, and LATER has to be a reschedule FORWARD of SOON.
+    expect(new Date(SOON).getTime()).toBeGreaterThan(Date.now());
+    expect(new Date(LATER).getTime()).toBeGreaterThan(new Date(SOON).getTime());
+  });
   it("creates the Sales Call for a booking the webhook never delivered", async () => {
     state.appointments = [appointment()];
 
@@ -242,18 +284,14 @@ describe("acuity reconciliation", () => {
     await reconcileAcuity({ credentials });
     state.handled = [];
 
-    state.appointments = [
-      appointment({ datetime: "2026-10-20T17:00:00.000Z" }),
-    ];
+    state.appointments = [appointment({ datetime: LATER })];
     const delta = await reconcileAcuity({ credentials });
 
     expect(delta.rescheduled).toBe(1);
     expect(state.handled).toEqual([
       { handler: "rescheduled", acuityId: "900001" },
     ]);
-    expect(state.tables.sales_calls[0].scheduled_at).toBe(
-      "2026-10-20T17:00:00.000Z",
-    );
+    expect(state.tables.sales_calls[0].scheduled_at).toBe(LATER);
   });
 
   // Mihaela Petrova. Her Opportunity read Approved/No-show while Acuity
@@ -396,8 +434,8 @@ describe("acuity reconciliation", () => {
         opportunity_id: 1,
         contact_id: 1,
         status: "booked",
-        scheduled_at: "2026-10-16T17:00:00.000Z",
-        scheduled_on: "2026-10-16",
+        scheduled_at: SOON,
+        scheduled_on: SOON.slice(0, 10),
       },
     ];
     // Missing from the page, and Acuity confirms it really was cancelled.
@@ -419,8 +457,8 @@ describe("acuity reconciliation", () => {
         opportunity_id: 1,
         contact_id: 1,
         status: "booked",
-        scheduled_at: "2026-10-16T17:00:00.000Z",
-        scheduled_on: "2026-10-16",
+        scheduled_at: SOON,
+        scheduled_on: SOON.slice(0, 10),
       },
     ];
     state.appointments = [];
@@ -443,8 +481,8 @@ describe("acuity reconciliation", () => {
         opportunity_id: 1,
         contact_id: 1,
         status: "booked",
-        scheduled_at: "2026-10-16T17:00:00.000Z",
-        scheduled_on: "2026-10-16",
+        scheduled_at: SOON,
+        scheduled_on: SOON.slice(0, 10),
       },
     ];
     state.appointments = [];
