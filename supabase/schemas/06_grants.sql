@@ -995,5 +995,10 @@ revoke insert, update, delete on table public.application_outreach_attempts from
 revoke all on table public.application_outreach_attempts from anon;
 revoke all on table public.application_outreach_attempts from public;
 grant select, insert, update, delete on table public.application_outreach_attempts to service_role;
+
+-- Internal. reconcile_rebooked_sales_call_result() is an audited repair
+-- authority for a cancel/rebook whose result landed on the wrong episode
+-- (20261112140000). No API role may call it.
+revoke all on function public.reconcile_rebooked_sales_call_result(bigint, bigint) from public, anon, authenticated, service_role;
 -- A trigger function is never an API (20261112130000).
 revoke all on function public.guard_deal_stage_against_call_result() from public, anon, authenticated, service_role;

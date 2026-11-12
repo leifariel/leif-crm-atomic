@@ -1065,8 +1065,11 @@ create table public.sales_call_events (
     -- not a generalized event log. The original attendance_recorded row
     -- is never rewritten -- what was first recorded stays recorded.
     correction jsonb,
-    constraint sales_call_events_kind_check check (kind in ('booked', 'rescheduled', 'cancelled', 'attendance_recorded', 'opportunity_attached', 'dismissed', 'outcome_corrected')),
-    constraint sales_call_events_correction_kind_check check (correction is null or kind = 'outcome_corrected'),
+    constraint sales_call_events_kind_check check (kind in ('booked', 'rescheduled', 'cancelled', 'attendance_recorded', 'opportunity_attached', 'dismissed', 'outcome_corrected', 'result_reconciled')),
+    -- result_reconciled (20261112140000): a recorded result moved from a
+    -- cancelled original booking to the rebooked call that happened; the
+    -- payload names both episodes and the moved facts.
+    constraint sales_call_events_correction_kind_check check (correction is null or kind in ('outcome_corrected', 'result_reconciled')),
     constraint sales_call_events_attendance_check check (attendance in ('attended', 'no_show'))
 );
 

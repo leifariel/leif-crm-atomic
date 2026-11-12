@@ -179,3 +179,63 @@ describe("what the drawer calls the current state", () => {
     ).toBe("Cancelled");
   });
 });
+
+describe("a cancellation that a rebooking replaced is history, not the present", () => {
+  // Celia (contact 335): booked Nov 3 (call 330), cancelled, rebooked for
+  // Oct 30 (call 1330), and the Oct 30 call is the one that happened. Two
+  // upstream appointments, two episodes. The cancelled Nov 3 booking is
+  // LATER in the calendar than the call that happened, so "most recent
+  // first" alone would put the cancellation on top.
+  const original = call(330, {
+    status: "cancelled",
+    scheduled_at: "2026-11-03T18:00:00.000Z",
+    scheduled_on: "2026-11-03",
+    created_at: "2026-09-20T15:17:04.000Z",
+  });
+  const rebooked = call(1330, {
+    status: "completed",
+    attendance: "attended",
+    scheduled_at: "2026-10-30T18:00:00.000Z",
+    scheduled_on: "2026-10-30",
+    created_at: "2026-10-30T19:17:03.000Z",
+  });
+
+  it("the call that happened is current, and the old booking stays in history", () => {
+    const view = selectSalesCalls([original, rebooked]);
+    expect(view.current?.id).toBe(1330);
+    expect(view.mostRecentConcluded?.id).toBe(1330);
+    expect(view.history.map((c) => c.id)).toEqual([330]);
+    expect(view.all.map((c) => c.id)).toEqual([330, 1330]);
+  });
+
+  it("does not claim the sale needs a next step because of the replaced booking", () => {
+    expect(
+      latestCallEndedWithoutRebooking(selectSalesCalls([original, rebooked])),
+    ).toBe(false);
+  });
+
+  it("a follow-up booked AFTER the call, then cancelled, is still the present", () => {
+    const happened = call(10, {
+      status: "completed",
+      attendance: "attended",
+      scheduled_at: "2026-10-01T18:00:00.000Z",
+      created_at: "2026-09-25T00:00:00.000Z",
+    });
+    const fellThrough = call(11, {
+      status: "cancelled",
+      scheduled_at: "2026-10-08T18:00:00.000Z",
+      created_at: "2026-10-02T00:00:00.000Z",
+    });
+    const view = selectSalesCalls([happened, fellThrough]);
+    expect(view.current?.id).toBe(11);
+    expect(latestCallEndedWithoutRebooking(view)).toBe(true);
+  });
+
+  it("without created_at, booking order falls back to the row id", () => {
+    const view = selectSalesCalls([
+      { ...original, created_at: undefined },
+      { ...rebooked, created_at: undefined },
+    ]);
+    expect(view.current?.id).toBe(1330);
+  });
+});

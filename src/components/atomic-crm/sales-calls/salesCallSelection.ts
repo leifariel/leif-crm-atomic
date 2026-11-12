@@ -27,6 +27,7 @@ export type SalesCallForSelection = Pick<SalesCall, "id" | "status"> & {
   attendance?: SalesCall["attendance"];
   scheduled_at?: SalesCall["scheduled_at"];
   scheduled_on?: SalesCall["scheduled_on"];
+  created_at?: SalesCall["created_at"];
 };
 
 export type SalesCallView<T extends SalesCallForSelection> = {
@@ -74,6 +75,38 @@ const byMostRecentFirst = (
 const isConcluded = (call: SalesCallForSelection): boolean =>
   call.status !== "booked";
 
+/**
+ * A cancellation that a later booking replaced.
+ *
+ * Cancel-and-rebook is two upstream appointments, so it is two episodes: the
+ * old booking is cancelled, the new one is the call that happens. Usually the
+ * new one is also LATER in the calendar, and "most recent first" puts it on
+ * top without help. Celia's was not (contact 335): she cancelled a Nov 3
+ * booking and rebooked for Oct 30, so the cancelled Nov 3 row sorted above
+ * the Oct 30 call that actually happened — and the Opportunity would have
+ * read "Latest Sales Call · Cancelled" over a call with a recorded result.
+ *
+ * Booking order is when the row was created, falling back to the row id
+ * where a projection does not carry created_at. A cancelled call with a
+ * later-booked, uncancelled call beside it has been replaced, and is history
+ * rather than the current state. A cancellation booked AFTER everything else
+ * — a follow-up that fell through — is still current, exactly as before.
+ */
+const bookedAfter = (
+  later: SalesCallForSelection,
+  earlier: SalesCallForSelection,
+): boolean =>
+  later.created_at && earlier.created_at
+    ? later.created_at > earlier.created_at
+    : Number(later.id) > Number(earlier.id);
+
+const isReplacedCancellation = (
+  call: SalesCallForSelection,
+  all: readonly SalesCallForSelection[],
+): boolean =>
+  call.status === "cancelled" &&
+  all.some((other) => other.status !== "cancelled" && bookedAfter(other, call));
+
 /** Build the view for one Opportunity's calls. */
 export const selectSalesCalls = <T extends SalesCallForSelection>(
   salesCalls: readonly T[] | undefined,
@@ -90,8 +123,11 @@ export const selectSalesCalls = <T extends SalesCallForSelection>(
   }
 
   const booked = all.find((call) => call.status === "booked") ?? null;
-  const mostRecentConcluded = all.find(isConcluded) ?? null;
-  const current = booked ?? all[0];
+  // A replaced cancellation stays in `all` and `history`; it just never
+  // speaks for the Opportunity's present.
+  const live = all.filter((call) => !isReplacedCancellation(call, all));
+  const mostRecentConcluded = live.find(isConcluded) ?? null;
+  const current = booked ?? live[0] ?? all[0];
 
   return {
     booked,

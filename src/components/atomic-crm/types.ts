@@ -829,7 +829,11 @@ export type SalesCallEventKind =
   | "dismissed"
   // Sales Call Workflow Part 2: a human changed an already-recorded
   // result. The original "attendance_recorded" row is never rewritten.
-  | "outcome_corrected";
+  | "outcome_corrected"
+  // A cancel/rebook whose recorded result was moved from the cancelled
+  // original booking to the rebooked call that happened. Written on both
+  // episodes, each naming the other (20261112140000).
+  | "result_reconciled";
 
 // The append-only lifecycle history a SalesCall's current-state row can't
 // hold on its own (Acuity/Sales Call Lifecycle slice, per Leif's own
