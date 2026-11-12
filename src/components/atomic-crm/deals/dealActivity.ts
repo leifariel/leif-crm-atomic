@@ -34,6 +34,25 @@ export const ACTIVE_SALES_STAGES = [
 
 export type ActiveSalesStage = (typeof ACTIVE_SALES_STAGES)[number];
 
+/**
+ * Whether approving an Application moves this sale's stage to Approved.
+ *
+ * Forward only. A sale that has not reached Approved advances to it; one at
+ * Approved stays there; one that has gone further — Call Booked, Decision,
+ * Won, legacy Onboarding — keeps the stage it actually reached. Before this
+ * existed, four production reviews dragged a sale backward (Celia:
+ * call_booked -> approved), which is why the rule is stated once here and
+ * pinned to review_application() by
+ * contracts/applications/approvalIsForwardOnly.test.ts.
+ *
+ * Fails closed: a stage this list does not know is preserved, never assumed
+ * to be earlier than Approved.
+ */
+export const approvalAdvancesStage = (stage: string): boolean => {
+  const position = ACTIVE_SALES_STAGES.indexOf(stage as ActiveSalesStage);
+  return position !== -1 && position < ACTIVE_SALES_STAGES.indexOf("approved");
+};
+
 /** Every stage the column is allowed to hold, legacy storage included. */
 export const DEAL_STAGES = [
   ...ACTIVE_SALES_STAGES,

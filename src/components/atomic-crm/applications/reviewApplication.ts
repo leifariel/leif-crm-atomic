@@ -2,6 +2,7 @@ import type { DataProvider, Identifier } from "ra-core";
 
 import type { Application, Cohort, Deal, Enrollment, Offer } from "../types";
 import { acceptingCohortsOf } from "../cohorts/cohortEligibility";
+import { approvalAdvancesStage } from "../deals/dealActivity";
 import {
   applyDoNotEngageToContact,
   buildDoNotEngageDealUpdate,
@@ -265,7 +266,12 @@ export const reviewApplicationMirror = async ({
 
   await dataProvider.update("deals", {
     id: currentDeal.id,
-    data: buildDealUpdate(outcome, recommended, destinationCohortId),
+    data: buildDealUpdate(
+      outcome,
+      recommended,
+      destinationCohortId,
+      currentDeal.stage,
+    ),
     previousData: currentDeal,
   });
 
@@ -334,17 +340,26 @@ const buildDealUpdate = (
   outcome: ApplicationReviewOutcome,
   recommended: Offer | null,
   destinationCohortId: Identifier | null,
+  currentStage: Deal["stage"],
 ): Partial<Deal> => {
+  // Forward only (approvalAdvancesStage): a sale that already reached Call
+  // Booked, Decision or Won keeps that stage. Omitting stage from the write,
+  // rather than writing it back, is what keeps the stage hook from stamping
+  // stage_entered_at or appending a deal_stage_events row for a move that
+  // did not happen.
+  const approvedStage: Partial<Deal> = approvalAdvancesStage(currentStage)
+    ? { stage: "approved" }
+    : {};
   switch (outcome) {
     case "approved":
       // "Qualified enough for a sales call" — the pipeline moves forward;
       // final personal fit is still undecided (§1/§4). outcome stays null,
       // explicitly re-asserted here in case a prior review round set one.
-      return { stage: "approved", outcome: null };
+      return { ...approvedStage, outcome: null };
     case "bespoke_accepted":
       // Accepted is accepted. Bespoke changes who writes the reply, not what
       // the sales path may now do.
-      return { stage: "approved", outcome: null };
+      return { ...approvedStage, outcome: null };
     case "offered_other_programme":
       // The SAME Opportunity moves to the recommended programme and behaves
       // like that programme's approved path. The round was settled before any
@@ -356,7 +371,7 @@ const buildDealUpdate = (
       return {
         offer_id: recommended!.id,
         cohort_id: destinationCohortId,
-        stage: "approved",
+        ...approvedStage,
         outcome: null,
       };
     case "needs_higher_care":

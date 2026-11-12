@@ -4626,6 +4626,7 @@ declare
   v_candidates int;
   v_destination_cohort_id bigint;
   v_eligible_cohorts int;
+  v_advances_stage boolean;
 begin
   -- The decisions a live review can record. 'denied' and 'waitlist' are
   -- historical-import vocabulary and are not decisions anybody makes here.
@@ -4761,6 +4762,26 @@ begin
 
   v_reviewed_at := now();
 
+  -- Approval is FORWARD ONLY with respect to the sale's stage. It moves a
+  -- sale that has not yet reached Approved up to Approved, is a no-op at
+  -- Approved, and never drags a sale that has already gone further --
+  -- Call Booked, Decision, Won, legacy Onboarding -- back to Approved on
+  -- the strength of a review. Production did exactly that four times
+  -- (Celia, contact 335: call_booked -> approved). The APPLICATION is still
+  -- approved; only the Opportunity's stage is left where the sale got to.
+  --
+  -- Order comes from ACTIVE_SALES_STAGES (deals/dealActivity.ts) -- the
+  -- same array and the same fail-closed coalesce create_manual_application()
+  -- uses, pinned by contracts/applications/approvalIsForwardOnly.test.ts.
+  -- Positions 1..2 are the stages BEFORE 'approved'. A stage the array does
+  -- not know (won, legacy onboarding, anything added later) is preserved,
+  -- never assumed to be earlier.
+  v_advances_stage := coalesce(
+    array_position(
+      array['interested', 'application_received', 'approved', 'call_booked', 'decision'],
+      v_deal.stage),
+    0) BETWEEN 1 AND 2;
+
   -- 1. The decision itself. This UPDATE is what fires
   --    on_application_kit_decision, inside this transaction, once.
   UPDATE applications
@@ -4769,16 +4790,26 @@ begin
          recommended_offer_id = v_recommended_offer_id
    WHERE id = v_app.id;
 
-  -- 2. The Opportunity, aligned with it.
+  -- 2. The Opportunity, aligned with it. Where the stage is preserved it is
+  --    written back unchanged, which set_deal_stage_entered_at() and
+  --    record_deal_stage_event() both read as no transition: no
+  --    stage_entered_at stamp and no deal_stage_events row claiming a move
+  --    to Approved that never happened.
   IF p_outcome = 'approved' THEN
     -- "Qualified enough for a sales call" — the pipeline moves forward; final
     -- personal fit is still undecided. outcome is explicitly re-cleared in
     -- case a prior review round set one.
-    UPDATE deals SET stage = 'approved', outcome = NULL WHERE id = v_deal.id;
+    UPDATE deals
+       SET stage = CASE WHEN v_advances_stage THEN 'approved' ELSE stage END,
+           outcome = NULL
+     WHERE id = v_deal.id;
   ELSIF p_outcome = 'bespoke_accepted' THEN
     -- Accepted is accepted. The only thing bespoke changes is who writes the
     -- reply, so the operational approved path stays exactly as available.
-    UPDATE deals SET stage = 'approved', outcome = NULL WHERE id = v_deal.id;
+    UPDATE deals
+       SET stage = CASE WHEN v_advances_stage THEN 'approved' ELSE stage END,
+           outcome = NULL
+     WHERE id = v_deal.id;
   ELSIF p_outcome = 'offered_other_programme' THEN
     -- The sales path moves to the recommended programme and behaves like that
     -- programme's approved path. The SAME Opportunity: nothing here creates a
@@ -4797,7 +4828,7 @@ begin
            -- it: intended_cohort_id is what they asked for and is never
            -- rewritten here.
            cohort_id = v_destination_cohort_id,
-           stage = 'approved',
+           stage = CASE WHEN v_advances_stage THEN 'approved' ELSE stage END,
            outcome = NULL
      WHERE id = v_deal.id;
   ELSIF p_outcome = 'needs_higher_care' THEN
@@ -4841,7 +4872,8 @@ begin
     'reviewed_at', v_reviewed_at,
     'recommended_offer_id', v_recommended_offer_id,
     'destination_cohort_id', v_destination_cohort_id,
-    'completed_task_id', v_task_id
+    'completed_task_id', v_task_id,
+    'opportunity_stage', (SELECT stage FROM deals WHERE id = v_deal.id)
   );
 END;
 $$;
