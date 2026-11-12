@@ -4429,6 +4429,103 @@ parent with a meaningful status — an Application — it would have sent a
 status to the record itself, so a private note could reach its own
 decision state. It now says which record it is for.
 
+## 8z. The Pipeline tells the truth immediately — PIPELINE / SALES-LIFECYCLE REPAIRS, BUILT NOT DEPLOYED (2026-11-12)
+
+Branch `fix/pipeline-sales-lifecycle` in the stable worktree
+`/Users/NatashaMKraus/Projects/leif-crm-pipeline-fix`, based on `badf8320`
+(origin/main `21a86dc8` + the Acuity stale-date CI test repair). It
+**excludes** the Brea-only commits (`9de558f2`, and its earlier twin
+`29deabb1`) and the parked `c9dcc918`. Three independent commits.
+
+### 1. An approval never moves a sale backward (`20261112120000`)
+
+`review_application()` wrote `stage = 'approved'` on every approval, so a sale
+already at Call Booked or Decision went backward. Celia (contact 335,
+Opportunity 267) left Call Booked that way. Now forward-only, from
+`ACTIVE_SALES_STAGES`, using the same fail-closed `array_position` pattern
+`create_manual_application()` already uses: earlier → approved, approved →
+unchanged, later (call_booked, decision, won, legacy onboarding, unknown) →
+preserved. The Application is still approved. A preserved stage is written
+back unchanged, so neither stage trigger records a transition. TS mirror:
+`approvalAdvancesStage()` in `deals/dealActivity.ts`. Pinned by
+`contracts/applications/approvalIsForwardOnly.test.ts`; proven by
+`e2e/approvalIsForwardOnly.spec.ts` (A–G).
+
+**Historical backward moves, read-only, NOT repaired (Health Sweep).**
+Production holds **13** `deal_stage_events` rows moving a sale back to
+Approved. **4** are `review_application`: Anu Nandyala 193, Alice
+Giuliani 204, Mads Bunch 211, Celia 267. **9** are historical bulk writes
+on 2026-09-17/19 against imported, never-reviewed applications (86, 104, 121,
+127, 139, 159, 163, 187, 189). All but one have since ended or recovered.
+**Alice Giuliani (204) is the one live incoherent case:** active, at
+Approved, with an attended call recording "thinking" and a stale
+2026-10-12 follow-up. `correct_completed_sales_call` on her call, with a
+real follow-up date from Leif, would put her back at Decision.
+
+### 2. The board shows every active Opportunity, and re-reads after a write
+
+**Root cause, reproduced in a built browser against real Postgres:** the
+board's list query was `perPage=100`, sorted by `stage_entered_at`
+ascending, with no pagination. Production holds **105** active
+Opportunities, so the board silently dropped the five most recently moved,
+and **whoever had just moved was always the newest**. Porsche moved and
+vanished; Anna moved, became the newest and vanished, and Porsche came back.
+No data was ever wrong. On 2026-11-12, Andy Kaplan 407, April Summersett
+423, Tracy Porter 382, Sofi Magallon 410 and Clee Stacy 398 were invisible
+on the live board for this reason.
+
+A second, smaller mechanism: the Deal edit dialog saves pessimistically,
+which patches cached rows in place and cannot add a card to a list it was
+never in (Won → Decision). It now invalidates every Pipeline query.
+
+Repair: `deals/pipelineQuery.ts` (page size 1000, which is PostgREST's
+`max_rows`, plus a visible `PipelineTruncationNotice` if it is ever
+exceeded); `deals/usePipelineRefresh.ts`; `DealListContent` derives columns
+from the server queries via `useMemo` rather than a second `useState` copy,
+keeping only a short-lived overlay while a drop is in flight.
+`e2e/pipelineStaysTrue.spec.ts` fails on the old code at step 1 (Person A in
+no column) and passes on the new.
+
+### 3. A raw stage edit cannot contradict the call (`20261112130000`)
+
+`guard_deal_stage_against_call_result` refuses a write that leaves
+`prospect_decision = 'yes'` on an open, non-Won sale. That is exactly the
+state Porsche's raw Won → Decision edit produced. The refusal names
+**Edit call result**. A row already in the contradiction can still save
+unrelated fields. FakeRest mirror and wording: `deals/stageEditRefusal.ts`.
+"Edit result" is relabelled **Edit call result**.
+
+### 4. A rebooked call carries its own result (`20261112140000`)
+
+`reconcile_rebooked_sales_call_result(original, replacement)` is internal
+only; no API role can call it. It moves a recorded result from a cancelled
+original booking to the rebooked call that happened. It keeps both rows'
+schedules and Acuity ids, creates no third episode, leaves the Opportunity
+untouched, writes one `result_reconciled` event per episode, and is
+idempotent. The shared call-selection model now treats a cancellation that
+a later booking replaced as history, so Celia's Opportunity will not read
+"Cancelled" over the call that happened. Proven by
+`e2e/aRebookedCallCarriesItsResult.spec.ts` (H–M plus refusals).
+
+### Waiting
+
+- **Deploy**, then Celia's repair:
+  `select public.reconcile_rebooked_sales_call_result(330, 1330);`
+- **Porsche (Opportunity 217, call 149) needs her real follow-up date from
+  Leif.** No durable record holds one. The correction is then made through
+  Edit call result: Thinking + that date. Until it is made, **Sales Call Part
+  2 is NOT production-exercised**.
+
+### Carried to the Health Sweep (read-only, 2026-11-12)
+
+15 unarchived Decision + `lost` Opportunities · 5 booked calls whose time has
+passed (140, 329, 1330 — fixed by Celia's repair — 331, 1346) · Mihaela
+Petrova holds two booked calls (140 on ended Opportunity 163, 331 on 266),
+two Opportunities and not a rebooking · Alice Giuliani 204 above · the 9
+historical bulk backward moves · several other `perPage: 100` reads in
+`deals/` that are not the board (`closeSalesTasks.ts`, `paymentStatus.ts`,
+and others).
+
 ## 8y. A deposit is credited, not charged twice — DEPOSITS, BUILT NOT DEPLOYED (2026-10-16)
 
 Leif takes a fixed deposit now and the rest on the first day of the client's
