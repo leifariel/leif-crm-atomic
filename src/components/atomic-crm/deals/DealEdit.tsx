@@ -15,10 +15,17 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { FormToolbar } from "../layout/FormToolbar";
 import type { Deal } from "../types";
 import { DealInputs } from "./DealInputs";
+import { describeStageEditRefusal } from "./stageEditRefusal";
+import { usePipelineRefresh } from "./usePipelineRefresh";
 
 export const DealEdit = ({ open, id }: { open: boolean; id?: string }) => {
   const redirect = useRedirect();
   const notify = useNotify();
+  // A pessimistic save patches the cached rows it already holds and nothing
+  // else, so a card moving INTO a list it was never in (Won -> Decision)
+  // stayed invisible until some unrelated write refreshed the board. Every
+  // Pipeline query is re-read instead. See usePipelineRefresh.
+  const refreshPipeline = usePipelineRefresh();
 
   const handleClose = () => {
     redirect("/deals", undefined, undefined, undefined, {
@@ -35,9 +42,19 @@ export const DealEdit = ({ open, id }: { open: boolean; id?: string }) => {
             mutationMode="pessimistic"
             mutationOptions={{
               onSuccess: () => {
+                void refreshPipeline();
                 notify("resources.deals.updated", {});
                 redirect(`/deals/${id}/show`, undefined, undefined, undefined, {
                   _scrollToTop: false,
+                });
+              },
+              // A refused stage edit says why, and names the right tool when
+              // the refusal is the recorded call result's.
+              onError: (error: unknown) => {
+                const refusal = describeStageEditRefusal(error);
+                notify(refusal.key, {
+                  type: "error",
+                  messageArgs: { _: refusal.message },
                 });
               },
             }}

@@ -1290,6 +1290,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/deals/usePipelineRefresh.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/deals/usePersonContextLabels.ts",
           "type": "registry:component"
         },
@@ -1307,6 +1311,10 @@
         },
         {
           "path": "src/components/atomic-crm/deals/stages.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/deals/stageEditRefusal.ts",
           "type": "registry:component"
         },
         {
@@ -1375,6 +1383,10 @@
         },
         {
           "path": "src/components/atomic-crm/deals/postSaleCheckout.ts",
+          "type": "registry:component"
+        },
+        {
+          "path": "src/components/atomic-crm/deals/pipelineQuery.ts",
           "type": "registry:component"
         },
         {

@@ -995,3 +995,5 @@ revoke insert, update, delete on table public.application_outreach_attempts from
 revoke all on table public.application_outreach_attempts from anon;
 revoke all on table public.application_outreach_attempts from public;
 grant select, insert, update, delete on table public.application_outreach_attempts to service_role;
+-- A trigger function is never an API (20261112130000).
+revoke all on function public.guard_deal_stage_against_call_result() from public, anon, authenticated, service_role;

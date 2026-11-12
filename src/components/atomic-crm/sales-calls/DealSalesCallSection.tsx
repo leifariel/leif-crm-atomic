@@ -275,7 +275,7 @@ export const DealSalesCallSection = () => {
               onClick={() => setCorrectDialogOpen(true)}
             >
               {translate("resources.deals.sales_call.correct_action_short", {
-                _: "Edit result",
+                _: "Edit call result",
               })}
             </Button>
           </div>

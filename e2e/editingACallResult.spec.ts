@@ -148,7 +148,7 @@ test.describe("the recorded result is visible and editable", () => {
 
     await signIn(page);
     await openOpportunity(page, dealId);
-    await page.getByRole("button", { name: "Edit result" }).click();
+    await page.getByRole("button", { name: "Edit call result" }).click();
 
     await expect(page.getByRole("dialog")).toBeVisible();
     // The recorded answers are already selected, and the recorded date and
@@ -168,7 +168,7 @@ test.describe("the recorded result is visible and editable", () => {
 
     await signIn(page);
     await openOpportunity(page, dealId);
-    await page.getByRole("button", { name: "Edit result" }).click();
+    await page.getByRole("button", { name: "Edit call result" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
 
     await page.getByLabel("Follow up on").fill("2026-11-02");
@@ -200,7 +200,7 @@ test.describe("the recorded result is visible and editable", () => {
 
     await signIn(page);
     await openOpportunity(page, dealId);
-    await page.getByRole("button", { name: "Edit result" }).click();
+    await page.getByRole("button", { name: "Edit call result" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
 
     await page.getByLabel(/Impressions/).fill("");
@@ -226,7 +226,7 @@ test.describe("the recorded result is visible and editable", () => {
 
     await signIn(page);
     await openOpportunity(page, dealId);
-    await page.getByRole("button", { name: "Edit result" }).click();
+    await page.getByRole("button", { name: "Edit call result" }).click();
     await page.getByLabel(/Impressions/).fill("Second read.");
     await page.getByRole("button", { name: "Save correction" }).click();
 
@@ -234,7 +234,7 @@ test.describe("the recorded result is visible and editable", () => {
 
     // Reopening and saving without touching anything is a no-op, and says so
     // rather than writing a second identical correction.
-    await page.getByRole("button", { name: "Edit result" }).click();
+    await page.getByRole("button", { name: "Edit call result" }).click();
     await expect(page.getByLabel(/Impressions/)).toHaveValue("Second read.");
     await page.getByRole("button", { name: "Save correction" }).click();
 
@@ -265,7 +265,7 @@ test.describe("a correction that cannot be made safely says why", () => {
 
     await signIn(page);
     await openOpportunity(page, dealId);
-    await page.getByRole("button", { name: "Edit result" }).click();
+    await page.getByRole("button", { name: "Edit call result" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
 
     // "They said no" on a sale that already produced an Enrollment.
@@ -291,7 +291,7 @@ test.describe("a correction that cannot be made safely says why", () => {
 
     await signIn(page);
     await openOpportunity(page, dealId);
-    await page.getByRole("button", { name: "Edit result" }).click();
+    await page.getByRole("button", { name: "Edit call result" }).click();
 
     await expect(page.getByText(/recorded as having happened/)).toBeVisible();
     await expect(page.getByLabel("Actually, the call happened")).toHaveCount(0);

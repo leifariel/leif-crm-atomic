@@ -13,6 +13,7 @@ import { DealEdit } from "./DealEdit";
 import { DealEmpty } from "./DealEmpty";
 import { DealListContent } from "./DealListContent";
 import { DealShow } from "./DealShow";
+import { PIPELINE_PAGE_SIZE } from "./pipelineQuery";
 
 const DealList = () => {
   const { identity } = useGetIdentity();
@@ -23,7 +24,11 @@ const DealList = () => {
 
   return (
     <List
-      perPage={100}
+      // Every active Opportunity, not the hundred longest-in-stage. With
+      // perPage=100 and more than a hundred open sales, whichever card had
+      // just moved was the newest and silently fell off the board
+      // (Porsche Brown, then Anna Howard, 2026-10-29). See pipelineQuery.ts.
+      perPage={PIPELINE_PAGE_SIZE}
       // Won leaves the active board the same way an archived deal already
       // does: excluded from the list query, still reachable by direct link
       // and from the owning Contact's history. An outcome (Nurture/Needs
@@ -39,11 +44,11 @@ const DealList = () => {
       }}
       title={false}
       // Kanban queue-ordering slice: getDealsByStage (DealListContent.tsx)
-      // always re-sorts each column by stage_entered_at client-side, but
-      // this list has no pagination UI (perPage=100, pagination={null}) —
-      // matching the fetch order to the real sort keeps whichever 100
-      // records this ever truncates to the oldest-in-stage ones, not an
-      // arbitrary index order.
+      // re-sorts each column client-side. This sort used to decide WHICH
+      // hundred cards a truncated fetch kept — and it kept the oldest, so
+      // the card that had just moved was the one dropped. It is now only a
+      // stable fetch order; the board fetches every active Opportunity and
+      // says so if it ever cannot (PipelineTruncationNotice).
       sort={{ field: "stage_entered_at", order: "ASC" }}
       filters={dealFilters}
       actions={<DealActions />}

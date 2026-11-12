@@ -15,7 +15,9 @@ export const DealColumn = ({
 }) => {
   const { dealStages } = useConfigurationContext();
   return (
-    <div className="flex-1 pb-8">
+    // data-stage lets a browser test read a column's membership straight
+    // out of the DOM rather than inferring it from layout.
+    <div className="flex-1 pb-8" data-stage={stage}>
       <div className="flex flex-col items-center">
         <h3 className="text-base font-medium">
           {findDealLabel(dealStages, stage)}

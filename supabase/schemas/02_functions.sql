@@ -1889,6 +1889,54 @@ end;
 $function$
 ;
 
+-- A raw stage edit may not contradict the recorded call result
+-- (20261112130000). "They said yes" lives on a Won sale: accept_sale()
+-- writes stage = won and prospect_decision = yes together, and every
+-- canonical writer of a call result keeps the two in step. A hand-typed
+-- stage on top of a yes (Porsche Brown, Opportunity 217: won -> decision,
+-- 23 seconds after the sale) left a sale at Decision whose own record says
+-- the prospect already said yes, with no follow-up date and no Task. The
+-- fix for a wrong result is correct_completed_sales_call() (Edit call
+-- result), which moves the decision, the stage and the follow-up together.
+-- So this refuses the contradiction instead of inferring a correction.
+--
+-- A row ALREADY in contradiction (Porsche, until corrected) may still have
+-- unrelated fields saved: refused is ENTERING the contradiction, or moving
+-- the stage while in it. Mirrored for FakeRest by deals/stageEditRefusal.ts,
+-- which also recognises the call_result_owns_stage token.
+CREATE OR REPLACE FUNCTION public.guard_deal_stage_against_call_result()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'public'
+AS $function$
+begin
+  if current_setting('app.migration_mode', true) = 'true' then
+    return new;
+  end if;
+
+  if new.prospect_decision = 'yes'
+     and new.outcome is null
+     and new.archived_at is null
+     and new.stage <> 'won'
+     and not (
+       tg_op = 'UPDATE'
+       and old.prospect_decision = 'yes'
+       and old.outcome is null
+       and old.archived_at is null
+       and old.stage <> 'won'
+       and new.stage is not distinct from old.stage
+     )
+  then
+    raise exception
+      'call_result_owns_stage: Opportunity % records that the prospect said yes, so it cannot be at stage "%". Change the call result with correct_completed_sales_call (Edit call result), not the stage.',
+      new.id, new.stage
+      using errcode = 'check_violation';
+  end if;
+  return new;
+end;
+$function$
+;
+
 CREATE OR REPLACE FUNCTION public.record_deal_outcome_event()
  RETURNS trigger
  LANGUAGE plpgsql

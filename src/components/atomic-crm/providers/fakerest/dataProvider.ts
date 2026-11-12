@@ -98,6 +98,7 @@ import {
   setOfferPaymentOptionActiveMirror,
   setOfferPaymentOptionMirror,
 } from "../../offers/paymentOptionActions";
+import { assertStageAgreesWithCallResult } from "../../deals/stageEditRefusal";
 
 const TASK_MARKED_AS_DONE = "TASK_MARKED_AS_DONE";
 const TASK_MARKED_AS_UNDONE = "TASK_MARKED_AS_UNDONE";
@@ -1605,6 +1606,13 @@ export const createDataProvider = ({
             params.previousData,
             dataProvider,
           );
+          // Mirrors guard_deal_stage_against_call_result(): a stage edit may
+          // not leave "they said yes" on a sale that is not Won. See
+          // deals/stageEditRefusal.ts.
+          assertStageAgreesWithCallResult(params.previousData, {
+            ...params.previousData,
+            ...data,
+          });
           // Kanban queue-ordering slice: mirrors the Postgres BEFORE
           // trigger set_deal_stage_entered_at() exactly — stamp
           // stage_entered_at only when `stage` is genuinely changing (every
