@@ -94,7 +94,10 @@ jobs:
               run: CI=1 npm run test:unit:functions -- --run
 
     e2e-test:
-      timeout-minutes: 10
+      # ~733 browser tests take ~7.7 min on their own, after npm ci, the
+      # Playwright install, a clean-room Supabase start + migration replay and
+      # an e2e build. 10 left no headroom; 20 still stops a genuinely stuck run.
+      timeout-minutes: 20
       runs-on: ubuntu-24.04 # pinned: ubuntu-latest is 26.04, which Playwright 1.60 cannot install browsers on
       steps:
       - name: 📥 Checkout repo

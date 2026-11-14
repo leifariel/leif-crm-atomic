@@ -4578,6 +4578,16 @@ and others).
   infrastructure slice.
 - **Celia's double-attended calls (330 and 1330), and Alice Giuliani (204),**
   join the Health Sweep lifecycle findings above.
+- **Six unhandled rejections in the app unit suite** (`supabaseUrl is
+  required.`), present since the deposit work, were hidden while the
+  Playwright install failed first. They are fixed in `d96dc56b`:
+  `scheduleBalanceForOpportunity` now resolves to "deferred" on every
+  failure. Read the Vitest `Errors` line, not just `Tests`: all assertions
+  can pass while the run still exits 1.
+- **The e2e job's 10-minute budget was too tight.** On the first run past
+  the install fix it was cancelled at about 670 of 733 tests. It is now 20
+  minutes. That run was not a sibling cancellation: e2e-test has no `needs`
+  and no matrix.
 - **`npm run lint` does not reach `src/`.** Its unquoted `**/*.{mjs,ts,tsx}`
   is expanded by the shell, not by eslint. Lint changed files with a direct
   `npx eslint <files>` until this is fixed.
