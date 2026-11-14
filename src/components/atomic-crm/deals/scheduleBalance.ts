@@ -53,19 +53,34 @@ export const scheduleBalanceForOpportunity = async (
     return { status: "invalid-opportunity" };
   }
 
-  const { data, error } = await getSupabaseClient().functions.invoke<{
-    status?: string;
-    detail?: Record<string, unknown>;
-  }>(`stripe_webhook?action=schedule-balance&dealId=${dealId}`, {
-    method: "POST",
-    body: {},
-  });
-
   // A failure here must never look like a refusal, and must never block the
   // start-week save that prompted it: the date is the fact, the schedule is
   // a consequence, and the hourly sweep will try again.
-  if (error || !data?.status) return { status: "deferred" };
-  return { status: data.status, detail: data.detail };
+  //
+  // THAT INCLUDES A FAILURE THAT THROWS. functions.invoke() reports an HTTP
+  // or network failure as { error }, but reaching it can throw first — a
+  // client that cannot be built (no Supabase URL: a FakeRest/demo build, or
+  // a misconfigured one), or anything else that rejects instead of returning.
+  // ClientEditModal fires this without awaiting it, so a rejection used to
+  // escape as an unhandled one — six of them in the unit suite — and the
+  // "it will be retried" notice was never shown. Every failure is "deferred",
+  // which is true: deals_awaiting_balance_schedule() is swept hourly, and
+  // reconcile_payment_health_tasks() raises a check_payment Task for the
+  // same set of Deals, so the balance still converges to a schedule or to a
+  // durable task without this call.
+  try {
+    const { data, error } = await getSupabaseClient().functions.invoke<{
+      status?: string;
+      detail?: Record<string, unknown>;
+    }>(`stripe_webhook?action=schedule-balance&dealId=${dealId}`, {
+      method: "POST",
+      body: {},
+    });
+    if (error || !data?.status) return { status: "deferred" };
+    return { status: data.status, detail: data.detail };
+  } catch {
+    return { status: "deferred" };
+  }
 };
 
 /**

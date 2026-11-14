@@ -187,6 +187,17 @@ describe("an honest save", () => {
     await screen.getByRole("button", { name: "Save" }).click();
 
     await expect.element(screen.getByText("Client updated")).toBeVisible();
+    // This harness has no Supabase client to reach, so the balance schedule
+    // the save asks for cannot be requested. That used to escape as an
+    // unhandled rejection with nothing said; it is now deferred, and Leif is
+    // told it will be retried (scheduleBalance.ts).
+    await expect
+      .element(
+        screen.getByText("The payment schedule could not be reached just now", {
+          exact: false,
+        }),
+      )
+      .toBeVisible();
     const { data } = await dataProvider.getOne<Enrollment>("enrollments", {
       id: 7,
     });
