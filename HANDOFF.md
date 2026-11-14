@@ -4526,6 +4526,28 @@ historical bulk backward moves · several other `perPage: 100` reads in
 `deals/` that are not the board (`closeSalesTasks.ts`, `paymentStatus.ts`,
 and others).
 
+### CI infrastructure backlog (2026-11-14)
+
+- **`ubuntu-latest` became Ubuntu 26.04, and Playwright 1.60.0 cannot
+  install its browsers there.** "Cannot install dependencies for
+  ubuntu26.04-x64". On `54cc5c8`, 🔎 Test and e2e-test both failed during
+  `npx playwright install`, before any test ran. ESLint, Typecheck and Build
+  were green. Fixed by pinning those two `check.yml` jobs to `ubuntu-24.04`.
+  The other `ubuntu-latest` jobs install no browsers and are left alone.
+  `deploy-supabase` is the one worth pinning deliberately later: it is the
+  production deploy, and it relies on runner facts (jq preinstalled, no
+  outbound IPv6).
+- **The Supabase CLI is unpinned in CI.** It is not a package dependency,
+  so `npx supabase` in `scripts/cleanRoomBootstrap.mjs` downloads the latest
+  version on a fresh runner. CLI 3.x refuses `[inbucket]` in
+  `supabase/config.toml` and `config.e2e.toml` ("use [local_smtp]"), so the
+  clean room cannot start. Locally the fix is
+  `npm i --no-save supabase@2.117.0`. Expect this to be the next e2e-test
+  failure once Playwright installs.
+- **`npm run lint` does not reach `src/`.** Its unquoted `**/*.{mjs,ts,tsx}`
+  is expanded by the shell, not by eslint. Lint changed files with a direct
+  `npx eslint <files>` until this is fixed.
+
 ## 8y. A deposit is credited, not charged twice — DEPOSITS, BUILT NOT DEPLOYED (2026-10-16)
 
 Leif takes a fixed deposit now and the rest on the first day of the client's

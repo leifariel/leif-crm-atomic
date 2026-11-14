@@ -69,7 +69,7 @@ jobs:
               
     test-app:
         name: 🔎 Test
-        runs-on: ubuntu-latest
+        runs-on: ubuntu-24.04 # pinned: ubuntu-latest is 26.04, which Playwright 1.60 cannot install browsers on
         timeout-minutes: 10
         if: ${{ !github.event.pull_request.draft || github.event_name == 'push' }}
         steps:
@@ -95,7 +95,7 @@ jobs:
 
     e2e-test:
       timeout-minutes: 10
-      runs-on: ubuntu-latest
+      runs-on: ubuntu-24.04 # pinned: ubuntu-latest is 26.04, which Playwright 1.60 cannot install browsers on
       steps:
       - name: 📥 Checkout repo
         uses: actions/checkout@v4
