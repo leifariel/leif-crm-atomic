@@ -142,9 +142,22 @@ jobs:
 
             - name: ⚙️ Setup supabase
               uses: supabase/setup-cli@v1
+              with:
+                  # The version proven against supabase/config.toml. CLI 3.x
+                  # refuses its [inbucket] section at config load, so
+                  # `db push` stops before migrating anything.
+                  version: 2.117.0
 
             - name: 📥 Download deps
               run: npm ci
+
+            # Every step below runs `npx supabase`, which resolves the exact
+            # devDependency once npm ci has run. Asserted, not assumed.
+            - name: 🔒 Supabase CLI is the pinned version
+              run: |
+                  v="$(npx supabase --version 2>/dev/null)"
+                  echo "supabase --version: $v"
+                  test "$v" = "2.117.0"
 
             - name: 🔨 Build
               run: npm run build

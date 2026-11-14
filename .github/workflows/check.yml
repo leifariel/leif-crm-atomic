@@ -107,6 +107,14 @@ jobs:
             cache: npm
       - name: Install dependencies
         run: npm ci
+      # The clean room runs `npx supabase`, which resolves the exact
+      # devDependency once npm ci has run. Newer CLIs refuse this repo's
+      # supabase/config.toml, so the version is asserted, not assumed.
+      - name: 🔒 Supabase CLI is the pinned version
+        run: |
+            v="$(npx supabase --version 2>/dev/null)"
+            echo "supabase --version: $v"
+            test "$v" = "2.117.0"
       - name: Install Playwright Browsers
         run: npx playwright install --with-deps chromium-headless-shell 1>/dev/null
       - name: Install wait-on and serve

@@ -4507,14 +4507,42 @@ a later booking replaced as history, so Celia's Opportunity will not read
 "Cancelled" over the call that happened. Proven by
 `e2e/aRebookedCallCarriesItsResult.spec.ts` (H–M plus refusals).
 
-### Waiting
+### Waiting — superseded by production on 2026-11-14
 
-- **Deploy**, then Celia's repair:
-  `select public.reconcile_rebooked_sales_call_result(330, 1330);`
-- **Porsche (Opportunity 217, call 149) needs her real follow-up date from
-  Leif.** No durable record holds one. The correction is then made through
-  Edit call result: Thinking + that date. Until it is made, **Sales Call Part
-  2 is NOT production-exercised**.
+The repair plan above was written against 2026-11-12 production. Leif has
+since changed both named records himself, so **neither is to be mutated**:
+
+- **Porsche (Opportunity 217)** was removed from the pipeline as ghosted
+  (outcome `lost`, exit_reason `ghosted`). The planned yes → thinking
+  correction is no longer the truth, and she is **not** the Sales Call Part 2
+  exercise. What stays true is historical: a generic stage edit once left
+  her at Decision + "yes". The stage guard (`20261112130000`) is what stops
+  that happening again.
+- **Celia (Opportunity 267)**: call 1330 was completed as attended on
+  2026-11-14, and the Opportunity is now Decision · `lost` · "no". Calls 330
+  and 1330 are **both** attended. **Do not run**
+  `reconcile_rebooked_sales_call_result(330, 1330)`. It would refuse
+  (`replacement_not_open`), and that refusal is correct. The double-attended
+  pair goes to the Health Sweep. The command stays valid for future
+  cancel/rebook cases.
+- **Sales Call Part 2 is NOT production-exercised.** No exercise is to be
+  manufactured.
+
+**Pipeline production acceptance**, once ✅ Check is green and the deploy
+has run: production reads **177** migrations, with 175–177 each present
+exactly once. Then confirm by readback and the UI:
+
+- the board is no longer cut at 100, and the five previously hidden Deals
+  show
+- membership and counts survive a refresh
+- Porsche is absent, correctly, because she has exited
+- Anna appears where her current state puts her
+- the deployed `review_application` is forward-only
+- the stage guard trigger exists
+- Edit call result is in the live bundle
+- the rebook command exists and has not been invoked
+
+No synthetic production sales-call mutations.
 
 ### Carried to the Health Sweep (read-only, 2026-11-12)
 
@@ -4537,13 +4565,19 @@ and others).
   `deploy-supabase` is the one worth pinning deliberately later: it is the
   production deploy, and it relies on runner facts (jq preinstalled, no
   outbound IPv6).
-- **The Supabase CLI is unpinned in CI.** It is not a package dependency,
-  so `npx supabase` in `scripts/cleanRoomBootstrap.mjs` downloads the latest
-  version on a fresh runner. CLI 3.x refuses `[inbucket]` in
-  `supabase/config.toml` and `config.e2e.toml` ("use [local_smtp]"), so the
-  clean room cannot start. Locally the fix is
-  `npm i --no-save supabase@2.117.0`. Expect this to be the next e2e-test
-  failure once Playwright installs.
+- **The Supabase CLI was unpinned — now pinned to 2.117.0.** It was not a
+  package dependency, so every `npx supabase`, in CI, the e2e clean room and
+  `deploy-supabase`, downloaded the newest CLI. CLI 3.x refuses `[inbucket]`
+  in `supabase/config.toml`, and for `db push` it does so at config load,
+  before migrating anything (`DbConfigLoadError`, reproduced locally). That
+  is consistent with production staying at 174 migrations after `54cc5c8`
+  reached main, though the Deploy log itself was never read. `supabase` is
+  now an exact devDependency, `setup-cli` is pinned to the same version, and
+  e2e-test and deploy-supabase both assert `supabase --version` = 2.117.0.
+  Moving to CLI 3.x (`[inbucket]` → `[local_smtp]`) is a separate, tested
+  infrastructure slice.
+- **Celia's double-attended calls (330 and 1330), and Alice Giuliani (204),**
+  join the Health Sweep lifecycle findings above.
 - **`npm run lint` does not reach `src/`.** Its unquoted `**/*.{mjs,ts,tsx}`
   is expanded by the shell, not by eslint. Lint changed files with a direct
   `npx eslint <files>` until this is fixed.
