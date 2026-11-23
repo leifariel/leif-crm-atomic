@@ -42,7 +42,10 @@ const LE = 1;
 const BASE = 991000;
 const FILLER_BASE = 992000;
 // 99 others + A + B + C = 102: more than the board used to fetch.
-const FILLERS = 99;
+// 102 others + A + B + C = 105, production's count on 2026-11-23. The
+// clean room caps a response at 100 rows, like production
+// (supabase/config.e2e.toml), so the board has to page to show them all.
+const FILLERS = 102;
 
 const admin = () =>
   createClient(SUPABASE_URL, process.env.SERVICE_ROLE_KEY!, {
@@ -132,10 +135,11 @@ const seedBooked = async (n: number, lastName: string) => {
   return { contactId, dealId: deal.id, name: `Pipe ${lastName}` };
 };
 
-/** Everyone else on the board, inserted AFTER A and B so they are newer. */
-const seedFillers = async () => {
+/** Everyone else on the board. Inserted FIRST, so the people who move are
+ * the newest — the very cards a one-request board cut off. */
+const seedFillers = async (count = FILLERS) => {
   const client = admin();
-  const contacts = Array.from({ length: FILLERS }, (_, i) => ({
+  const contacts = Array.from({ length: count }, (_, i) => ({
     id: FILLER_BASE + i,
     first_name: "Filler",
     last_name: `Person${String(i).padStart(3, "0")}`,
@@ -260,26 +264,40 @@ const completeCall = async (
   await expect(page.locator('[data-stage="call_booked"]')).toBeVisible();
 };
 
+/** Cards on the board's active columns (Onboarding is a separate, derived read). */
+const activeOnBoard = (bd: Board) =>
+  Object.entries(bd)
+    .filter(([stage]) => stage !== "onboarding")
+    .reduce((sum, [, column]) => sum + column.names.length, 0);
+
+/** Every card name on the board, so duplicates are visible. */
+const allNames = (bd: Board) =>
+  Object.entries(bd)
+    .filter(([stage]) => stage !== "onboarding")
+    .flatMap(([, column]) => column.names);
+
 test.describe("the Pipeline shows every move immediately, and keeps showing it", () => {
   test("two sequential completions: both cards land, neither vanishes, counts and a hard refresh agree", async ({
     page,
   }) => {
-    // Seeded first, so the 99 others are NEWER in their stage: until A or B
-    // moves, the board's cut-off (when there was one) fell on a filler.
+    // Everyone else first; the three who move are the newest rows.
+    await seedFillers();
     const a = await seedBooked(1, "Porscheshaped");
     const b = await seedBooked(2, "Annashaped");
     const c = await seedBooked(3, "Saidyes");
-    await seedFillers();
     expect(await serverActiveCount()).toBe(FILLERS + 3);
 
     await signIn(page);
     await openPipeline(page);
 
-    // Before anything: all three at Call Booked, once each.
+    // Before anything: all three at Call Booked, once each, and all 105 on
+    // the board with no truncation warning (A, F, J).
     await expectExactlyIn(page, a.name, "call_booked");
     await expectExactlyIn(page, b.name, "call_booked");
     await expectExactlyIn(page, c.name, "call_booked");
     let board = await expectCountsHonest(page);
+    expect(activeOnBoard(board)).toBe(FILLERS + 3);
+    await expect(page.getByRole("alert")).toHaveCount(0);
 
     // STEP 1 — Person A (Porsche's final lifecycle): Call Booked -> Decision.
     // A is now the newest in its stage — exactly the card the old board cut.
@@ -306,10 +324,6 @@ test.describe("the Pipeline shows every move immediately, and keeps showing it",
 
     // T: the browser holds every active Opportunity the server does, and
     // there is no truncation warning.
-    const activeOnBoard = (bd: Board) =>
-      Object.entries(bd)
-        .filter(([stage]) => stage !== "onboarding")
-        .reduce((sum, [, column]) => sum + column.names.length, 0);
     expect(activeOnBoard(board)).toBe(await serverActiveCount());
     await expect(page.getByRole("alert")).toHaveCount(0);
 
@@ -324,6 +338,60 @@ test.describe("the Pipeline shows every move immediately, and keeps showing it",
     await expect
       .poll(() => readBoard(page), {
         message: "the reloaded board differs from the live one",
+      })
+      .toEqual(beforeReload);
+  });
+});
+
+test.describe("the board is complete past several server pages", () => {
+  test("B: 205 active Opportunities, three pages of 100, every one exactly once", async ({
+    page,
+  }) => {
+    await seedFillers(202);
+    const mover = await seedBooked(4, "Newestmover");
+    await seedBooked(5, "Staysbooked");
+    await seedBooked(6, "Alsostays");
+    expect(await serverActiveCount()).toBe(205);
+
+    await signIn(page);
+    await openPipeline(page);
+
+    // All 205, each exactly once, nothing warned about (B, F, I, J).
+    await expect
+      .poll(async () => activeOnBoard(await readBoard(page)), {
+        message: "the board never held all 205",
+      })
+      .toBe(205);
+    // Names arrive in their own batched getMany, which the 100-row cap used
+    // to cut short too. Every card must end up named, and named once.
+    await expect
+      .poll(
+        async () =>
+          new Set(allNames(await readBoard(page)).filter((n) => n !== "")).size,
+        { message: "not every one of the 205 cards got its person's name" },
+      )
+      .toBe(205);
+    let board = await expectCountsHonest(page);
+    expect(allNames(board)).toHaveLength(205);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+
+    // The newest card moves; it lands once, and nobody else leaves (C, D, E).
+    const before = new Set(allNames(board));
+    const decisionBefore = board.decision.names.length;
+    await completeCall(page, mover.dealId, "Thinking");
+    await expectExactlyIn(page, mover.name, "decision");
+    board = await expectCountsHonest(page);
+    expect(new Set(allNames(board))).toEqual(before);
+    expect(board.decision.names).toHaveLength(decisionBefore + 1);
+    expect(activeOnBoard(board)).toBe(await serverActiveCount());
+
+    // G: a hard refresh shows exactly the same board.
+    const beforeReload = await readBoard(page);
+    await page.reload();
+    await expect(page.locator('[data-stage="call_booked"]')).toBeVisible();
+    await expect
+      .poll(() => readBoard(page), {
+        message: "the reloaded 205-row board differs from the live one",
       })
       .toEqual(beforeReload);
   });

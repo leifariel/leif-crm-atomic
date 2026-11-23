@@ -814,6 +814,10 @@
           "type": "registry:component"
         },
         {
+          "path": "src/components/atomic-crm/providers/commons/fetchAllPages.ts",
+          "type": "registry:component"
+        },
+        {
           "path": "src/components/atomic-crm/providers/commons/englishCrmMessages.ts",
           "type": "registry:component"
         },

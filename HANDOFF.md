@@ -4554,6 +4554,51 @@ historical bulk backward moves · several other `perPage: 100` reads in
 `deals/` that are not the board (`closeSalesTasks.ts`, `paymentStatus.ts`,
 and others).
 
+### The board still stopped at 100 — the server's cap, not ours (2026-11-23)
+
+After deployment (production at 177 migrations), the live board read "The
+board is showing 100 of 105". Anna Ianovskaia (contact 525, Opportunity
+350) was recorded correctly as Decision · thinking · follow-up 2026-11-22,
+with one follow-up Task. She was 103rd in the board's order, so she was
+simply not shown. **Nothing about her data was wrong; she was not
+mutated.**
+
+**Cause:** the first repair raised `perPage` to 1000, but the hosted
+project's API "Max rows" is **100**, so one PostgREST response can never
+hold more than 100 rows, whatever the client asks for.
+`supabase/config.toml` says 1000, and so did the e2e clean room, which is
+why a 102-row browser test passed while production did not. The same cap
+also cut the batched `getMany` behind every card's contact name, so past
+100 cards some cards would have rendered with no name.
+
+**Repair:** `providers/commons/fetchAllPages.ts`.
+
+- The Supabase data provider's `getList` completes any **first page the
+  cap cut short**: fewer rows than asked for, and fewer than the server's
+  own total. It does this page by page, through `fetchAllPages`. That
+  learns the cap from the first reply, keeps the caller's sort with the
+  primary key as a tiebreak, de-duplicates, and has bounded stops.
+- No call site opts in. Every read in the app is covered: the Pipeline,
+  and the 148 other single-request reads that ask for more than 100 rows
+  (Applications, Clients, Dashboard, cohorts, capacity, waitlist, merge).
+  A full page of a paginated list, a later page, or a table smaller than
+  the request costs exactly what it did. FakeRest never truncates, so it
+  never pages.
+- An explicit per-query opt-in was tried first and rejected. Passing
+  `queryOptions={{ meta }}` to the board's `<List>` made
+  `DealInputs.test.tsx` flaky (bisected to that one prop; the mechanism
+  inside ra-core was not identified). The provider-level rule needs no prop.
+- `getManyInChunks` makes every `getMany` complete for any cap.
+- `supabase/config.e2e.toml` now caps at **100**, like production, so the
+  e2e suite meets the real boundary.
+- Proven at 105 and 205 rows in the browser, plus 20 contract cases.
+  Turning the completion off fails with production's exact symptom.
+
+**Health Sweep.** Those 148 reads are now complete, but nobody has
+reviewed them for the cost of reading every row. Check the largest tables
+(contacts, tasks, events) for reads that should filter or paginate
+instead.
+
 ### CI infrastructure backlog (2026-11-14)
 
 - **`ubuntu-latest` became Ubuntu 26.04, and Playwright 1.60.0 cannot

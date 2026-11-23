@@ -14,7 +14,14 @@ schemas = ["public", "storage", "graphql_public"]
 extra_search_path = ["public", "extensions"]
 # The maximum number of rows returns from a view, table, or stored procedure. Limits payload size
 # for accidental or malicious requests.
-max_rows = 1000
+#
+# 100, NOT 1000: this is the clean room, and it must cap like production.
+# The hosted project's API "Max rows" is 100. With 1000 here, a 102-row
+# Pipeline test passed while production showed "100 of 105" — the cap the
+# test existed to catch was simply absent. Any list that must be complete
+# has to page (providers/commons/fetchAllPages.ts), and now the e2e suite
+# can tell when one does not.
+max_rows = 100
 
 [db]
 # Port to use for the local database URL.

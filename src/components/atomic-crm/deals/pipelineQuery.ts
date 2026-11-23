@@ -10,17 +10,20 @@
 // Anna became the newest, Anna vanished, and Porsche came back. Nobody's
 // data was ever wrong. The board was a window that cut off its own edge.
 //
-// So the board asks for every active Opportunity the API will return, and
-// says so out loud if it ever cannot (see PipelineTruncationNotice) instead
-// of quietly showing fewer people than exist.
+// The first repair asked for 1000 in one request. Production then showed
+// "100 of 105": the hosted API's own "Max rows" is 100, and the server, not
+// perPage, decides how many rows one response holds. So every read
+// is completed by the Supabase data provider itself: a first page the cap
+// cut short is read page by page until the server's count is reached
+// (providers/commons/fetchAllPages.ts). PipelineTruncationNotice stays as
+// the emergency guard if even that comes back short; it is not the normal
+// state.
 
 /**
  * The page size for the board's own list query.
  *
- * PostgREST's max_rows (supabase/config.toml) is 1000, so this is "all of
- * them" with headroom of an order of magnitude over today. It is a ceiling,
- * not a window: if it is ever reached the board reports it rather than
- * dropping cards.
+ * Only the size of the FIRST request. The server may return fewer (the
+ * hosted cap is 100); fetchAllPages learns that size and keeps paging.
  */
 export const PIPELINE_PAGE_SIZE = 1000;
 

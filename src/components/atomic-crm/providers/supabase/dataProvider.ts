@@ -3,6 +3,8 @@ import {
   withLifecycleCallbacks,
   type DataProvider,
   type GetListParams,
+  type GetManyParams,
+  type SortPayload,
   type Identifier,
   type ResourceCallbacks,
 } from "ra-core";
@@ -24,6 +26,11 @@ import type { AddKitTagResult } from "../../applications/kitTagActions";
 import { ATTACHMENTS_BUCKET } from "../commons/attachments";
 import { getIsInitialized } from "./authProvider";
 import { getSupabaseClient } from "./supabase";
+import {
+  fetchAllPages,
+  getManyInChunks,
+  isTruncatedFirstPage,
+} from "../commons/fetchAllPages";
 
 const getBaseDataProvider = () =>
   supabaseDataProvider({
@@ -49,37 +56,82 @@ const processCompanyLogo = async (params: any) => {
   };
 };
 
+/**
+ * The caller's sort, made unique so offset pages cannot overlap or skip.
+ *
+ * ra-data-postgrest renders a sort as `${field}.${direction}` using this
+ * provider's sortOrder ("asc,desc.nullslast"), so a field of
+ * `stage_entered_at.asc,id` with order ASC becomes
+ * `order=stage_entered_at.asc,id.asc`: the caller's order first, the
+ * primary key as the tiebreak. Sorting by id already is unique.
+ */
+const withIdTiebreak = (sort: SortPayload | undefined): SortPayload => {
+  if (!sort?.field || sort.field === "id") {
+    return { field: "id", order: sort?.order ?? "ASC" };
+  }
+  const direction = sort.order === "DESC" ? "desc.nullslast" : "asc";
+  return { field: `${sort.field}.${direction},id`, order: "ASC" };
+};
+
+/** One page of a list, with the app's resource-to-view mapping applied. */
+const getOneListPage = async (
+  baseDataProvider: ReturnType<typeof getBaseDataProvider>,
+  resource: string,
+  params: GetListParams,
+) => {
+  if (resource === "companies") {
+    return baseDataProvider.getList("companies_summary", params);
+  }
+  if (resource === "contacts") {
+    return baseDataProvider.getList("contacts_summary", params);
+  }
+  if (resource === "activity_log") {
+    const { data, total } = await baseDataProvider.getList(
+      "activity_log",
+      params,
+    );
+    // Rename snake_case view columns to camelCase to match Activity type
+    return {
+      data: data.map((row: any) => ({
+        ...row,
+        contactNote: row.contact_note ?? undefined,
+        dealNote: row.deal_note ?? undefined,
+        contact_note: undefined,
+        deal_note: undefined,
+      })),
+      total,
+    };
+  }
+  return baseDataProvider.getList(resource, params);
+};
+
 const getDataProviderWithCustomMethods = () => {
   const baseDataProvider = getBaseDataProvider();
 
   return {
     ...baseDataProvider,
     async getList(resource: string, params: GetListParams) {
-      if (resource === "companies") {
-        return baseDataProvider.getList("companies_summary", params);
-      }
-      if (resource === "contacts") {
-        return baseDataProvider.getList("contacts_summary", params);
-      }
-      if (resource === "activity_log") {
-        const { data, total } = await baseDataProvider.getList(
-          "activity_log",
-          params,
-        );
-        // Rename snake_case view columns to camelCase to match Activity type
-        return {
-          data: data.map((row: any) => ({
-            ...row,
-            contactNote: row.contact_note ?? undefined,
-            dealNote: row.deal_note ?? undefined,
-            contact_note: undefined,
-            deal_note: undefined,
-          })),
-          total,
-        };
-      }
-
-      return baseDataProvider.getList(resource, params);
+      // The hosted API caps one response at its own "Max rows" (100),
+      // whatever perPage asks for. A first page the cap cut short is
+      // completed page by page, in the caller's order (commons/
+      // fetchAllPages.ts). Every other read costs exactly what it did.
+      const first = await getOneListPage(baseDataProvider, resource, params);
+      if (!isTruncatedFirstPage(params, first)) return first;
+      return fetchAllPages(
+        (page) => getOneListPage(baseDataProvider, resource, page),
+        params,
+        withIdTiebreak,
+      );
+    },
+    // Every ReferenceField on a screen is batched into one getMany, and the
+    // hosted API answers at most 100 rows of it. Asked in chunks, and the
+    // ids a reply left out asked for again (commons/fetchAllPages.ts).
+    // Same resource as before; only the chunking is new.
+    async getMany(resource: string, params: GetManyParams) {
+      return getManyInChunks(
+        (ids) => baseDataProvider.getMany(resource, { ...params, ids }),
+        params.ids,
+      );
     },
     async getOne(resource: string, params: any) {
       if (resource === "companies") {
